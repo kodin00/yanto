@@ -68,6 +68,30 @@ function dateTime(value: string | null) {
   return new Date(value).toLocaleString();
 }
 
+function durationSince(value: string | null) {
+  if (!value) return "-";
+  const started = new Date(value).getTime();
+  if (Number.isNaN(started)) return "-";
+  const seconds = Math.max(0, Math.floor((Date.now() - started) / 1000));
+  const units = [
+    ["d", 86400],
+    ["h", 3600],
+    ["m", 60]
+  ] as const;
+  const parts: string[] = [];
+  let remaining = seconds;
+  for (const [label, unitSeconds] of units) {
+    const amount = Math.floor(remaining / unitSeconds);
+    if (amount) {
+      parts.push(`${amount}${label}`);
+      remaining %= unitSeconds;
+    }
+    if (parts.length === 2) break;
+  }
+  if (!parts.length) return `${seconds}s`;
+  return parts.join(" ");
+}
+
 function endpoint(project: Project, baseUrl: string) {
   return `${baseUrl.replace(/\/$/, "")}/deploy?id=${project.id}`;
 }
@@ -124,6 +148,7 @@ export function App() {
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
   const [usage, setUsage] = useState<SystemUsage | null>(null);
   const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: "", sshKey: emptySshKeySettings });
+  const [systemLogs, setSystemLogs] = useState("");
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<ToastState>(null);
   const [projectModal, setProjectModal] = useState<Project | "new" | null>(null);
@@ -137,18 +162,20 @@ export function App() {
   const [containerPage, setContainerPage] = useState(1);
 
   const loadAll = useCallback(async () => {
-    const [projectRows, deploymentRows, containerRows, systemRows, settingRows] = await Promise.all([
+    const [projectRows, deploymentRows, containerRows, systemRows, settingRows, logRows] = await Promise.all([
       api.projects(),
       api.deployments(),
       api.containers().catch(() => []),
       api.systemUsage().catch(() => null),
-      api.settings()
+      api.settings(),
+      api.systemLogs().catch(() => "")
     ]);
     setProjects(projectRows);
     setDeployments(deploymentRows);
     setContainers(containerRows);
     setUsage(systemRows);
     setSettings(settingRows);
+    setSystemLogs(logRows);
   }, []);
 
   useEffect(() => {
@@ -506,6 +533,10 @@ export function App() {
                         <Copy size={15} />
                       </button>
                     </div>
+                    <div className="project-side-stat">
+                      <span>Containers</span>
+                      <strong>{project.containerCount ?? 0} created</strong>
+                    </div>
                     <div className="actions">
                       <Button variant="secondary" onClick={() => openProject(project)}>
                         Edit
@@ -563,6 +594,7 @@ export function App() {
                     <th>Name</th>
                     <th>Image</th>
                     <th>Status</th>
+                    <th>Live</th>
                     <th>Ports</th>
                     <th>CPU</th>
                     <th>Memory</th>
@@ -577,6 +609,7 @@ export function App() {
                         <td>{container.name}</td>
                         <td>{container.image}</td>
                         <td><StatusBadge status={container.state} /></td>
+                        <td title={dateTime(container.createdAt)}>{durationSince(container.createdAt)}</td>
                         <td className="ports-cell">{container.ports || "-"}</td>
                         <td>{container.cpuPercent}</td>
                         <td>{usedMemoryMb(container.memoryUsage)} ({container.memoryPercent})</td>
@@ -755,6 +788,15 @@ export function App() {
               >
                 Clean cache
               </Button>
+            </section>
+            <section className="panel system-log-panel">
+              <div className="panel-head">
+                <h2>System log</h2>
+                <Button variant="secondary" onClick={() => void api.systemLogs().then(setSystemLogs)} icon={<RefreshCw size={16} />}>
+                  Refresh
+                </Button>
+              </div>
+              <LogViewer logs={systemLogs || "No system log entries recorded yet."} />
             </section>
           </section>
         ) : null}

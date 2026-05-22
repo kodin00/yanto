@@ -56,6 +56,7 @@ export const api = {
   stopContainer: (id: string) => request<{ ok: true }>(`/api/containers/${id}/stop`, { method: "POST" }),
   restartContainer: (id: string) => request<{ ok: true }>(`/api/containers/${id}/restart`, { method: "POST" }),
   systemUsage: () => request<SystemUsage>("/api/system/usage"),
+  systemLogs: () => request<string>("/api/system/logs"),
   cleanup: () => request<{ logs: string }>("/api/system/cleanup", { method: "POST" }),
   saveSshKey: (privateKey: string) =>
     request<{ ok: true; sshKey: { privateKeyPath: string; publicKey: string } }>("/api/settings/ssh-key", {

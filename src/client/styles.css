@@ -301,6 +301,10 @@ button:disabled {
   grid-column: span 2;
 }
 
+.system-log-panel {
+  grid-column: span 2;
+}
+
 .settings-code-list {
   display: grid;
   gap: 14px;
@@ -665,6 +669,30 @@ dd {
 .token-box span {
   min-width: 0;
   flex: 1;
+}
+
+.project-side-stat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line-light);
+}
+
+.project-side-stat span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.project-side-stat strong {
+  font-family: var(--font-display);
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .endpoint-box button,
@@ -1034,6 +1062,10 @@ th {
   white-space: pre-wrap;
 }
 
+.system-log-panel .log-viewer {
+  min-height: 260px;
+}
+
 .log-status-line {
   display: flex;
   align-items: center;
@@ -1133,6 +1165,10 @@ th {
   }
 
   .webhook-settings {
+    grid-column: auto;
+  }
+
+  .system-log-panel {
     grid-column: auto;
   }
 

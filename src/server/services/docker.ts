@@ -8,6 +8,8 @@ type DockerPsLine = {
   Status: string;
   State: string;
   Ports: string;
+  CreatedAt?: string;
+  Labels?: string;
 };
 
 type DockerStatsLine = {
@@ -31,6 +33,16 @@ function parseJsonLines<T>(input: string) {
     });
 }
 
+function parseLabels(labels: string | undefined) {
+  const result = new Map<string, string>();
+  for (const label of labels?.split(",") ?? []) {
+    const separator = label.indexOf("=");
+    if (separator <= 0) continue;
+    result.set(label.slice(0, separator), label.slice(separator + 1));
+  }
+  return result;
+}
+
 export async function listContainers(): Promise<ContainerInfo[]> {
   const ps = await runCommand("docker", ["ps", "-a", "--format", "{{json .}}"]);
   if (ps.exitCode !== 0) {
@@ -42,6 +54,7 @@ export async function listContainers(): Promise<ContainerInfo[]> {
 
   return parseJsonLines<DockerPsLine>(ps.output).map((container) => {
     const stat = statsById.get(container.ID);
+    const labels = parseLabels(container.Labels);
     return {
       id: container.ID,
       name: container.Names,
@@ -49,9 +62,11 @@ export async function listContainers(): Promise<ContainerInfo[]> {
       status: container.Status,
       state: container.State,
       ports: container.Ports,
+      createdAt: container.CreatedAt ?? null,
       cpuPercent: stat?.CPUPerc ?? "0%",
       memoryUsage: stat?.MemUsage ?? "-",
-      memoryPercent: stat?.MemPerc ?? "0%"
+      memoryPercent: stat?.MemPerc ?? "0%",
+      composeProject: labels.get("com.docker.compose.project") ?? null
     };
   });
 }

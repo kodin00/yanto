@@ -13,6 +13,7 @@ export type Project = {
   autoStart: boolean;
   deployToken: string;
   sshPublicKey: string | null;
+  containerCount?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -36,9 +37,11 @@ export type ContainerInfo = {
   status: string;
   state: string;
   ports: string;
+  createdAt: string | null;
   cpuPercent: string;
   memoryUsage: string;
   memoryPercent: string;
+  composeProject?: string | null;
 };
 
 export type SystemUsage = {

@@ -12,7 +12,7 @@ import { projects } from "./db/schema.js";
 import { logger } from "./logger.js";
 import { cleanupDocker, containerLogs, listContainers, restartContainer, stopContainer } from "./services/docker.js";
 import { findDeployment, latestDeployments, startDeployment } from "./services/deployments.js";
-import { createProject, deleteProject, getProject, listProjects, updateProject } from "./services/projects.js";
+import { createProject, deleteProject, getProject, listProjectsWithContainerCounts, updateProject } from "./services/projects.js";
 import { managedSshKeyStatus, saveManagedSshPrivateKey } from "./services/ssh.js";
 import { systemUsage } from "./services/system.js";
 import { constantTimeEqual } from "./services/tokens.js";
@@ -87,7 +87,7 @@ app.get(
   "/api/projects",
   requireAuth,
   asyncRoute(async (_req, res) => {
-    res.json(await listProjects());
+    res.json(await listProjectsWithContainerCounts());
   })
 );
 
@@ -320,6 +320,14 @@ app.get(
   requireAuth,
   asyncRoute(async (_req, res) => {
     res.json(await systemUsage());
+  })
+);
+
+app.get(
+  "/api/system/logs",
+  requireAuth,
+  asyncRoute(async (_req, res) => {
+    res.type("text/plain").send(logger.history() || "No system log entries recorded yet.");
   })
 );
 
