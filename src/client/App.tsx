@@ -28,6 +28,8 @@ import { api } from "./lib/api";
 
 type View = "dashboard" | "projects" | "deployments" | "containers" | "settings";
 type ToastState = { message: string; kind?: "ok" | "error" } | null;
+type LogModalState = { title: string; logs: string; streamPath?: string; live?: boolean; status?: string };
+type LogStreamPayload = { logs?: string; chunk?: string; status?: string; error?: string; done?: boolean };
 
 const emptyProject = {
   name: "",
@@ -121,7 +123,7 @@ export function App() {
   const [toast, setToast] = useState<ToastState>(null);
   const [projectModal, setProjectModal] = useState<Project | "new" | null>(null);
   const [projectForm, setProjectForm] = useState(emptyProject);
-  const [logModal, setLogModal] = useState<{ title: string; logs: string } | null>(null);
+  const [logModal, setLogModal] = useState<LogModalState | null>(null);
   const [confirm, setConfirm] = useState<{ title: string; body: string; label: string; danger?: boolean; action: () => Promise<void> } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [sshPrivateKey, setSshPrivateKey] = useState("");
@@ -162,6 +164,41 @@ export function App() {
     }, 8000);
     return () => window.clearInterval(timer);
   }, [loadAll, user]);
+
+  useEffect(() => {
+    if (!logModal?.streamPath) return;
+    const streamPath = logModal.streamPath;
+    const source = new EventSource(streamPath);
+
+    source.onmessage = (event) => {
+      let payload: LogStreamPayload;
+      try {
+        payload = JSON.parse(event.data) as LogStreamPayload;
+      } catch {
+        payload = { chunk: event.data };
+      }
+      setLogModal((current) => {
+        if (!current || current.streamPath !== streamPath) return current;
+        const nextLogs = payload.logs ?? `${current.logs}${payload.chunk ?? ""}${payload.error ? `\n${payload.error}\n` : ""}`;
+        return {
+          ...current,
+          logs: nextLogs,
+          status: payload.status ?? current.status,
+          live: !payload.done
+        };
+      });
+      if (payload.done) {
+        source.close();
+      }
+    };
+
+    source.onerror = () => {
+      source.close();
+      setLogModal((current) => (current?.streamPath === streamPath ? { ...current, live: false } : current));
+    };
+
+    return () => source.close();
+  }, [logModal?.streamPath]);
 
   const runningDeployments = useMemo(() => deployments.filter((deployment) => deployment.status === "running"), [deployments]);
   const visibleProjects = useMemo(() => pageItems(projects, projectPage), [projectPage, projects]);
@@ -220,6 +257,13 @@ export function App() {
     try {
       const result = await api.deployProject(project.id);
       setToast({ message: result.reused ? "Deployment is already running." : "Deployment started." });
+      setLogModal({
+        title: `${project.name} deployment`,
+        logs: "",
+        streamPath: api.deploymentLogStream(result.deployment.id),
+        live: true,
+        status: result.deployment.status
+      });
       await loadAll();
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to deploy project.", kind: "error" });
@@ -228,14 +272,24 @@ export function App() {
     }
   }
 
-  async function openDeploymentLogs(deployment: Deployment) {
-    const logs = await api.deploymentLogs(deployment.id);
-    setLogModal({ title: `${deployment.projectName ?? deployment.projectId} deployment`, logs });
+  function openDeploymentLogs(deployment: Deployment) {
+    setLogModal({
+      title: `${deployment.projectName ?? deployment.projectId} deployment`,
+      logs: "",
+      streamPath: api.deploymentLogStream(deployment.id),
+      live: true,
+      status: deployment.status
+    });
   }
 
-  async function openContainerLogs(container: ContainerInfo) {
-    const logs = await api.containerLogs(container.id);
-    setLogModal({ title: `${container.name} logs`, logs });
+  function openContainerLogs(container: ContainerInfo) {
+    setLogModal({
+      title: `${container.name} logs`,
+      logs: "",
+      streamPath: api.containerLogStream(container.id),
+      live: true,
+      status: container.state
+    });
   }
 
   function openProject(project?: Project) {
@@ -711,6 +765,12 @@ export function App() {
 
       {logModal ? (
         <Modal title={logModal.title} onClose={() => setLogModal(null)}>
+          {logModal.streamPath ? (
+            <div className="log-status-line">
+              <StatusBadge status={logModal.live ? "live" : logModal.status ?? "closed"} />
+              <span>{logModal.live ? "Streaming logs" : "Log stream closed"}</span>
+            </div>
+          ) : null}
           <LogViewer logs={logModal.logs} />
         </Modal>
       ) : null}

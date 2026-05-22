@@ -781,6 +781,11 @@ th {
   color: var(--cyan);
 }
 
+.status.live {
+  background: #e4f1ec;
+  color: var(--cyan);
+}
+
 .status.success,
 .status.ready {
   background: #e6f2eb;
@@ -930,6 +935,14 @@ th {
   line-height: 1.45;
   font-size: 13px;
   white-space: pre-wrap;
+}
+
+.log-status-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .toast {

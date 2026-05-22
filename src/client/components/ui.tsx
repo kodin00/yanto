@@ -206,7 +206,16 @@ export function StatusBadge({ status }: { status: string }) {
 }
 
 export function LogViewer({ logs }: { logs: string }) {
-  return <pre className="log-viewer">{logs || "No logs yet."}</pre>;
+  const ref = useRef<HTMLPreElement | null>(null);
+
+  useEffect(() => {
+    const element = ref.current;
+    if (element) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }, [logs]);
+
+  return <pre ref={ref} className="log-viewer">{logs || "Waiting for logs..."}</pre>;
 }
 
 export function LoadingInline({ label }: { label: string }) {

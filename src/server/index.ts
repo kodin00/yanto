@@ -1,6 +1,7 @@
 import cookieParser from "cookie-parser";
 import express from "express";
 import fs from "node:fs";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -38,6 +39,19 @@ function asyncRoute(handler: (req: express.Request, res: express.Response) => Pr
 function routeParam(req: express.Request, name: string) {
   const value = req.params[name];
   return Array.isArray(value) ? value[0] : value;
+}
+
+function startEventStream(res: express.Response) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no"
+  });
+}
+
+function sendStreamEvent(res: express.Response, payload: unknown) {
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
 app.post(
@@ -169,6 +183,66 @@ app.get(
 );
 
 app.get(
+  "/api/deployments/:id/logs/stream",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const id = routeParam(req, "id");
+    const initial = await findDeployment(id);
+    if (!initial) {
+      res.status(404).json({ message: "Deployment not found." });
+      return;
+    }
+
+    startEventStream(res);
+    let previousLogs = "";
+    let closed = false;
+    let timer: NodeJS.Timeout | null = null;
+
+    const pushLatest = async () => {
+      if (closed) return;
+      const deployment = await findDeployment(id);
+      if (!deployment) {
+        sendStreamEvent(res, { logs: previousLogs, status: "missing", done: true });
+        res.end();
+        return;
+      }
+      if (deployment.logs !== previousLogs || deployment.status !== "running") {
+        previousLogs = deployment.logs;
+        sendStreamEvent(res, {
+          logs: deployment.logs,
+          status: deployment.status,
+          done: deployment.status !== "running"
+        });
+      }
+      if (deployment.status !== "running") {
+        closed = true;
+        if (timer) {
+          clearInterval(timer);
+        }
+        res.end();
+      }
+    };
+
+    await pushLatest();
+    if (!closed) {
+      timer = setInterval(() => {
+        void pushLatest().catch((error) => {
+          sendStreamEvent(res, { error: error instanceof Error ? error.message : "Unable to stream deployment logs.", done: true });
+          res.end();
+        });
+      }, 700);
+    }
+
+    req.on("close", () => {
+      closed = true;
+      if (timer) {
+        clearInterval(timer);
+      }
+    });
+  })
+);
+
+app.get(
   "/api/containers",
   requireAuth,
   asyncRoute(async (_req, res) => {
@@ -181,6 +255,44 @@ app.get(
   requireAuth,
   asyncRoute(async (req, res) => {
     res.type("text/plain").send(await containerLogs(routeParam(req, "id")));
+  })
+);
+
+app.get(
+  "/api/containers/:id/logs/stream",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    startEventStream(res);
+    let closed = false;
+    const child = spawn("docker", ["logs", "--tail", "500", "--follow", routeParam(req, "id")], {
+      env: process.env,
+      shell: false
+    });
+
+    const sendChunk = (buffer: Buffer) => {
+      if (closed) return;
+      sendStreamEvent(res, { chunk: buffer.toString() });
+    };
+
+    child.stdout.on("data", sendChunk);
+    child.stderr.on("data", sendChunk);
+    child.on("error", (error) => {
+      if (closed) return;
+      sendStreamEvent(res, { error: error.message, done: true });
+      closed = true;
+      res.end();
+    });
+    child.on("close", (exitCode) => {
+      if (closed) return;
+      sendStreamEvent(res, { chunk: `\nLog stream closed${exitCode ? ` with exit code ${exitCode}` : ""}.\n`, done: true });
+      closed = true;
+      res.end();
+    });
+
+    req.on("close", () => {
+      closed = true;
+      child.kill("SIGTERM");
+    });
   })
 );
 
