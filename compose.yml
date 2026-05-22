@@ -15,6 +15,7 @@ services:
       HOST_PROJECTS_ROOT: ${HOST_PROJECTS_ROOT:-~/projects}
       SSH_KEYS_DIR: /data/ssh
       SSH_PRIVATE_KEY_PATH: ${SSH_PRIVATE_KEY_PATH:-/root/.ssh/id_ed25519}
+      MANAGED_SSH_PRIVATE_KEY_PATH: ${MANAGED_SSH_PRIVATE_KEY_PATH:-/data/ssh/id_ed25519}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
     volumes:

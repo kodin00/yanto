@@ -38,6 +38,15 @@ const emptyProject = {
   composeContent: ""
 };
 
+const emptySshKeySettings = {
+  hasManagedKey: false,
+  hasMountedKey: false,
+  managedPrivateKeyPath: "/data/ssh/id_ed25519",
+  mountedPrivateKeyPath: "/root/.ssh/id_ed25519",
+  activePrivateKeyPath: null as string | null,
+  publicKey: null as string | null
+};
+
 const pageSize = 10;
 
 function bytes(value: number) {
@@ -107,7 +116,7 @@ export function App() {
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
   const [usage, setUsage] = useState<SystemUsage | null>(null);
-  const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: "" });
+  const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: "", sshKey: emptySshKeySettings });
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<ToastState>(null);
   const [projectModal, setProjectModal] = useState<Project | "new" | null>(null);
@@ -115,6 +124,7 @@ export function App() {
   const [logModal, setLogModal] = useState<{ title: string; logs: string } | null>(null);
   const [confirm, setConfirm] = useState<{ title: string; body: string; label: string; danger?: boolean; action: () => Promise<void> } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [sshPrivateKey, setSshPrivateKey] = useState("");
   const [projectPage, setProjectPage] = useState(1);
   const [deploymentPage, setDeploymentPage] = useState(1);
   const [containerPage, setContainerPage] = useState(1);
@@ -248,6 +258,21 @@ export function App() {
   async function copyText(value: string) {
     await navigator.clipboard.writeText(value);
     setToast({ message: "Copied." });
+  }
+
+  async function saveSshPrivateKey(event: FormEvent) {
+    event.preventDefault();
+    setBusy("ssh-key");
+    try {
+      await api.saveSshKey(sshPrivateKey);
+      setSshPrivateKey("");
+      await loadAll();
+      setToast({ message: "SSH key saved." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to save SSH key.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
   }
 
   if (loading) {
@@ -563,6 +588,48 @@ export function App() {
                 </div>
                 <p className="muted">Get the token from Projects, then copy the Bearer token shown on that project.</p>
               </div>
+            </section>
+            <section className="panel webhook-settings">
+              <div className="panel-head">
+                <h2>Git SSH key</h2>
+                <KeyRound size={19} />
+              </div>
+              <p className="muted">Paste the private key Yanto should use for Git clone and pull. It is stored as a file in the persistent SSH volume, not shown again after saving.</p>
+              <dl className="settings-list ssh-status-list">
+                <div>
+                  <dt>Active key path</dt>
+                  <dd>{settings.sshKey?.activePrivateKeyPath ?? "No key found"}</dd>
+                </div>
+                <div>
+                  <dt>Managed key</dt>
+                  <dd>{settings.sshKey?.hasManagedKey ? "Saved in app volume" : "Not saved"}</dd>
+                </div>
+                <div>
+                  <dt>Mounted VPS key</dt>
+                  <dd>{settings.sshKey?.hasMountedKey ? settings.sshKey.mountedPrivateKeyPath : "Not found"}</dd>
+                </div>
+              </dl>
+              {settings.sshKey?.publicKey ? (
+                <div className="token-box ssh-public-key-box">
+                  <span>{settings.sshKey.publicKey}</span>
+                  <button type="button" onClick={() => void copyText(settings.sshKey?.publicKey ?? "")} title="Copy public key" aria-label="Copy public key">
+                    <Copy size={15} />
+                  </button>
+                </div>
+              ) : null}
+              <form className="form-grid ssh-key-form" onSubmit={saveSshPrivateKey}>
+                <TextAreaField
+                  label="Private key"
+                  value={sshPrivateKey}
+                  onChange={setSshPrivateKey}
+                  placeholder={"Paste the full private key, starting with -----BEGIN OPENSSH PRIVATE KEY-----"}
+                />
+                <div className="actions">
+                  <Button type="submit" disabled={busy === "ssh-key" || !sshPrivateKey.trim()} icon={<KeyRound size={16} />}>
+                    Save SSH key
+                  </Button>
+                </div>
+              </form>
             </section>
             <section className="panel">
               <div className="panel-head">

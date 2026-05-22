@@ -12,6 +12,7 @@ import { logger } from "./logger.js";
 import { cleanupDocker, containerLogs, listContainers, restartContainer, stopContainer } from "./services/docker.js";
 import { findDeployment, latestDeployments, startDeployment } from "./services/deployments.js";
 import { createProject, deleteProject, getProject, listProjects, updateProject } from "./services/projects.js";
+import { managedSshKeyStatus, saveManagedSshPrivateKey } from "./services/ssh.js";
 import { systemUsage } from "./services/system.js";
 import { constantTimeEqual } from "./services/tokens.js";
 
@@ -222,13 +223,25 @@ app.get(
   requireAuth,
   asyncRoute(async (_req, res) => {
     const count = await db.select().from(projects);
+    const sshKey = await managedSshKeyStatus();
     res.json({
       projectsRoot: config.projectsRoot,
       hostProjectsRoot: config.hostProjectsRoot,
       sshKeysDir: config.sshKeysDir,
       appBaseUrl: config.appBaseUrl,
-      projectCount: count.length
+      projectCount: count.length,
+      sshKey
     });
+  })
+);
+
+app.post(
+  "/api/settings/ssh-key",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const body = z.object({ privateKey: z.string().min(1) }).parse(req.body);
+    const sshKey = await saveManagedSshPrivateKey(body.privateKey);
+    res.json({ ok: true, sshKey });
   })
 );
 

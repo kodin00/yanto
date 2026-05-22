@@ -7,7 +7,7 @@ import { logger } from "../logger.js";
 import { runCommand } from "./commands.js";
 import { pathExists } from "./paths.js";
 import { createId } from "./tokens.js";
-import { gitSshEnv } from "./ssh.js";
+import { gitSshEnv, resolveGitPrivateKeyPath } from "./ssh.js";
 
 const activeDeployments = new Map<string, DeploymentRow>();
 
@@ -49,9 +49,13 @@ async function detectComposeFile(project: ProjectRow) {
 }
 
 async function runDeployment(project: ProjectRow, deployment: DeploymentRow) {
-  const env = gitSshEnv(null);
+  const privateKeyPath = await resolveGitPrivateKeyPath();
+  const env = gitSshEnv(privateKeyPath);
   try {
     await appendDeploymentLog(deployment.id, `Starting deployment for ${project.name}\n`);
+    if (project.gitUrl) {
+      await appendDeploymentLog(deployment.id, privateKeyPath ? `Using SSH key at ${privateKeyPath}\n` : "No SSH key found; Git SSH may fail.\n");
+    }
     const exists = await pathExists(project.localPath);
     if (!exists && project.gitUrl) {
       await runLogged(deployment.id, "git", ["clone", "--branch", project.branch, project.gitUrl, project.localPath], process.cwd(), env);

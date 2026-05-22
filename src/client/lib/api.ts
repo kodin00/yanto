@@ -55,6 +55,11 @@ export const api = {
   restartContainer: (id: string) => request<{ ok: true }>(`/api/containers/${id}/restart`, { method: "POST" }),
   systemUsage: () => request<SystemUsage>("/api/system/usage"),
   cleanup: () => request<{ logs: string }>("/api/system/cleanup", { method: "POST" }),
+  saveSshKey: (privateKey: string) =>
+    request<{ ok: true; sshKey: { privateKeyPath: string; publicKey: string } }>("/api/settings/ssh-key", {
+      method: "POST",
+      body: JSON.stringify({ privateKey })
+    }),
   settings: () =>
     request<{
       projectsRoot: string;
@@ -62,5 +67,13 @@ export const api = {
       sshKeysDir: string;
       appBaseUrl: string;
       projectCount: number;
+      sshKey: {
+        hasManagedKey: boolean;
+        hasMountedKey: boolean;
+        managedPrivateKeyPath: string;
+        mountedPrivateKeyPath: string;
+        activePrivateKeyPath: string | null;
+        publicKey: string | null;
+      };
     }>("/api/settings")
 };

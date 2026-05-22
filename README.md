@@ -78,6 +78,8 @@ Then restart:
 docker compose -f compose.yml up -d --build
 ```
 
+Alternatively, paste a private key in `Settings -> Git SSH key`. Yanto stores it in `/data/ssh/id_ed25519`, which is persisted by the `yanto_ssh` Docker volume, and uses that key before any mounted VPS key.
+
 ## Development
 
 ```bash
