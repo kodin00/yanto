@@ -12,6 +12,7 @@ export const config = {
   projectsRoot: path.resolve(process.env.PROJECTS_ROOT ?? "/projects"),
   hostProjectsRoot: process.env.HOST_PROJECTS_ROOT ?? "~/projects",
   sshKeysDir: path.resolve(process.env.SSH_KEYS_DIR ?? "/tmp/yanto-ssh"),
+  sshPrivateKeyPath: process.env.SSH_PRIVATE_KEY_PATH ?? "/root/.ssh/id_ed25519",
   appBaseUrl: process.env.APP_BASE_URL ?? `http://localhost:${process.env.PORT ?? "8080"}`,
   cookieSecure:
     process.env.COOKIE_SECURE === undefined

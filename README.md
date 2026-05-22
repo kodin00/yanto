@@ -51,9 +51,32 @@ Important environment variables:
 - `ADMIN_PASSWORD`
 - `PROJECTS_ROOT` inside the container, default `/projects`
 - `HOST_PROJECTS_ROOT` for display, default `~/projects`
-- `SSH_SOURCE_DIR` host SSH folder mounted read-only into the app, default `~/.ssh`
+- `SSH_SOURCE_DIR` host SSH folder mounted read-only into the app, for example `/home/ubuntu/.ssh`
+- `SSH_PRIVATE_KEY_PATH` private key path inside the app container, default `/root/.ssh/id_ed25519`
 - `SSH_KEYS_DIR`, default `/data/ssh`
 - `APP_BASE_URL`
+
+## Git SSH On A VPS
+
+If Git deploys fail with `Permission denied (publickey)`, test from inside the app container, not only on the host:
+
+```bash
+docker compose -f compose.yml exec app ssh -T git@github.com
+docker compose -f compose.yml exec app ls -la /root/.ssh
+```
+
+Your `.env` should point at the host user's SSH folder:
+
+```env
+SSH_SOURCE_DIR=/home/ubuntu/.ssh
+SSH_PRIVATE_KEY_PATH=/root/.ssh/id_ed25519
+```
+
+Then restart:
+
+```bash
+docker compose -f compose.yml up -d --build
+```
 
 ## Development
 
