@@ -70,6 +70,20 @@ export function TextAreaField({
   );
 }
 
+export function ToggleField({ label, value, onChange, description }: { label: string; value: boolean; onChange: (value: boolean) => void; description?: string }) {
+  return (
+    <div className="toggle-field">
+      <div>
+        <span>{label}</span>
+        {description ? <p>{description}</p> : null}
+      </div>
+      <button type="button" role="switch" aria-checked={value} className={`toggle-switch ${value ? "on" : ""}`} onClick={() => onChange(!value)}>
+        <span />
+      </button>
+    </div>
+  );
+}
+
 export function CustomSelect<T extends string>({
   label,
   value,

@@ -10,6 +10,7 @@ export type Project = {
   localPath: string;
   composeFile: string;
   composeContent: string | null;
+  autoStart: boolean;
   deployToken: string;
   sshPublicKey: string | null;
   createdAt: string;

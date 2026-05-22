@@ -5,6 +5,7 @@ import { db } from "../db/index.js";
 import { deployments, projects, type DeploymentRow, type ProjectRow } from "../db/schema.js";
 import { logger } from "../logger.js";
 import { runCommand } from "./commands.js";
+import { autoStartOverrideFile, buildAutoStartOverride } from "./compose.js";
 import { pathExists } from "./paths.js";
 import { createId } from "./tokens.js";
 import { gitSshEnv, resolveGitPrivateKeyPath } from "./ssh.js";
@@ -83,7 +84,20 @@ async function runDeployment(project: ProjectRow, deployment: DeploymentRow) {
       await appendDeploymentLog(deployment.id, `Wrote compose file ${composeFile} from saved editor content.\n`);
     }
     await fs.access(`${project.localPath}/${composeFile}`);
-    await runLogged(deployment.id, "docker", ["compose", "-f", composeFile, "up", "-d", "--build"], project.localPath);
+
+    const composeArgs = ["compose", "-f", composeFile];
+    const restartOverride = autoStartOverrideFile();
+    const restartOverridePath = path.join(project.localPath, restartOverride);
+    if (project.autoStart) {
+      const composeContent = await fs.readFile(path.join(project.localPath, composeFile), "utf8");
+      await fs.writeFile(restartOverridePath, buildAutoStartOverride(composeContent), "utf8");
+      await appendDeploymentLog(deployment.id, "Auto start is enabled; applying restart: unless-stopped override.\n");
+      composeArgs.push("-f", restartOverride);
+    } else {
+      await fs.rm(restartOverridePath, { force: true });
+      await appendDeploymentLog(deployment.id, "Auto start is disabled; running compose without restart override.\n");
+    }
+    await runLogged(deployment.id, "docker", [...composeArgs, "up", "-d", "--build"], project.localPath);
 
     await db
       .update(deployments)

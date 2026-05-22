@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import type { ContainerInfo, Deployment, Project, SystemUsage } from "../shared/types";
-import { Button, ConfirmDialog, IconButton, LoadingInline, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast } from "./components/ui";
+import { Button, ConfirmDialog, IconButton, LoadingInline, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast, ToggleField } from "./components/ui";
 import { api } from "./lib/api";
 
 type View = "dashboard" | "projects" | "deployments" | "containers" | "settings";
@@ -37,7 +37,8 @@ const emptyProject = {
   branch: "master",
   folderName: "",
   composeFile: "docker-compose.yml",
-  composeContent: ""
+  composeContent: "",
+  autoStart: false
 };
 
 const emptySshKeySettings = {
@@ -304,7 +305,8 @@ export function App() {
         branch: project.branch,
         folderName: project.folderName,
         composeFile: project.composeFile,
-        composeContent: project.composeContent ?? ""
+        composeContent: project.composeContent ?? "",
+        autoStart: project.autoStart
       });
       setProjectModal(project);
       return;
@@ -484,6 +486,10 @@ export function App() {
                       <div>
                         <dt>Compose</dt>
                         <dd>{project.composeFile}</dd>
+                      </div>
+                      <div>
+                        <dt>Auto start</dt>
+                        <dd>{project.autoStart ? "On restart" : "Off"}</dd>
                       </div>
                     </dl>
                   </div>
@@ -762,6 +768,12 @@ export function App() {
             <TextField label="Branch" value={projectForm.branch} onChange={(branch) => setProjectForm((current) => ({ ...current, branch }))} required />
             <TextField label="Folder name" value={projectForm.folderName} onChange={(folderName) => setProjectForm((current) => ({ ...current, folderName }))} placeholder={slugifyFolderName(projectForm.name) || "Auto from project name"} />
             <TextField label="Compose file" value={projectForm.composeFile} onChange={(composeFile) => setProjectForm((current) => ({ ...current, composeFile }))} placeholder="docker-compose.yml" required />
+            <ToggleField
+              label="Auto start after restart"
+              value={projectForm.autoStart}
+              onChange={(autoStart) => setProjectForm((current) => ({ ...current, autoStart }))}
+              description="Deploy with a Yanto compose override that sets restart: unless-stopped."
+            />
             <TextAreaField
               label="Compose editor"
               value={projectForm.composeContent}

@@ -882,6 +882,66 @@ th {
   border-color: var(--green);
 }
 
+.toggle-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px;
+  background: var(--field);
+  border: 1px solid var(--line);
+}
+
+.toggle-field > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.toggle-field span {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.toggle-field p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.toggle-switch {
+  width: 52px;
+  height: 28px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 3px;
+  background: #d7d7d7;
+  border: 1px solid var(--line);
+}
+
+.toggle-switch span {
+  width: 20px;
+  height: 20px;
+  display: block;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  transition: transform 0.16s ease;
+}
+
+.toggle-switch.on {
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.toggle-switch.on span {
+  transform: translateX(22px);
+}
+
 .select-trigger {
   display: flex;
   align-items: center;

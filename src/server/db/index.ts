@@ -20,6 +20,7 @@ export async function migrate() {
       local_path text NOT NULL,
       compose_file text NOT NULL,
       compose_content text,
+      auto_start boolean NOT NULL DEFAULT false,
       deploy_token text NOT NULL,
       ssh_private_key_path text,
       ssh_public_key text,
@@ -30,6 +31,7 @@ export async function migrate() {
 
   await pool.query(`ALTER TABLE projects ALTER COLUMN git_url DROP NOT NULL;`);
   await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS compose_content text;`);
+  await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS auto_start boolean NOT NULL DEFAULT false;`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS deployments (

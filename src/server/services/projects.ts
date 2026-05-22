@@ -11,6 +11,7 @@ export type CreateProjectInput = {
   folderName: string;
   composeFile?: string;
   composeContent?: string;
+  autoStart?: boolean;
 };
 
 export async function listProjects() {
@@ -35,6 +36,7 @@ export async function createProject(input: CreateProjectInput) {
       localPath,
       composeFile: normalizeComposeFile(input.composeFile ?? "docker-compose.yml"),
       composeContent: input.composeContent?.trim() || null,
+      autoStart: input.autoStart ?? false,
       deployToken: createDeployToken(),
       sshPrivateKeyPath: null,
       sshPublicKey: null,
@@ -52,7 +54,7 @@ export async function updateProject(id: string, input: Partial<CreateProjectInpu
     return undefined;
   }
 
-  const patch: Record<string, string | Date | null> = {
+  const patch: Record<string, string | boolean | Date | null> = {
     updatedAt: new Date()
   };
   if (input.name !== undefined) patch.name = input.name.trim();
@@ -63,6 +65,7 @@ export async function updateProject(id: string, input: Partial<CreateProjectInpu
   if (input.branch !== undefined) patch.branch = input.branch.trim() || "master";
   if (input.composeFile !== undefined) patch.composeFile = normalizeComposeFile(input.composeFile);
   if (input.composeContent !== undefined) patch.composeContent = input.composeContent.trim();
+  if (input.autoStart !== undefined) patch.autoStart = input.autoStart;
   if (input.folderName !== undefined) {
     const folderName = input.folderName.trim() || (input.name ? slugifyFolderName(input.name) : "");
     if (folderName) {

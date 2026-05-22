@@ -35,12 +35,12 @@ export const api = {
   logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
   me: () => request<{ username: string }>("/api/auth/me"),
   projects: () => request<Project[]>("/api/projects"),
-  createProject: (payload: Pick<Project, "name" | "branch" | "folderName" | "composeFile"> & { gitUrl?: string | null; composeContent?: string | null }) =>
+  createProject: (payload: Pick<Project, "name" | "branch" | "folderName" | "composeFile" | "autoStart"> & { gitUrl?: string | null; composeContent?: string | null }) =>
     request<Project>("/api/projects", {
       method: "POST",
       body: JSON.stringify(payload)
     }),
-  updateProject: (id: string, payload: Partial<Pick<Project, "name" | "branch" | "folderName" | "composeFile"> & { gitUrl?: string | null; composeContent?: string | null }>) =>
+  updateProject: (id: string, payload: Partial<Pick<Project, "name" | "branch" | "folderName" | "composeFile" | "autoStart"> & { gitUrl?: string | null; composeContent?: string | null }>) =>
     request<Project>(`/api/projects/${id}`, {
       method: "PATCH",
       body: JSON.stringify(payload)

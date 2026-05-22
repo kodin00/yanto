@@ -1,4 +1,4 @@
-import { integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
 export const projects = pgTable("projects", {
   id: text("id").primaryKey(),
@@ -9,6 +9,7 @@ export const projects = pgTable("projects", {
   localPath: text("local_path").notNull(),
   composeFile: text("compose_file").notNull(),
   composeContent: text("compose_content"),
+  autoStart: boolean("auto_start").notNull().default(false),
   deployToken: text("deploy_token").notNull(),
   sshPrivateKeyPath: text("ssh_private_key_path"),
   sshPublicKey: text("ssh_public_key"),

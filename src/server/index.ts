@@ -27,7 +27,8 @@ const projectInput = z.object({
   branch: z.string().optional().default("master"),
   folderName: z.string().optional().default(""),
   composeFile: z.string().min(1).optional(),
-  composeContent: z.string().optional()
+  composeContent: z.string().optional(),
+  autoStart: z.boolean().optional().default(false)
 });
 
 function asyncRoute(handler: (req: express.Request, res: express.Response) => Promise<void>) {
