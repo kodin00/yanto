@@ -18,7 +18,8 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${PROJECTS_ROOT:-~/projects}:/projects
+      - ${HOST_PROJECTS_ROOT:-~/projects}:/projects
+      - ${SSH_SOURCE_DIR:-~/.ssh}:/root/.ssh:ro
       - yanto_ssh:/data/ssh
     depends_on:
       postgres:

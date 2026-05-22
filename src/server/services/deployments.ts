@@ -33,7 +33,8 @@ async function runLogged(deploymentId: string, command: string, args: string[], 
   });
   await appendDeploymentLog(deploymentId, `\n`);
   if (result.exitCode !== 0) {
-    throw new Error(`Command failed with exit code ${result.exitCode}`);
+    const tail = result.output.trim().split("\n").slice(-12).join("\n");
+    throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.exitCode}${tail ? `:\n${tail}` : ""}`);
   }
 }
 
@@ -48,7 +49,7 @@ async function detectComposeFile(project: ProjectRow) {
 }
 
 async function runDeployment(project: ProjectRow, deployment: DeploymentRow) {
-  const env = gitSshEnv(project.sshPrivateKeyPath);
+  const env = gitSshEnv(null);
   try {
     await appendDeploymentLog(deployment.id, `Starting deployment for ${project.name}\n`);
     const exists = await pathExists(project.localPath);

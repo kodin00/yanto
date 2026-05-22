@@ -414,12 +414,6 @@ export function App() {
                       <Copy size={15} />
                     </button>
                   </div>
-                  {project.sshPublicKey ? (
-                    <details>
-                      <summary>SSH deploy key</summary>
-                      <pre>{project.sshPublicKey}</pre>
-                    </details>
-                  ) : null}
                   <div className="actions">
                     <Button variant="secondary" onClick={() => openProject(project)}>
                       Edit

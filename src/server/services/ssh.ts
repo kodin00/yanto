@@ -23,11 +23,8 @@ export async function ensureSshKey(projectId: string) {
 }
 
 export function gitSshEnv(privateKeyPath: string | null) {
-  if (!privateKeyPath) {
-    return {};
-  }
-
+  const baseCommand = "ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/yanto_known_hosts";
   return {
-    GIT_SSH_COMMAND: `ssh -i ${privateKeyPath} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new`
+    GIT_SSH_COMMAND: privateKeyPath ? `${baseCommand} -i ${privateKeyPath}` : baseCommand
   };
 }

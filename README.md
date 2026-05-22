@@ -18,8 +18,9 @@ Open `http://localhost:8080` and sign in with `ADMIN_USERNAME` and `ADMIN_PASSWO
 The app is designed to run with:
 
 - `/var/run/docker.sock:/var/run/docker.sock` so it can inspect and control Docker.
-- `${PROJECTS_ROOT:-~/projects}:/projects` so registered projects are cloned or deployed from the host projects folder.
-- A persistent SSH volume at `/data/ssh` for generated deploy keys.
+- `${HOST_PROJECTS_ROOT:-~/projects}:/projects` so registered projects are cloned or deployed from the host projects folder.
+- `${SSH_SOURCE_DIR:-~/.ssh}:/root/.ssh:ro` so Git deployments use the SSH key you configured on the VPS.
+- A persistent SSH volume at `/data/ssh` is reserved for app-managed keys.
 
 Docker socket access is powerful. Run this only for your own trusted admin dashboard.
 
@@ -50,6 +51,7 @@ Important environment variables:
 - `ADMIN_PASSWORD`
 - `PROJECTS_ROOT` inside the container, default `/projects`
 - `HOST_PROJECTS_ROOT` for display, default `~/projects`
+- `SSH_SOURCE_DIR` host SSH folder mounted read-only into the app, default `~/.ssh`
 - `SSH_KEYS_DIR`, default `/data/ssh`
 - `APP_BASE_URL`
 

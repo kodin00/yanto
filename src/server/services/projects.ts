@@ -1,7 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { projects } from "../db/schema.js";
-import { ensureSshKey } from "./ssh.js";
 import { createDeployToken, createId } from "./tokens.js";
 import { ensureProjectsRoot, normalizeComposeFile, projectPath, slugifyFolderName } from "./paths.js";
 
@@ -24,7 +23,6 @@ export async function createProject(input: CreateProjectInput) {
   const folderName = input.folderName.trim() || slugifyFolderName(input.name);
   const localPath = projectPath(folderName);
   const gitUrl = input.gitUrl?.trim() || null;
-  const sshKey = gitUrl ? await ensureSshKey(id) : null;
 
   const [project] = await db
     .insert(projects)
@@ -38,8 +36,8 @@ export async function createProject(input: CreateProjectInput) {
       composeFile: normalizeComposeFile(input.composeFile ?? "docker-compose.yml"),
       composeContent: input.composeContent?.trim() || null,
       deployToken: createDeployToken(),
-      sshPrivateKeyPath: sshKey?.privateKeyPath ?? null,
-      sshPublicKey: sshKey?.publicKey ?? null,
+      sshPrivateKeyPath: null,
+      sshPublicKey: null,
       createdAt: new Date(),
       updatedAt: new Date()
     })
@@ -61,11 +59,6 @@ export async function updateProject(id: string, input: Partial<CreateProjectInpu
   if (input.gitUrl !== undefined) {
     const gitUrl = input.gitUrl.trim() || null;
     patch.gitUrl = gitUrl;
-    if (gitUrl && !current.sshPrivateKeyPath) {
-      const sshKey = await ensureSshKey(id);
-      patch.sshPrivateKeyPath = sshKey.privateKeyPath;
-      patch.sshPublicKey = sshKey.publicKey;
-    }
   }
   if (input.branch !== undefined) patch.branch = input.branch.trim() || "master";
   if (input.composeFile !== undefined) patch.composeFile = normalizeComposeFile(input.composeFile);
