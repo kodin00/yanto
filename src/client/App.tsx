@@ -110,6 +110,10 @@ function usedMemoryMb(memoryUsage: string) {
   return `${mb >= 10 ? mb.toFixed(0) : mb.toFixed(1)} MB`;
 }
 
+function isProtectedYantoContainer(container: ContainerInfo) {
+  return /^yanto-(app|postgres)-\d+$/.test(container.name);
+}
+
 export function App() {
   const [user, setUser] = useState<string | null>(null);
   const [login, setLogin] = useState({ username: "admin", password: "" });
@@ -460,63 +464,67 @@ export function App() {
             <div className="project-grid">
               {visibleProjects.map((project) => (
                 <article className="project-card" key={project.id}>
-                  <div className="project-card-head">
-                    <div>
-                      <h3>{project.name}</h3>
-                      <p>{project.gitUrl || "Compose file project"}</p>
+                  <div className="project-card-main">
+                    <div className="project-card-head">
+                      <div>
+                        <h3>{project.name}</h3>
+                        <p>{project.gitUrl || "Compose file project"}</p>
+                      </div>
+                      <StatusBadge status={deployments.find((deployment) => deployment.projectId === project.id)?.status ?? "ready"} />
                     </div>
-                    <StatusBadge status={deployments.find((deployment) => deployment.projectId === project.id)?.status ?? "ready"} />
+                    <dl>
+                      <div>
+                        <dt>Branch</dt>
+                        <dd>{project.gitUrl ? project.branch : "-"}</dd>
+                      </div>
+                      <div>
+                        <dt>Folder</dt>
+                        <dd>{project.localPath}</dd>
+                      </div>
+                      <div>
+                        <dt>Compose</dt>
+                        <dd>{project.composeFile}</dd>
+                      </div>
+                    </dl>
                   </div>
-                  <dl>
-                    <div>
-                      <dt>Branch</dt>
-                      <dd>{project.gitUrl ? project.branch : "-"}</dd>
+                  <div className="project-card-side">
+                    <div className="endpoint-box">
+                      <span>{endpoint(project, settings.appBaseUrl)}</span>
+                      <button type="button" onClick={() => void copyText(endpoint(project, settings.appBaseUrl))} title="Copy endpoint" aria-label="Copy endpoint">
+                        <Copy size={15} />
+                      </button>
                     </div>
-                    <div>
-                      <dt>Folder</dt>
-                      <dd>{project.localPath}</dd>
+                    <div className="token-box">
+                      <span>Bearer {project.deployToken}</span>
+                      <button type="button" onClick={() => void copyText(`Bearer ${project.deployToken}`)} title="Copy token" aria-label="Copy token">
+                        <Copy size={15} />
+                      </button>
                     </div>
-                    <div>
-                      <dt>Compose</dt>
-                      <dd>{project.composeFile}</dd>
+                    <div className="actions">
+                      <Button variant="secondary" onClick={() => openProject(project)}>
+                        Edit
+                      </Button>
+                      <Button disabled={busy === `deploy:${project.id}`} onClick={() => void deploy(project)} icon={<Play size={15} />}>
+                        Deploy
+                      </Button>
+                      <Button
+                        variant="danger"
+                        onClick={() =>
+                          setConfirm({
+                            title: "Remove project",
+                            body: "This removes the project record and deployment logs. The project folder is left untouched.",
+                            label: "Remove",
+                            danger: true,
+                            action: async () => {
+                              await api.deleteProject(project.id);
+                              await loadAll();
+                            }
+                          })
+                        }
+                      >
+                        Remove
+                      </Button>
                     </div>
-                  </dl>
-                  <div className="endpoint-box">
-                    <span>{endpoint(project, settings.appBaseUrl)}</span>
-                    <button type="button" onClick={() => void copyText(endpoint(project, settings.appBaseUrl))} title="Copy endpoint" aria-label="Copy endpoint">
-                      <Copy size={15} />
-                    </button>
-                  </div>
-                  <div className="token-box">
-                    <span>Bearer {project.deployToken}</span>
-                    <button type="button" onClick={() => void copyText(`Bearer ${project.deployToken}`)} title="Copy token" aria-label="Copy token">
-                      <Copy size={15} />
-                    </button>
-                  </div>
-                  <div className="actions">
-                    <Button variant="secondary" onClick={() => openProject(project)}>
-                      Edit
-                    </Button>
-                    <Button disabled={busy === `deploy:${project.id}`} onClick={() => void deploy(project)} icon={<Play size={15} />}>
-                      Deploy
-                    </Button>
-                    <Button
-                      variant="danger"
-                      onClick={() =>
-                        setConfirm({
-                          title: "Remove project",
-                          body: "This removes the project record and deployment logs. The project folder is left untouched.",
-                          label: "Remove",
-                          danger: true,
-                          action: async () => {
-                            await api.deleteProject(project.id);
-                            await loadAll();
-                          }
-                        })
-                      }
-                    >
-                      Remove
-                    </Button>
                   </div>
                 </article>
               ))}
@@ -556,56 +564,65 @@ export function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleContainers.map((container) => (
-                    <tr key={container.id}>
-                      <td>{container.name}</td>
-                      <td>{container.image}</td>
-                      <td><StatusBadge status={container.state} /></td>
-                      <td className="ports-cell">{container.ports || "-"}</td>
-                      <td>{container.cpuPercent}</td>
-                      <td>{usedMemoryMb(container.memoryUsage)} ({container.memoryPercent})</td>
-                      <td className="table-actions icon-actions">
-                        <IconButton label="View logs" variant="secondary" onClick={() => void openContainerLogs(container)}>
-                          <ScrollText size={15} />
-                        </IconButton>
-                        <IconButton
-                          label="Restart container"
-                          variant="secondary"
-                          onClick={() =>
-                            setConfirm({
-                              title: "Restart container",
-                              body: `Restart ${container.name}?`,
-                              label: "Restart",
-                              action: async () => {
-                                await api.restartContainer(container.id);
-                                await loadAll();
-                              }
-                            })
-                          }
-                        >
-                          <RotateCw size={15} />
-                        </IconButton>
-                        <IconButton
-                          label="Stop container"
-                          variant="danger"
-                          onClick={() =>
-                            setConfirm({
-                              title: "Stop container",
-                              body: `Stop ${container.name}?`,
-                              label: "Stop",
-                              danger: true,
-                              action: async () => {
-                                await api.stopContainer(container.id);
-                                await loadAll();
-                              }
-                            })
-                          }
-                        >
-                          <Square size={15} />
-                        </IconButton>
-                      </td>
-                    </tr>
-                  ))}
+                  {visibleContainers.map((container) => {
+                    const protectedContainer = isProtectedYantoContainer(container);
+                    return (
+                      <tr key={container.id}>
+                        <td>{container.name}</td>
+                        <td>{container.image}</td>
+                        <td><StatusBadge status={container.state} /></td>
+                        <td className="ports-cell">{container.ports || "-"}</td>
+                        <td>{container.cpuPercent}</td>
+                        <td>{usedMemoryMb(container.memoryUsage)} ({container.memoryPercent})</td>
+                        <td className="action-cell">
+                          {protectedContainer ? (
+                            <span className="protected-label">Protected</span>
+                          ) : (
+                            <div className="table-actions icon-actions">
+                              <IconButton label="View logs" variant="secondary" onClick={() => void openContainerLogs(container)}>
+                                <ScrollText size={15} />
+                              </IconButton>
+                              <IconButton
+                                label="Restart container"
+                                variant="secondary"
+                                onClick={() =>
+                                  setConfirm({
+                                    title: "Restart container",
+                                    body: `Restart ${container.name}?`,
+                                    label: "Restart",
+                                    action: async () => {
+                                      await api.restartContainer(container.id);
+                                      await loadAll();
+                                    }
+                                  })
+                                }
+                              >
+                                <RotateCw size={15} />
+                              </IconButton>
+                              <IconButton
+                                label="Stop container"
+                                variant="danger"
+                                onClick={() =>
+                                  setConfirm({
+                                    title: "Stop container",
+                                    body: `Stop ${container.name}?`,
+                                    label: "Stop",
+                                    danger: true,
+                                    action: async () => {
+                                      await api.stopContainer(container.id);
+                                      await loadAll();
+                                    }
+                                  })
+                                }
+                              >
+                                <Square size={15} />
+                              </IconButton>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

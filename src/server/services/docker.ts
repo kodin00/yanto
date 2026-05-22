@@ -64,7 +64,19 @@ export async function containerLogs(containerId: string) {
   return result.output;
 }
 
+async function assertContainerCanBeControlled(containerId: string) {
+  const result = await runCommand("docker", ["inspect", "--format", "{{.Name}}", containerId]);
+  if (result.exitCode !== 0) {
+    throw new Error(result.output || "Unable to inspect container.");
+  }
+  const name = result.output.trim().replace(/^\//, "");
+  if (/^yanto-(app|postgres)-\d+$/.test(name)) {
+    throw new Error("Yanto app containers are protected from stop and restart actions.");
+  }
+}
+
 export async function stopContainer(containerId: string) {
+  await assertContainerCanBeControlled(containerId);
   const result = await runCommand("docker", ["stop", containerId]);
   if (result.exitCode !== 0) {
     throw new Error(result.output || "Unable to stop container.");
@@ -72,6 +84,7 @@ export async function stopContainer(containerId: string) {
 }
 
 export async function restartContainer(containerId: string) {
+  await assertContainerCanBeControlled(containerId);
   const result = await runCommand("docker", ["restart", containerId]);
   if (result.exitCode !== 0) {
     throw new Error(result.output || "Unable to restart container.");

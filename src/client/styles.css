@@ -568,7 +568,7 @@ button:disabled {
 
 .project-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: 1fr;
   gap: 1px;
   background: var(--line);
   border: 1px solid var(--line);
@@ -577,11 +577,21 @@ button:disabled {
 .project-card {
   min-width: 0;
   display: grid;
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.72fr);
+  gap: 18px;
+  align-items: stretch;
   padding: 16px;
   border: 0;
   border-radius: 0;
   background: var(--panel-strong);
+}
+
+.project-card-main,
+.project-card-side {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+  align-content: start;
 }
 
 .project-card-head {
@@ -699,7 +709,6 @@ details pre {
 
 .icon-actions {
   flex-wrap: nowrap;
-  min-width: 118px;
 }
 
 .table-wrap {
@@ -718,7 +727,7 @@ td {
   text-align: left;
   border-bottom: 1px solid var(--line);
   max-width: 280px;
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 .ports-cell {
@@ -727,6 +736,34 @@ td {
   white-space: normal;
   overflow-wrap: anywhere;
   line-height: 1.55;
+  vertical-align: top;
+}
+
+.action-cell {
+  width: 132px;
+  min-width: 132px;
+  max-width: 132px;
+  padding-left: 8px;
+  padding-right: 8px;
+  text-align: right;
+}
+
+.action-cell .table-actions {
+  justify-content: flex-end;
+}
+
+.protected-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 8px;
+  color: var(--soft);
+  background: var(--field);
+  border: 1px solid var(--line-light);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .pagination {
@@ -1038,6 +1075,10 @@ th {
   .webhook-settings {
     grid-column: auto;
   }
+
+  .project-card {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 620px) {
@@ -1073,5 +1114,9 @@ th {
   .actions,
   .table-actions {
     justify-content: flex-start;
+  }
+
+  .action-cell .table-actions {
+    justify-content: flex-end;
   }
 }
