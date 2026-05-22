@@ -1,0 +1,44 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      DATABASE_URL: postgres://yanto:${POSTGRES_PASSWORD:-yanto}@postgres:5432/yanto
+      JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-secret}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-this-admin-password}
+      PROJECTS_ROOT: /projects
+      HOST_PROJECTS_ROOT: ${PROJECTS_ROOT:-~/projects}
+      SSH_KEYS_DIR: /data/ssh
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${PROJECTS_ROOT:-~/projects}:/projects
+      - yanto_ssh:/data/ssh
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: yanto
+      POSTGRES_USER: yanto
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yanto}
+    volumes:
+      - yanto_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yanto -d yanto"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  yanto_postgres:
+  yanto_ssh:
