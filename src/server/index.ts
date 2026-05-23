@@ -11,7 +11,7 @@ import { db, migrate, pool } from "./db/index.js";
 import { projects } from "./db/schema.js";
 import { logger } from "./logger.js";
 import { listAuditLogs, recordAuditLog } from "./services/audit.js";
-import { createPostgresBackup, getBackup, listBackups, markBackupDownloaded } from "./services/backups.js";
+import { createPostgresBackup, deleteBackup, getBackup, listBackups, listPostgresBackupTargets, markBackupDownloaded } from "./services/backups.js";
 import { cleanupDocker, containerLogs, listContainers, previewDockerCleanup, restartContainer, stopContainer } from "./services/docker.js";
 import { findDeployment, latestDeployments, rollbackTargetForProject, startDeployment } from "./services/deployments.js";
 import { previewEnvContent, previewProjectEnv, readProjectEnvVariables, writeProjectEnv, writeProjectEnvVariables } from "./services/project-env.js";
@@ -53,6 +53,10 @@ const envInput = z.object({
 const envVariablesInput = z.object({
   envFile: z.string().min(1).optional(),
   variables: z.array(z.object({ key: z.string(), value: z.string().nullable().optional(), masked: z.boolean().optional() }))
+});
+
+const backupInput = z.object({
+  containerId: z.string().min(1).optional()
 });
 
 function asyncRoute(handler: (req: express.Request, res: express.Response) => Promise<void>) {
@@ -328,17 +332,27 @@ app.get(
   })
 );
 
+app.get(
+  "/api/backups/postgres-targets",
+  requireAuth,
+  asyncRoute(async (_req, res) => {
+    res.json(await listPostgresBackupTargets());
+  })
+);
+
 app.post(
   "/api/backups",
   requireAuth,
   asyncRoute(async (req, res) => {
-    const backup = await createPostgresBackup();
+    const body = backupInput.parse(req.body ?? {});
+    const backup = await createPostgresBackup(body.containerId);
     await recordAuditLog({
       actor: actor(req),
       action: "backup.create",
       entityType: "backup",
       entityId: backup.id,
-      metadata: { kind: backup.kind, status: backup.status, fileSizeBytes: backup.fileSizeBytes }
+      projectId: backup.projectId,
+      metadata: { kind: backup.kind, status: backup.status, fileSizeBytes: backup.fileSizeBytes, note: backup.note }
     });
     res.status(201).json(backup);
   })
@@ -356,6 +370,20 @@ app.get(
     await markBackupDownloaded(backup.id);
     await recordAuditLog({ actor: actor(req), action: "backup.download", entityType: "backup", entityId: backup.id, metadata: { filename: backup.filename } });
     res.download(backup.filePath, backup.filename);
+  })
+);
+
+app.delete(
+  "/api/backups/:id",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const backup = await deleteBackup(routeParam(req, "id"));
+    if (!backup) {
+      res.status(404).json({ message: "Backup not found." });
+      return;
+    }
+    await recordAuditLog({ actor: actor(req), action: "backup.delete", entityType: "backup", entityId: backup.id, projectId: backup.projectId, metadata: { filename: backup.filename } });
+    res.status(204).end();
   })
 );
 

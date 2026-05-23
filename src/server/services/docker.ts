@@ -43,6 +43,11 @@ function parseLabels(labels: string | undefined) {
   return result;
 }
 
+export function isPostgresContainerLike(container: Pick<ContainerInfo, "name" | "image"> & { composeService?: string | null }) {
+  const haystack = [container.name, container.image, container.composeService ?? ""].join(" ").toLowerCase();
+  return /\b(postgres|postgresql|postgis|timescale|timescaledb|pgvector)\b/.test(haystack) || haystack.includes("bitnami/postgresql");
+}
+
 export async function listContainers(): Promise<ContainerInfo[]> {
   const ps = await runCommand("docker", ["ps", "-a", "--format", "{{json .}}"]);
   if (ps.exitCode !== 0) {
@@ -55,7 +60,8 @@ export async function listContainers(): Promise<ContainerInfo[]> {
   return parseJsonLines<DockerPsLine>(ps.output).map((container) => {
     const stat = statsById.get(container.ID);
     const labels = parseLabels(container.Labels);
-    return {
+    const composeService = labels.get("com.docker.compose.service") ?? null;
+    const row = {
       id: container.ID,
       name: container.Names,
       image: container.Image,
@@ -66,7 +72,12 @@ export async function listContainers(): Promise<ContainerInfo[]> {
       cpuPercent: stat?.CPUPerc ?? "0%",
       memoryUsage: stat?.MemUsage ?? "-",
       memoryPercent: stat?.MemPerc ?? "0%",
-      composeProject: labels.get("com.docker.compose.project") ?? null
+      composeProject: labels.get("com.docker.compose.project") ?? null,
+      composeService
+    };
+    return {
+      ...row,
+      isPostgresCandidate: isPostgresContainerLike(row)
     };
   });
 }

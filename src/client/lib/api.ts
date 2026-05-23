@@ -1,7 +1,8 @@
-import type { AuditLog, Backup, ContainerInfo, Deployment, Project, SystemUsage } from "../../shared/types";
+import type { AuditLog, Backup, ContainerInfo, Deployment, PostgresBackupTarget, Project, SystemUsage } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
+export type PostgresTarget = PostgresBackupTarget;
 
 export type ProjectEnvVariable = {
   key: string;
@@ -89,7 +90,13 @@ export const api = {
   deploymentLogs: (id: string) => request<string>(`/api/deployments/${id}/logs`),
   deploymentLogStream: (id: string) => `/api/deployments/${id}/logs/stream`,
   backups: () => request<BackupRecord[]>("/api/backups"),
-  createBackup: () => request<BackupRecord>("/api/backups", { method: "POST" }),
+  postgresBackupTargets: () => request<PostgresTarget[]>("/api/backups/postgres-targets"),
+  createBackup: (containerId?: string) =>
+    request<BackupRecord>("/api/backups", {
+      method: "POST",
+      body: JSON.stringify(containerId ? { containerId } : {})
+    }),
+  deleteBackup: (id: string) => request<void>(`/api/backups/${id}`, { method: "DELETE" }),
   backupDownloadUrl: (id: string) => `/api/backups/${id}/download`,
   auditLog: () => request<AuditLogEntry[]>("/api/audit-logs"),
   containers: () => request<ContainerInfo[]>("/api/containers"),

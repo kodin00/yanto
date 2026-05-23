@@ -30,10 +30,10 @@ import {
 import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import type { ContainerInfo, Deployment, Project, SystemUsage } from "../shared/types";
 import { Button, ConfirmDialog, IconButton, LoadingInline, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast, ToggleField } from "./components/ui";
-import { api, type AuditLogEntry, type BackupRecord, type ProjectEnvVariable } from "./lib/api";
+import { api, type AuditLogEntry, type BackupRecord, type PostgresTarget, type ProjectEnvVariable } from "./lib/api";
 
 type View = "dashboard" | "projects" | "deployments" | "containers" | "backups" | "audit" | "settings";
-type ToastState = { message: string; kind?: "ok" | "error" } | null;
+type ToastState = { message: string; kind?: "ok" | "error" | "loading" } | null;
 type LogModalState = { title: string; logs: string; streamPath?: string; live?: boolean; status?: string };
 type LogStreamPayload = { logs?: string; chunk?: string; status?: string; error?: string; done?: boolean };
 type EnvModalState = { project: Project; rows: ProjectEnvVariable[]; baseline: ProjectEnvVariable[]; draftKey: string; draftValue: string; loading: boolean };
@@ -182,10 +182,13 @@ export function App() {
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
   const [backups, setBackups] = useState<BackupRecord[]>([]);
+  const [postgresTargets, setPostgresTargets] = useState<PostgresTarget[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
   const [usage, setUsage] = useState<SystemUsage | null>(null);
   const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: "", sshKey: emptySshKeySettings });
   const [systemLogs, setSystemLogs] = useState("");
+  const [cleanupLogs, setCleanupLogs] = useState("");
+  const [cleanupLogTitle, setCleanupLogTitle] = useState("Cleanup preview");
   const [cleanupPreviewed, setCleanupPreviewed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<ToastState>(null);
@@ -203,11 +206,12 @@ export function App() {
   const [auditPage, setAuditPage] = useState(1);
 
   const loadAll = useCallback(async () => {
-    const [projectRows, deploymentRows, containerRows, backupRows, auditRows, systemRows, settingRows, logRows] = await Promise.all([
+    const [projectRows, deploymentRows, containerRows, backupRows, postgresRows, auditRows, systemRows, settingRows, logRows] = await Promise.all([
       api.projects(),
       api.deployments(),
       api.containers().catch(() => []),
       api.backups().catch(() => []),
+      api.postgresBackupTargets().catch(() => []),
       api.auditLog().catch(() => []),
       api.systemUsage().catch(() => null),
       api.settings(),
@@ -217,6 +221,7 @@ export function App() {
     setDeployments(deploymentRows);
     setContainers(containerRows);
     setBackups(backupRows);
+    setPostgresTargets(postgresRows);
     setAuditEntries(auditRows);
     setUsage(systemRows);
     setSettings(settingRows);
@@ -460,6 +465,39 @@ export function App() {
   async function copyText(value: string) {
     await navigator.clipboard.writeText(value);
     setToast({ message: "Copied." });
+  }
+
+  async function dumpPostgresTarget(containerId?: string) {
+    const busyKey = containerId ? `backup:${containerId}` : "backup:yanto";
+    setBusy(busyKey);
+    try {
+      await api.createBackup(containerId);
+      await loadAll();
+      setToast({ message: "Postgres backup created." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to create backup.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function previewCleanup() {
+    setBusy("cleanup-preview");
+    setToast({ message: "Checking cleanup preview...", kind: "loading" });
+    setCleanupLogTitle("Cleanup preview");
+    setCleanupLogs("Checking reclaimable Docker space...");
+    try {
+      const result = await api.cleanupPreview();
+      setCleanupPreviewed(true);
+      setCleanupLogs(result.logs);
+      setToast({ message: "Cleanup preview ready." });
+    } catch (error) {
+      setCleanupPreviewed(false);
+      setCleanupLogs(error instanceof Error ? error.message : "Unable to preview cleanup.");
+      setToast({ message: error instanceof Error ? error.message : "Unable to preview cleanup.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function saveSshPrivateKey(event: FormEvent) {
@@ -723,34 +761,42 @@ export function App() {
         ) : null}
 
         {view === "backups" ? (
-          <section className="panel">
-            <div className="panel-head">
-              <h2>Backup history</h2>
-              <div className="actions">
-                <span className="count">{backups.length} dumps</span>
-                <Button
-                  disabled={busy === "backup"}
-                  onClick={async () => {
-                    setBusy("backup");
-                    try {
-                      await api.createBackup();
-                      await loadAll();
-                      setToast({ message: "Postgres backup created." });
-                    } catch (error) {
-                      setToast({ message: error instanceof Error ? error.message : "Unable to create backup.", kind: "error" });
-                    } finally {
-                      setBusy(null);
-                    }
-                  }}
-                  icon={<Archive size={16} />}
-                >
-                  Dump Postgres
-                </Button>
+          <div className="backup-layout">
+            <section className="panel">
+              <div className="panel-head">
+                <h2>Postgres targets</h2>
+                <div className="actions">
+                  <span className="count">{postgresTargets.length} detected</span>
+                  <Button disabled={busy === "backup:yanto"} onClick={() => void dumpPostgresTarget()} icon={<Archive size={16} />}>
+                    Dump Yanto DB
+                  </Button>
+                </div>
               </div>
-            </div>
-            <BackupTable backups={visibleBackups} />
-            <Pagination label="Backups" page={backupPage} totalItems={backups.length} onPageChange={setBackupPage} />
-          </section>
+              <PostgresTargetTable targets={postgresTargets} busy={busy} onDump={dumpPostgresTarget} />
+            </section>
+            <section className="panel">
+              <div className="panel-head">
+                <h2>Backup history</h2>
+                <span className="count">{backups.length} dumps</span>
+              </div>
+              <BackupTable
+                backups={visibleBackups}
+                onDelete={(backup) =>
+                  setConfirm({
+                    title: "Remove backup",
+                    body: `Remove ${backup.filename || backup.id}? The dump file will be deleted from disk.`,
+                    label: "Remove",
+                    danger: true,
+                    action: async () => {
+                      await api.deleteBackup(backup.id);
+                      await loadAll();
+                    }
+                  })
+                }
+              />
+              <Pagination label="Backups" page={backupPage} totalItems={backups.length} onPageChange={setBackupPage} />
+            </section>
+          </div>
         ) : null}
 
         {view === "audit" ? (
@@ -878,35 +924,53 @@ export function App() {
               <div className="actions">
                 <Button
                   variant="secondary"
-                  onClick={async () => {
-                    const result = await api.cleanupPreview();
-                    setCleanupPreviewed(true);
-                    setLogModal({ title: "Cleanup preview", logs: result.logs });
-                  }}
-                  icon={<DatabaseZap size={16} />}
+                  disabled={busy === "cleanup-preview" || busy === "cleanup"}
+                  onClick={() => void previewCleanup()}
+                  icon={busy === "cleanup-preview" ? <RefreshCw size={16} className="spin" /> : <DatabaseZap size={16} />}
                 >
-                  Preview cleanup
+                  {busy === "cleanup-preview" ? "Checking" : "Preview cleanup"}
                 </Button>
-              <Button
-                variant="danger"
-                disabled={!cleanupPreviewed}
-                onClick={() =>
-                  setConfirm({
-                    title: "Run cleanup",
-                    body: "This removes unused Docker cache and unused Docker resources shown by the preview. Running containers, named volumes, and Yanto containers are protected.",
-                    label: "Clean cache",
-                    danger: true,
-                    action: async () => {
-                      const result = await api.cleanup();
-                      setCleanupPreviewed(false);
-                      setLogModal({ title: "Cleanup logs", logs: result.logs });
+                <Button
+                  variant="danger"
+                  disabled={busy === "cleanup-preview" || busy === "cleanup"}
+                  onClick={() => {
+                    if (!cleanupPreviewed) {
+                      setToast({ message: "Run preview cleanup first, then clean cache.", kind: "error" });
+                      return;
                     }
-                  })
-                }
-                icon={<Trash2 size={16} />}
-              >
-                Clean cache
-              </Button>
+                    setConfirm({
+                      title: "Run cleanup",
+                      body: "This removes unused Docker cache and unused Docker resources shown by the preview. Running containers, named volumes, and Yanto containers are protected.",
+                      label: "Clean cache",
+                      danger: true,
+                      action: async () => {
+                        setBusy("cleanup");
+                        setToast({ message: "Cleaning Docker cache...", kind: "loading" });
+                        setCleanupLogTitle("Cleanup logs");
+                        setCleanupLogs("Cleaning unused Docker cache and resources...");
+                        try {
+                          const result = await api.cleanup();
+                          setCleanupPreviewed(false);
+                          setCleanupLogs(result.logs);
+                          await loadAll();
+                          setToast({ message: "Cleanup completed." });
+                        } finally {
+                          setBusy(null);
+                        }
+                      }
+                    });
+                  }}
+                  icon={busy === "cleanup" ? <RefreshCw size={16} className="spin" /> : <Trash2 size={16} />}
+                >
+                  Clean cache
+                </Button>
+              </div>
+              <div className="cleanup-result">
+                <div className="cleanup-result-head">
+                  <strong>{cleanupLogTitle}</strong>
+                  <StatusBadge status={cleanupPreviewed ? "ready" : busy === "cleanup-preview" || busy === "cleanup" ? "running" : "idle"} />
+                </div>
+                <LogViewer logs={cleanupLogs || "No cleanup preview yet."} />
               </div>
             </section>
             <section className="panel system-log-panel">
@@ -1189,7 +1253,57 @@ function SegmentedMeter({ label, value, detail, icon }: { label: string; value: 
   );
 }
 
-function BackupTable({ backups }: { backups: BackupRecord[] }) {
+function PostgresTargetTable({ targets, busy, onDump }: { targets: PostgresTarget[]; busy: string | null; onDump: (containerId: string) => Promise<void> }) {
+  if (!targets.length) {
+    return <p className="muted">No likely Postgres containers detected yet.</p>;
+  }
+
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Project</th>
+            <th>Container</th>
+            <th>Database</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {targets.map((target) => {
+            const running = target.state === "running";
+            return (
+              <tr key={target.containerId}>
+                <td>
+                  <div className="stacked-cell">
+                    <strong>{target.projectName ?? target.composeProject ?? "Standalone"}</strong>
+                    <span>{target.composeService ?? target.image}</span>
+                  </div>
+                </td>
+                <td>{target.containerName}</td>
+                <td>
+                  <div className="stacked-cell">
+                    <strong>{target.databaseName}</strong>
+                    <span>{target.databaseUser}</span>
+                  </div>
+                </td>
+                <td><StatusBadge status={running ? "postgres" : target.state} /></td>
+                <td className="table-actions">
+                  <Button disabled={!running || busy === `backup:${target.containerId}`} onClick={() => void onDump(target.containerId)} icon={<Archive size={15} />}>
+                    Dump
+                  </Button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BackupTable({ backups, onDelete }: { backups: BackupRecord[]; onDelete: (backup: BackupRecord) => void }) {
   if (!backups.length) {
     return <p className="muted">No backups recorded yet.</p>;
   }
@@ -1200,6 +1314,7 @@ function BackupTable({ backups }: { backups: BackupRecord[] }) {
         <thead>
           <tr>
             <th>Backup</th>
+            <th>Source</th>
             <th>Status</th>
             <th>Size</th>
             <th>Created</th>
@@ -1211,6 +1326,7 @@ function BackupTable({ backups }: { backups: BackupRecord[] }) {
           {backups.map((backup) => (
             <tr key={backup.id}>
               <td>{backup.filename || backup.id}</td>
+              <td>{backup.note ?? backup.kind}</td>
               <td><StatusBadge status={backup.status} /></td>
               <td>{backup.fileSizeBytes ? bytes(backup.fileSizeBytes) : "-"}</td>
               <td>{dateTime(backup.createdAt)}</td>
@@ -1220,6 +1336,9 @@ function BackupTable({ backups }: { backups: BackupRecord[] }) {
                   <Download size={15} />
                   <span>Download</span>
                 </a>
+                <IconButton label="Remove backup" variant="danger" onClick={() => onDelete(backup)}>
+                  <Trash2 size={15} />
+                </IconButton>
               </td>
             </tr>
           ))}
@@ -1301,6 +1420,7 @@ function ContainerGroups({
                 <tr>
                   <th>Name</th>
                   <th>Image</th>
+                  <th>Role</th>
                   <th>Status</th>
                   <th>Uptime</th>
                   <th>Ports</th>
@@ -1316,6 +1436,7 @@ function ContainerGroups({
                     <tr key={container.id}>
                       <td>{container.name}</td>
                       <td>{container.image}</td>
+                      <td>{container.isPostgresCandidate ? <StatusBadge status="postgres" /> : "-"}</td>
                       <td><StatusBadge status={container.state} /></td>
                       <td title={dateTime(container.createdAt)}>{durationSince(container.createdAt)}</td>
                       <td className="ports-cell">{container.ports || "-"}</td>

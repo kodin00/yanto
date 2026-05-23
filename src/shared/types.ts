@@ -47,6 +47,8 @@ export type ContainerInfo = {
   memoryUsage: string;
   memoryPercent: string;
   composeProject?: string | null;
+  composeService?: string | null;
+  isPostgresCandidate?: boolean;
 };
 
 export type Backup = {
@@ -63,6 +65,20 @@ export type Backup = {
   finishedAt: string | null;
   downloadedAt: string | null;
   downloadCount: number;
+};
+
+export type PostgresBackupTarget = {
+  containerId: string;
+  containerName: string;
+  image: string;
+  status: string;
+  state: string;
+  composeProject: string | null;
+  composeService: string | null;
+  projectId: string | null;
+  projectName: string | null;
+  databaseName: string;
+  databaseUser: string;
 };
 
 export type AuditLog = {

@@ -292,7 +292,8 @@ a.button {
 }
 
 .dashboard,
-.settings-grid {
+.settings-grid,
+.backup-layout {
   display: grid;
   gap: 16px;
 }
@@ -927,6 +928,11 @@ th {
   color: var(--cyan);
 }
 
+.status.postgres {
+  background: #e7edf5;
+  color: #2f597d;
+}
+
 .status.live {
   background: #e4f1ec;
   color: var(--cyan);
@@ -959,6 +965,19 @@ th {
   position: relative;
   display: grid;
   gap: 7px;
+}
+
+.stacked-cell {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.stacked-cell span {
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .field > span {
@@ -1229,6 +1248,25 @@ th {
   min-height: 260px;
 }
 
+.cleanup-result {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.cleanup-result-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.cleanup-result .log-viewer {
+  min-height: 220px;
+}
+
 .log-status-line {
   display: flex;
   align-items: center;
@@ -1255,6 +1293,10 @@ th {
 
 .toast.error {
   background: var(--red);
+}
+
+.toast.loading {
+  background: var(--cyan);
 }
 
 .toast button {

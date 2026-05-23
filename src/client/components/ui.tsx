@@ -199,11 +199,12 @@ export function ConfirmDialog({
   );
 }
 
-export function Toast({ message, kind = "ok", onClose }: { message: string; kind?: "ok" | "error"; onClose: () => void }) {
+export function Toast({ message, kind = "ok", onClose }: { message: string; kind?: "ok" | "error" | "loading"; onClose: () => void }) {
   useEffect(() => {
+    if (kind === "loading") return;
     const timer = window.setTimeout(onClose, 4200);
     return () => window.clearTimeout(timer);
-  }, [onClose]);
+  }, [kind, onClose]);
 
   return (
     <div className={`toast ${kind}`}>

@@ -6,7 +6,7 @@ vi.mock("../src/server/services/commands.js", () => ({
   runCommand
 }));
 
-import { cleanupDocker, restartContainer, stopContainer } from "../src/server/services/docker.js";
+import { cleanupDocker, listContainers, restartContainer, stopContainer } from "../src/server/services/docker.js";
 
 describe("docker helpers", () => {
   beforeEach(() => {
@@ -59,6 +59,57 @@ describe("docker helpers", () => {
     expect(runCommand.mock.calls).toEqual([
       ["docker", ["inspect", "--format", "{{.Name}}", "container-id"]],
       ["docker", ["restart", "container-id"]]
+    ]);
+  });
+
+  it("marks likely Postgres containers from image and compose service labels", async () => {
+    runCommand
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        output: [
+          JSON.stringify({
+            ID: "pg-id",
+            Names: "shop-db-1",
+            Image: "postgres:16",
+            Status: "Up 2 minutes",
+            State: "running",
+            Ports: "5432/tcp",
+            CreatedAt: "2026-05-23 10:00:00 +0000 UTC",
+            Labels: "com.docker.compose.project=shop,com.docker.compose.service=db"
+          }),
+          JSON.stringify({
+            ID: "web-id",
+            Names: "shop-web-1",
+            Image: "node:22",
+            Status: "Up 2 minutes",
+            State: "running",
+            Ports: "3000/tcp",
+            CreatedAt: "2026-05-23 10:00:00 +0000 UTC",
+            Labels: "com.docker.compose.project=shop,com.docker.compose.service=web"
+          })
+        ].join("\n")
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        output: [
+          JSON.stringify({ ID: "pg-id", CPUPerc: "0.10%", MemUsage: "64MiB / 1GiB", MemPerc: "6.25%" }),
+          JSON.stringify({ ID: "web-id", CPUPerc: "0.20%", MemUsage: "32MiB / 1GiB", MemPerc: "3.13%" })
+        ].join("\n")
+      });
+
+    await expect(listContainers()).resolves.toMatchObject([
+      {
+        id: "pg-id",
+        composeProject: "shop",
+        composeService: "db",
+        isPostgresCandidate: true
+      },
+      {
+        id: "web-id",
+        composeProject: "shop",
+        composeService: "web",
+        isPostgresCandidate: false
+      }
     ]);
   });
 });
