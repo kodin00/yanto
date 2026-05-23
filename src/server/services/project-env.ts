@@ -6,9 +6,10 @@ import { normalizeEnvFile, pathExists } from "./paths.js";
 
 const secretPattern = /(secret|token|password|passwd|pwd|key|credential|auth|jwt)/i;
 const maskedSentinel = "********";
+const defaultEnvFile = ".env";
 
 function envPath(project: ProjectRow, envFile?: string) {
-  return path.join(project.localPath, normalizeEnvFile(envFile ?? project.envFile ?? ".env"));
+  return path.join(project.localPath, normalizeEnvFile(envFile ?? defaultEnvFile));
 }
 
 function maskValue(key: string, value: string) {
@@ -73,9 +74,9 @@ export function previewEnvContent(content: string, envFile = ".env"): EnvPreview
   };
 }
 
-export async function readProjectEnv(project: ProjectRow, envFile?: string) {
+export async function readProjectEnv(project: ProjectRow, envFile = defaultEnvFile) {
   const target = envPath(project, envFile);
-  const normalized = normalizeEnvFile(envFile ?? project.envFile ?? ".env");
+  const normalized = normalizeEnvFile(envFile);
   if (!(await pathExists(target))) {
     return { envFile: normalized, content: "" };
   }
@@ -110,8 +111,8 @@ export async function previewProjectEnv(project: ProjectRow, envFile?: string) {
   return previewEnvContent(current.content, current.envFile);
 }
 
-export async function writeProjectEnv(project: ProjectRow, content: string, envFile?: string) {
-  const normalized = normalizeEnvFile(envFile ?? project.envFile ?? ".env");
+export async function writeProjectEnv(project: ProjectRow, content: string, envFile = defaultEnvFile) {
+  const normalized = normalizeEnvFile(envFile);
   const target = envPath(project, normalized);
   const existing = (await pathExists(target)) ? await fs.readFile(target, "utf8") : "";
   const existingValues = parseEnvMap(existing);
@@ -133,8 +134,8 @@ export async function writeProjectEnv(project: ProjectRow, content: string, envF
   return previewEnvContent(resolvedContent, normalized);
 }
 
-export async function writeProjectEnvVariables(project: ProjectRow, variables: { key: string; value?: string | null; masked?: boolean }[], envFile?: string) {
-  const normalized = normalizeEnvFile(envFile ?? project.envFile ?? ".env");
+export async function writeProjectEnvVariables(project: ProjectRow, variables: { key: string; value?: string | null; masked?: boolean }[], envFile = defaultEnvFile) {
+  const normalized = normalizeEnvFile(envFile);
   const currentPath = envPath(project, normalized);
   const existing = (await pathExists(currentPath)) ? await fs.readFile(currentPath, "utf8") : "";
   const existingValues = parseEnvMap(existing);
