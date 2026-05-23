@@ -1,11 +1,15 @@
 import {
   Activity,
+  Archive,
+  AlertTriangle,
   Boxes,
   ChevronLeft,
   ChevronRight,
   Container,
   Copy,
   DatabaseZap,
+  Download,
+  FileClock,
   GitBranch,
   HardDrive,
   KeyRound,
@@ -18,18 +22,22 @@ import {
   ScrollText,
   Server,
   Settings,
+  ShieldCheck,
   Square,
+  Undo2,
   Trash2
 } from "lucide-react";
 import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import type { ContainerInfo, Deployment, Project, SystemUsage } from "../shared/types";
 import { Button, ConfirmDialog, IconButton, LoadingInline, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast, ToggleField } from "./components/ui";
-import { api } from "./lib/api";
+import { api, type AuditLogEntry, type BackupRecord, type ProjectEnvVariable } from "./lib/api";
 
-type View = "dashboard" | "projects" | "deployments" | "containers" | "settings";
+type View = "dashboard" | "projects" | "deployments" | "containers" | "backups" | "audit" | "settings";
 type ToastState = { message: string; kind?: "ok" | "error" } | null;
 type LogModalState = { title: string; logs: string; streamPath?: string; live?: boolean; status?: string };
 type LogStreamPayload = { logs?: string; chunk?: string; status?: string; error?: string; done?: boolean };
+type EnvModalState = { project: Project; rows: ProjectEnvVariable[]; baseline: ProjectEnvVariable[]; draftKey: string; draftValue: string; loading: boolean };
+type RollbackModalState = { project: Project; deployments: Deployment[] };
 
 const emptyProject = {
   name: "",
@@ -92,6 +100,21 @@ function durationSince(value: string | null) {
   return parts.join(" ");
 }
 
+function durationBetween(startedAt: string | null, finishedAt: string | null) {
+  if (!startedAt) return "-";
+  const start = new Date(startedAt).getTime();
+  const end = finishedAt ? new Date(finishedAt).getTime() : Date.now();
+  if (Number.isNaN(start) || Number.isNaN(end)) return "-";
+  const seconds = Math.max(0, Math.floor((end - start) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) return remainingSeconds ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
+
 function endpoint(project: Project, baseUrl: string) {
   return `${baseUrl.replace(/\/$/, "")}/deploy?id=${project.id}`;
 }
@@ -139,6 +162,18 @@ function isProtectedYantoContainer(container: ContainerInfo) {
   return /^yanto-(app|postgres)-\d+$/.test(container.name);
 }
 
+function normalizeEnvRows(rows: ProjectEnvVariable[]) {
+  return rows.map((row) => ({ key: row.key, value: row.value ?? "", masked: Boolean(row.masked) })).sort((a, b) => a.key.localeCompare(b.key));
+}
+
+function deploymentChanges(deployment: Deployment) {
+  const extra = deployment as Deployment & { changes?: string | string[] | null; commitSha?: string | null };
+  if (Array.isArray(extra.changes)) return extra.changes.join(", ");
+  if (extra.changes) return extra.changes;
+  if (extra.commitSha) return extra.commitSha.slice(0, 12);
+  return deployment.exitCode === null ? "Running" : `Exit ${deployment.exitCode}`;
+}
+
 export function App() {
   const [user, setUser] = useState<string | null>(null);
   const [login, setLogin] = useState({ username: "admin", password: "" });
@@ -146,26 +181,34 @@ export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
+  const [backups, setBackups] = useState<BackupRecord[]>([]);
+  const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
   const [usage, setUsage] = useState<SystemUsage | null>(null);
   const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: "", sshKey: emptySshKeySettings });
   const [systemLogs, setSystemLogs] = useState("");
+  const [cleanupPreviewed, setCleanupPreviewed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<ToastState>(null);
   const [projectModal, setProjectModal] = useState<Project | "new" | null>(null);
   const [projectForm, setProjectForm] = useState(emptyProject);
+  const [envModal, setEnvModal] = useState<EnvModalState | null>(null);
+  const [rollbackModal, setRollbackModal] = useState<RollbackModalState | null>(null);
   const [logModal, setLogModal] = useState<LogModalState | null>(null);
   const [confirm, setConfirm] = useState<{ title: string; body: string; label: string; danger?: boolean; action: () => Promise<void> } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [sshPrivateKey, setSshPrivateKey] = useState("");
   const [projectPage, setProjectPage] = useState(1);
   const [deploymentPage, setDeploymentPage] = useState(1);
-  const [containerPage, setContainerPage] = useState(1);
+  const [backupPage, setBackupPage] = useState(1);
+  const [auditPage, setAuditPage] = useState(1);
 
   const loadAll = useCallback(async () => {
-    const [projectRows, deploymentRows, containerRows, systemRows, settingRows, logRows] = await Promise.all([
+    const [projectRows, deploymentRows, containerRows, backupRows, auditRows, systemRows, settingRows, logRows] = await Promise.all([
       api.projects(),
       api.deployments(),
       api.containers().catch(() => []),
+      api.backups().catch(() => []),
+      api.auditLog().catch(() => []),
       api.systemUsage().catch(() => null),
       api.settings(),
       api.systemLogs().catch(() => "")
@@ -173,6 +216,8 @@ export function App() {
     setProjects(projectRows);
     setDeployments(deploymentRows);
     setContainers(containerRows);
+    setBackups(backupRows);
+    setAuditEntries(auditRows);
     setUsage(systemRows);
     setSettings(settingRows);
     setSystemLogs(logRows);
@@ -233,9 +278,25 @@ export function App() {
   }, [logModal?.streamPath]);
 
   const runningDeployments = useMemo(() => deployments.filter((deployment) => deployment.status === "running"), [deployments]);
+  const latestDeploymentByProject = useMemo(() => {
+    const map = new Map<string, Deployment>();
+    for (const deployment of deployments) {
+      if (!map.has(deployment.projectId)) {
+        map.set(deployment.projectId, deployment);
+      }
+    }
+    return map;
+  }, [deployments]);
+  const failingProjects = useMemo(
+    () => projects.filter((project) => latestDeploymentByProject.get(project.id)?.status === "failed"),
+    [latestDeploymentByProject, projects]
+  );
+  const unhealthyContainers = useMemo(() => containers.filter((container) => !["running", "created"].includes(container.state)), [containers]);
+  const warningDisks = useMemo(() => usage?.storage.filter((disk) => disk.usedPercent >= 80) ?? [], [usage]);
   const visibleProjects = useMemo(() => pageItems(projects, projectPage), [projectPage, projects]);
   const visibleDeployments = useMemo(() => pageItems(deployments, deploymentPage), [deploymentPage, deployments]);
-  const visibleContainers = useMemo(() => pageItems(containers, containerPage), [containerPage, containers]);
+  const visibleBackups = useMemo(() => pageItems(backups, backupPage), [backupPage, backups]);
+  const visibleAuditEntries = useMemo(() => pageItems(auditEntries, auditPage), [auditEntries, auditPage]);
 
   useEffect(() => {
     setProjectPage((page) => Math.min(page, totalPages(projects)));
@@ -246,8 +307,12 @@ export function App() {
   }, [deployments]);
 
   useEffect(() => {
-    setContainerPage((page) => Math.min(page, totalPages(containers)));
-  }, [containers]);
+    setBackupPage((page) => Math.min(page, totalPages(backups)));
+  }, [backups]);
+
+  useEffect(() => {
+    setAuditPage((page) => Math.min(page, totalPages(auditEntries)));
+  }, [auditEntries]);
 
   async function submitLogin(event: FormEvent) {
     event.preventDefault();
@@ -342,6 +407,56 @@ export function App() {
     setProjectModal("new");
   }
 
+  async function openEnvEditor(project: Project) {
+    setEnvModal({ project, rows: [], baseline: [], draftKey: "", draftValue: "", loading: true });
+    try {
+      const rows = normalizeEnvRows(await api.projectEnv(project.id));
+      setEnvModal({ project, rows, baseline: rows, draftKey: "", draftValue: "", loading: false });
+    } catch (error) {
+      setEnvModal(null);
+      setToast({ message: error instanceof Error ? error.message : "Unable to load environment.", kind: "error" });
+    }
+  }
+
+  async function persistProjectEnv(after?: "deploy" | "restart") {
+    if (!envModal) return;
+    setBusy(`env:${envModal.project.id}`);
+    try {
+      const rows = normalizeEnvRows(envModal.rows.filter((row) => row.key.trim()));
+      const payload = rows.map((row) => {
+        const original = envModal.baseline.find((item) => item.key === row.key);
+        if (original?.masked && original.value === row.value) {
+          return { key: row.key, masked: row.masked };
+        }
+        return row;
+      });
+      await api.updateProjectEnv(envModal.project.id, payload);
+      if (after === "restart") {
+        await api.restartProject(envModal.project.id);
+      }
+      if (after === "deploy") {
+        await api.deployProject(envModal.project.id);
+      }
+      setEnvModal(null);
+      await loadAll();
+      setToast({ message: after === "restart" ? "Environment updated and restart started." : after === "deploy" ? "Environment updated and deployment started." : "Environment updated." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to save environment.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function saveProjectEnv(event: FormEvent) {
+    event.preventDefault();
+    await persistProjectEnv();
+  }
+
+  function openRollback(project: Project) {
+    const projectDeployments = deployments.filter((deployment) => deployment.projectId === project.id && deployment.status === "success");
+    setRollbackModal({ project, deployments: projectDeployments });
+  }
+
   async function copyText(value: string) {
     await navigator.clipboard.writeText(value);
     setToast({ message: "Copied." });
@@ -402,6 +517,8 @@ export function App() {
             ["projects", GitBranch, "Projects"],
             ["deployments", Boxes, "Deployments"],
             ["containers", Container, "Containers"],
+            ["backups", Archive, "Backups"],
+            ["audit", FileClock, "Audit"],
             ["settings", Settings, "Settings"]
           ].map(([id, Icon, label]) => (
             <button key={id as string} className={view === id ? "active" : ""} type="button" onClick={() => setView(id as View)}>
@@ -437,13 +554,14 @@ export function App() {
           <section className="dashboard">
             <section className="stat-grid">
               <StatTile label="Projects" value={projects.length} detail={`${settings.hostProjectsRoot} root`} />
-              <StatTile label="Active deploys" value={runningDeployments.length} detail={runningDeployments.length ? "Deployment in progress" : "Queue is clear"} />
+              {runningDeployments.length ? <StatTile label="Active deploys" value={runningDeployments.length} detail="Deployment in progress" /> : null}
               <StatTile label="Running containers" value={containers.filter((container) => container.state === "running").length} detail={`${containers.length} total containers`} />
               <StatTile label="RAM used" value={usage ? `${usage.memory.usedPercent}%` : "-"} detail={usage ? `${bytes(usage.memory.used)} of ${bytes(usage.memory.total)}` : "Unavailable"} />
             </section>
 
             <div className="dashboard-main-grid">
               <div className="dashboard-left-column">
+                <WarningsPanel failingProjects={failingProjects} unhealthyContainers={unhealthyContainers} warningDisks={warningDisks} />
                 <UsagePanel usage={usage} />
                 <section className="panel">
                   <div className="section-kicker">Build history</div>
@@ -540,8 +658,32 @@ export function App() {
                       <Button variant="secondary" onClick={() => openProject(project)}>
                         Edit
                       </Button>
+                      <Button variant="secondary" onClick={() => void openEnvEditor(project)} icon={<KeyRound size={15} />}>
+                        Env
+                      </Button>
+                      <Button variant="secondary" onClick={() => openRollback(project)} icon={<Undo2 size={15} />}>
+                        Rollback
+                      </Button>
                       <Button disabled={busy === `deploy:${project.id}`} onClick={() => void deploy(project)} icon={<Play size={15} />}>
                         Deploy
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() =>
+                          setConfirm({
+                            title: "Stop project",
+                            body: `Stop containers for ${project.name}?`,
+                            label: "Stop",
+                            danger: true,
+                            action: async () => {
+                              await api.stopProject(project.id);
+                              await loadAll();
+                            }
+                          })
+                        }
+                        icon={<Square size={15} />}
+                      >
+                        Stop
                       </Button>
                       <Button
                         variant="danger"
@@ -580,91 +722,55 @@ export function App() {
           </section>
         ) : null}
 
+        {view === "backups" ? (
+          <section className="panel">
+            <div className="panel-head">
+              <h2>Backup history</h2>
+              <div className="actions">
+                <span className="count">{backups.length} dumps</span>
+                <Button
+                  disabled={busy === "backup"}
+                  onClick={async () => {
+                    setBusy("backup");
+                    try {
+                      await api.createBackup();
+                      await loadAll();
+                      setToast({ message: "Postgres backup created." });
+                    } catch (error) {
+                      setToast({ message: error instanceof Error ? error.message : "Unable to create backup.", kind: "error" });
+                    } finally {
+                      setBusy(null);
+                    }
+                  }}
+                  icon={<Archive size={16} />}
+                >
+                  Dump Postgres
+                </Button>
+              </div>
+            </div>
+            <BackupTable backups={visibleBackups} />
+            <Pagination label="Backups" page={backupPage} totalItems={backups.length} onPageChange={setBackupPage} />
+          </section>
+        ) : null}
+
+        {view === "audit" ? (
+          <section className="panel">
+            <div className="panel-head">
+              <h2>Audit log</h2>
+              <span className="count">{auditEntries.length} events</span>
+            </div>
+            <AuditTable entries={visibleAuditEntries} />
+            <Pagination label="Audit events" page={auditPage} totalItems={auditEntries.length} onPageChange={setAuditPage} />
+          </section>
+        ) : null}
+
         {view === "containers" ? (
           <section className="panel">
             <div className="panel-head">
               <h2>Docker containers</h2>
               <span className="count">{containers.length} found</span>
             </div>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Image</th>
-                    <th>Status</th>
-                    <th>Live</th>
-                    <th>Ports</th>
-                    <th>CPU</th>
-                    <th>Memory</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleContainers.map((container) => {
-                    const protectedContainer = isProtectedYantoContainer(container);
-                    return (
-                      <tr key={container.id}>
-                        <td>{container.name}</td>
-                        <td>{container.image}</td>
-                        <td><StatusBadge status={container.state} /></td>
-                        <td title={dateTime(container.createdAt)}>{durationSince(container.createdAt)}</td>
-                        <td className="ports-cell">{container.ports || "-"}</td>
-                        <td>{container.cpuPercent}</td>
-                        <td>{usedMemoryMb(container.memoryUsage)} ({container.memoryPercent})</td>
-                        <td className="action-cell">
-                          {protectedContainer ? (
-                            <span className="protected-label">Protected</span>
-                          ) : (
-                            <div className="table-actions icon-actions">
-                              <IconButton label="View logs" variant="secondary" onClick={() => void openContainerLogs(container)}>
-                                <ScrollText size={15} />
-                              </IconButton>
-                              <IconButton
-                                label="Restart container"
-                                variant="secondary"
-                                onClick={() =>
-                                  setConfirm({
-                                    title: "Restart container",
-                                    body: `Restart ${container.name}?`,
-                                    label: "Restart",
-                                    action: async () => {
-                                      await api.restartContainer(container.id);
-                                      await loadAll();
-                                    }
-                                  })
-                                }
-                              >
-                                <RotateCw size={15} />
-                              </IconButton>
-                              <IconButton
-                                label="Stop container"
-                                variant="danger"
-                                onClick={() =>
-                                  setConfirm({
-                                    title: "Stop container",
-                                    body: `Stop ${container.name}?`,
-                                    label: "Stop",
-                                    danger: true,
-                                    action: async () => {
-                                      await api.stopContainer(container.id);
-                                      await loadAll();
-                                    }
-                                  })
-                                }
-                              >
-                                <Square size={15} />
-                              </IconButton>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <Pagination label="Containers" page={containerPage} totalItems={containers.length} onPageChange={setContainerPage} />
+            <ContainerGroups containers={containers} onLogs={openContainerLogs} onConfirm={(next) => setConfirm(next)} onReload={loadAll} />
           </section>
         ) : null}
 
@@ -768,17 +874,31 @@ export function App() {
                 <h2>Cleanup</h2>
                 <DatabaseZap size={19} />
               </div>
-              <p className="muted">Clean Docker builder cache, dangling images, unused containers, unused networks, and supported package caches.</p>
+              <p className="muted">Preview reclaimable Docker space first, then clean protected unused cache and resources.</p>
+              <div className="actions">
+                <Button
+                  variant="secondary"
+                  onClick={async () => {
+                    const result = await api.cleanupPreview();
+                    setCleanupPreviewed(true);
+                    setLogModal({ title: "Cleanup preview", logs: result.logs });
+                  }}
+                  icon={<DatabaseZap size={16} />}
+                >
+                  Preview cleanup
+                </Button>
               <Button
                 variant="danger"
+                disabled={!cleanupPreviewed}
                 onClick={() =>
                   setConfirm({
                     title: "Run cleanup",
-                    body: "This removes unused Docker cache and unused Docker resources. Running containers are not removed.",
+                    body: "This removes unused Docker cache and unused Docker resources shown by the preview. Running containers, named volumes, and Yanto containers are protected.",
                     label: "Clean cache",
                     danger: true,
                     action: async () => {
                       const result = await api.cleanup();
+                      setCleanupPreviewed(false);
                       setLogModal({ title: "Cleanup logs", logs: result.logs });
                     }
                   })
@@ -787,6 +907,7 @@ export function App() {
               >
                 Clean cache
               </Button>
+              </div>
             </section>
             <section className="panel system-log-panel">
               <div className="panel-head">
@@ -830,6 +951,70 @@ export function App() {
               </Button>
             </div>
           </form>
+        </Modal>
+      ) : null}
+
+      {envModal ? (
+        <Modal title={`${envModal.project.name} environment`} onClose={() => setEnvModal(null)}>
+          {envModal.loading ? (
+            <LoadingInline label="Loading environment" />
+          ) : (
+            <form className="form-grid" onSubmit={saveProjectEnv}>
+              <EnvEditor modal={envModal} onChange={setEnvModal} />
+              <div className="actions">
+                <Button variant="secondary" onClick={() => setEnvModal(null)}>
+                  Cancel
+                </Button>
+                  <Button type="submit" disabled={busy === `env:${envModal.project.id}`}>
+                    Save
+                  </Button>
+                  <Button type="button" variant="secondary" disabled={busy === `env:${envModal.project.id}`} onClick={() => void persistProjectEnv("restart")} icon={<RotateCw size={15} />}>
+                    Save & Restart
+                  </Button>
+                  <Button type="button" disabled={busy === `env:${envModal.project.id}`} onClick={() => void persistProjectEnv("deploy")} icon={<Play size={15} />}>
+                    Save & Deploy
+                  </Button>
+                </div>
+              </form>
+          )}
+        </Modal>
+      ) : null}
+
+      {rollbackModal ? (
+        <Modal title={`Rollback ${rollbackModal.project.name}`} onClose={() => setRollbackModal(null)}>
+          <div className="rollback-list">
+            {rollbackModal.deployments.map((deployment) => (
+              <button
+                type="button"
+                key={deployment.id}
+                onClick={async () => {
+                  setBusy(`rollback:${rollbackModal.project.id}`);
+                  try {
+                    const result = await api.rollbackProject(rollbackModal.project.id, deployment.id);
+                    setRollbackModal(null);
+                    setToast({ message: "Rollback started." });
+                    setLogModal({
+                      title: `${rollbackModal.project.name} rollback`,
+                      logs: "",
+                      streamPath: api.deploymentLogStream(result.deployment.id),
+                      live: true,
+                      status: result.deployment.status
+                    });
+                    await loadAll();
+                  } catch (error) {
+                    setToast({ message: error instanceof Error ? error.message : "Unable to start rollback.", kind: "error" });
+                  } finally {
+                    setBusy(null);
+                  }
+                }}
+              >
+                <span>{dateTime(deployment.startedAt)}</span>
+                <strong>{durationBetween(deployment.startedAt, deployment.finishedAt)}</strong>
+                <StatusBadge status={deployment.status} />
+              </button>
+            ))}
+            {!rollbackModal.deployments.length ? <p className="muted">No successful deployments are available for rollback yet.</p> : null}
+          </div>
         </Modal>
       ) : null}
 
@@ -883,13 +1068,58 @@ function UsagePanel({ usage }: { usage: SystemUsage | null }) {
       </div>
       {usage ? (
         <div className="meter-grid">
-          <Meter label="CPU load" value={usage.cpuLoadPercent} icon={<Activity size={15} />} />
-          <Meter label="RAM" value={usage.memory.usedPercent} detail={`${bytes(usage.memory.used)} / ${bytes(usage.memory.total)}`} icon={<MemoryStick size={15} />} />
-          {storage ? <Meter label={`Storage ${storage.mount}`} value={storage.usedPercent} detail={`${bytes(storage.used)} / ${bytes(storage.size)}`} icon={<HardDrive size={15} />} /> : null}
+          <SegmentedMeter label="CPU load" value={usage.cpuLoadPercent} icon={<Activity size={15} />} />
+          <SegmentedMeter label="RAM" value={usage.memory.usedPercent} detail={`${bytes(usage.memory.used)} / ${bytes(usage.memory.total)}`} icon={<MemoryStick size={15} />} />
+          {storage ? <SegmentedMeter label={`Storage ${storage.mount}`} value={storage.usedPercent} detail={`${bytes(storage.used)} / ${bytes(storage.size)}`} icon={<HardDrive size={15} />} /> : null}
         </div>
       ) : (
         <p className="muted">System usage is unavailable. Check the container permissions and mounted project path.</p>
       )}
+    </section>
+  );
+}
+
+function WarningsPanel({
+  failingProjects,
+  unhealthyContainers,
+  warningDisks
+}: {
+  failingProjects: Project[];
+  unhealthyContainers: ContainerInfo[];
+  warningDisks: SystemUsage["storage"];
+}) {
+  const warningCount = failingProjects.length + unhealthyContainers.length + warningDisks.length;
+  if (!warningCount) return null;
+
+  return (
+    <section className="panel warning-panel">
+      <div className="panel-head">
+        <h2>Warnings</h2>
+        <AlertTriangle size={19} />
+      </div>
+      <div className="warning-list">
+        {failingProjects.map((project) => (
+          <div key={`project:${project.id}`}>
+            <StatusBadge status="failed" />
+            <span>{project.name}</span>
+            <small>Latest deployment failed</small>
+          </div>
+        ))}
+        {unhealthyContainers.slice(0, 5).map((container) => (
+          <div key={`container:${container.id}`}>
+            <StatusBadge status={container.state} />
+            <span>{container.name}</span>
+            <small>Container is not running</small>
+          </div>
+        ))}
+        {warningDisks.map((disk) => (
+          <div key={`disk:${disk.filesystem}:${disk.mount}`}>
+            <StatusBadge status="warning" />
+            <span>{disk.mount}</span>
+            <small>{disk.usedPercent}% disk used</small>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }
@@ -941,17 +1171,276 @@ function Pagination({
   );
 }
 
-function Meter({ label, value, detail, icon }: { label: string; value: number; detail?: string; icon?: ReactNode }) {
+function SegmentedMeter({ label, value, detail, icon }: { label: string; value: number; detail?: string; icon?: ReactNode }) {
+  const activeBlocks = Math.round((Math.min(100, Math.max(0, value)) / 100) * 50);
   return (
     <div className="meter">
       <div>
         <span>{icon}{label}</span>
         <strong>{value}%</strong>
       </div>
-      <div className="meter-track">
-        <span style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
+      <div className="segmented-meter" aria-label={`${label} ${value}%`}>
+        {Array.from({ length: 50 }).map((_, index) => (
+          <span key={index} className={index < activeBlocks ? "on" : ""} />
+        ))}
       </div>
       {detail ? <small>{detail}</small> : null}
+    </div>
+  );
+}
+
+function BackupTable({ backups }: { backups: BackupRecord[] }) {
+  if (!backups.length) {
+    return <p className="muted">No backups recorded yet.</p>;
+  }
+
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Backup</th>
+            <th>Status</th>
+            <th>Size</th>
+            <th>Created</th>
+            <th>Duration</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {backups.map((backup) => (
+            <tr key={backup.id}>
+              <td>{backup.filename || backup.id}</td>
+              <td><StatusBadge status={backup.status} /></td>
+              <td>{backup.fileSizeBytes ? bytes(backup.fileSizeBytes) : "-"}</td>
+              <td>{dateTime(backup.createdAt)}</td>
+              <td>{durationBetween(backup.createdAt, backup.finishedAt)}</td>
+              <td className="table-actions">
+                <a className={`button secondary link-button ${backup.status !== "success" ? "disabled" : ""}`} href={backup.status === "success" ? api.backupDownloadUrl(backup.id) : undefined}>
+                  <Download size={15} />
+                  <span>Download</span>
+                </a>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AuditTable({ entries }: { entries: AuditLogEntry[] }) {
+  if (!entries.length) {
+    return <p className="muted">No audit events recorded yet.</p>;
+  }
+
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Actor</th>
+            <th>Action</th>
+            <th>Target</th>
+            <th>Status</th>
+            <th>Message</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((entry) => (
+            <tr key={entry.id}>
+              <td>{dateTime(entry.createdAt)}</td>
+              <td>{entry.actor ?? "system"}</td>
+              <td>{entry.action}</td>
+              <td>{entry.entityId ? `${entry.entityType}:${entry.entityId}` : entry.entityType}</td>
+              <td><StatusBadge status="recorded" /></td>
+              <td>{JSON.stringify(entry.metadata ?? {})}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ContainerGroups({
+  containers,
+  onLogs,
+  onConfirm,
+  onReload
+}: {
+  containers: ContainerInfo[];
+  onLogs: (container: ContainerInfo) => void;
+  onConfirm: (confirm: { title: string; body: string; label: string; danger?: boolean; action: () => Promise<void> }) => void;
+  onReload: () => Promise<void>;
+}) {
+  const groups = Array.from(
+    containers.reduce((map, container) => {
+      const key = container.composeProject || "standalone";
+      map.set(key, [...(map.get(key) ?? []), container]);
+      return map;
+    }, new Map<string, ContainerInfo[]>())
+  ).sort(([a], [b]) => a.localeCompare(b));
+
+  if (!groups.length) {
+    return <p className="muted">No containers found yet.</p>;
+  }
+
+  return (
+    <div className="container-groups">
+      {groups.map(([group, rows]) => (
+        <details key={group} open>
+          <summary>
+            <span>{group}</span>
+            <small>{rows.filter((container) => container.state === "running").length} / {rows.length} running</small>
+          </summary>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Image</th>
+                  <th>Status</th>
+                  <th>Uptime</th>
+                  <th>Ports</th>
+                  <th>CPU</th>
+                  <th>Memory</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((container) => {
+                  const protectedContainer = isProtectedYantoContainer(container);
+                  return (
+                    <tr key={container.id}>
+                      <td>{container.name}</td>
+                      <td>{container.image}</td>
+                      <td><StatusBadge status={container.state} /></td>
+                      <td title={dateTime(container.createdAt)}>{durationSince(container.createdAt)}</td>
+                      <td className="ports-cell">{container.ports || "-"}</td>
+                      <td>{container.cpuPercent}</td>
+                      <td>{usedMemoryMb(container.memoryUsage)} ({container.memoryPercent})</td>
+                      <td className="action-cell">
+                        {protectedContainer ? (
+                          <span className="protected-label">Protected</span>
+                        ) : (
+                          <div className="table-actions icon-actions">
+                            <IconButton label="View logs" variant="secondary" onClick={() => void onLogs(container)}>
+                              <ScrollText size={15} />
+                            </IconButton>
+                            <IconButton
+                              label="Restart container"
+                              variant="secondary"
+                              onClick={() =>
+                                onConfirm({
+                                  title: "Restart container",
+                                  body: `Restart ${container.name}?`,
+                                  label: "Restart",
+                                  action: async () => {
+                                    await api.restartContainer(container.id);
+                                    await onReload();
+                                  }
+                                })
+                              }
+                            >
+                              <RotateCw size={15} />
+                            </IconButton>
+                            <IconButton
+                              label="Stop container"
+                              variant="danger"
+                              onClick={() =>
+                                onConfirm({
+                                  title: "Stop container",
+                                  body: `Stop ${container.name}?`,
+                                  label: "Stop",
+                                  danger: true,
+                                  action: async () => {
+                                    await api.stopContainer(container.id);
+                                    await onReload();
+                                  }
+                                })
+                              }
+                            >
+                              <Square size={15} />
+                            </IconButton>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      ))}
+    </div>
+  );
+}
+
+function EnvEditor({ modal, onChange }: { modal: EnvModalState; onChange: (next: EnvModalState) => void }) {
+  const baselineKeys = new Set(modal.baseline.map((row) => row.key));
+  const currentKeys = new Set(modal.rows.map((row) => row.key));
+  const changedRows = modal.rows.filter((row) => {
+    const original = modal.baseline.find((item) => item.key === row.key);
+    return !original || original.value !== row.value || original.masked !== row.masked;
+  });
+  const removedRows = modal.baseline.filter((row) => !currentKeys.has(row.key));
+
+  return (
+    <div className="env-editor">
+      <div className="env-rows">
+        {modal.rows.map((row, index) => (
+          <div className="env-row" key={`${row.key}:${index}`}>
+            <TextField label="Key" value={row.key} onChange={(key) => onChange({ ...modal, rows: modal.rows.map((item, rowIndex) => (rowIndex === index ? { ...item, key } : item)) })} />
+            <TextField
+              label="Value"
+              type={row.masked ? "password" : "text"}
+              value={row.value ?? ""}
+              onChange={(value) => onChange({ ...modal, rows: modal.rows.map((item, rowIndex) => (rowIndex === index ? { ...item, value } : item)) })}
+            />
+            <ToggleField
+              label="Masked"
+              value={Boolean(row.masked)}
+              onChange={(masked) => onChange({ ...modal, rows: modal.rows.map((item, rowIndex) => (rowIndex === index ? { ...item, masked } : item)) })}
+            />
+            <IconButton label="Remove variable" variant="danger" onClick={() => onChange({ ...modal, rows: modal.rows.filter((_, rowIndex) => rowIndex !== index) })}>
+              <Trash2 size={15} />
+            </IconButton>
+          </div>
+        ))}
+      </div>
+      <div className="env-add-row">
+        <TextField label="New key" value={modal.draftKey} onChange={(draftKey) => onChange({ ...modal, draftKey })} />
+        <TextField label="New value" type="password" value={modal.draftValue} onChange={(draftValue) => onChange({ ...modal, draftValue })} />
+        <Button
+          variant="secondary"
+          onClick={() => {
+            const key = modal.draftKey.trim();
+            if (!key) return;
+            onChange({ ...modal, draftKey: "", draftValue: "", rows: normalizeEnvRows([...modal.rows, { key, value: modal.draftValue, masked: true }]) });
+          }}
+          icon={<Plus size={15} />}
+        >
+          Add
+        </Button>
+      </div>
+      <div className="env-diff">
+        <div className="section-kicker">Masked diff</div>
+        {[...changedRows, ...removedRows].map((row) => {
+          const removed = !currentKeys.has(row.key);
+          const created = !baselineKeys.has(row.key);
+          return (
+            <div key={`${row.key}:diff`}>
+              <ShieldCheck size={15} />
+              <span>{row.key}</span>
+              <strong>{removed ? "removed" : created ? "added" : "updated"}</strong>
+            </div>
+          );
+        })}
+        {!changedRows.length && !removedRows.length ? <p className="muted">No pending environment changes.</p> : null}
+      </div>
     </div>
   );
 }
@@ -967,10 +1456,11 @@ function DeploymentTable({ deployments, onLogs, compact }: { deployments: Deploy
         <thead>
           <tr>
             <th>Project</th>
-            <th>Status</th>
             <th>Trigger</th>
             <th>Started</th>
-            {!compact ? <th>Finished</th> : null}
+            <th>Status</th>
+            <th>Duration</th>
+            {!compact ? <th>Changes</th> : null}
             <th></th>
           </tr>
         </thead>
@@ -978,10 +1468,11 @@ function DeploymentTable({ deployments, onLogs, compact }: { deployments: Deploy
           {deployments.map((deployment) => (
             <tr key={deployment.id}>
               <td>{deployment.projectName ?? deployment.projectId}</td>
-              <td><StatusBadge status={deployment.status} /></td>
               <td>{deployment.trigger}</td>
               <td>{dateTime(deployment.startedAt)}</td>
-              {!compact ? <td>{dateTime(deployment.finishedAt)}</td> : null}
+              <td><StatusBadge status={deployment.status} /></td>
+              <td>{durationBetween(deployment.startedAt, deployment.finishedAt)}</td>
+              {!compact ? <td>{deploymentChanges(deployment)}</td> : null}
               <td className="table-actions">
                 <Button variant="secondary" onClick={() => onLogs(deployment)}>
                   Logs

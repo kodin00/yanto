@@ -1,4 +1,13 @@
-import type { ContainerInfo, Deployment, Project, SystemUsage } from "../../shared/types";
+import type { AuditLog, Backup, ContainerInfo, Deployment, Project, SystemUsage } from "../../shared/types";
+
+export type BackupRecord = Backup;
+export type AuditLogEntry = AuditLog;
+
+export type ProjectEnvVariable = {
+  key: string;
+  value?: string | null;
+  masked?: boolean;
+};
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
@@ -26,6 +35,22 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+function normalizeProjectEnv(payload: unknown): ProjectEnvVariable[] {
+  if (Array.isArray(payload)) {
+    return payload
+      .filter((row): row is ProjectEnvVariable => Boolean(row) && typeof row === "object" && "key" in row)
+      .map((row) => ({ key: String(row.key), value: row.value == null ? "" : String(row.value), masked: Boolean(row.masked) }));
+  }
+  if (payload && typeof payload === "object") {
+    return Object.entries(payload).map(([key, value]) => ({
+      key,
+      value: value == null ? "" : String(value),
+      masked: true
+    }));
+  }
+  return [];
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ username: string }>("/api/auth/login", {
@@ -47,9 +72,26 @@ export const api = {
     }),
   deleteProject: (id: string) => request<void>(`/api/projects/${id}`, { method: "DELETE" }),
   deployProject: (id: string) => request<{ deployment: Deployment; reused: boolean }>(`/api/projects/${id}/deploy`, { method: "POST" }),
+  stopProject: (id: string) => request<{ ok: true }>(`/api/projects/${id}/stop`, { method: "POST" }),
+  restartProject: (id: string) => request<{ ok: true }>(`/api/projects/${id}/restart`, { method: "POST" }),
+  rollbackProject: (id: string, deploymentId: string) =>
+    request<{ deployment: Deployment }>(`/api/projects/${id}/rollback`, {
+      method: "POST",
+      body: JSON.stringify({ deploymentId })
+    }),
+  projectEnv: async (id: string) => normalizeProjectEnv(await request<unknown>(`/api/projects/${id}/env`)),
+  updateProjectEnv: (id: string, variables: ProjectEnvVariable[]) =>
+    request<{ ok: true }>(`/api/projects/${id}/env`, {
+      method: "PATCH",
+      body: JSON.stringify({ variables })
+    }),
   deployments: () => request<Deployment[]>("/api/deployments"),
   deploymentLogs: (id: string) => request<string>(`/api/deployments/${id}/logs`),
   deploymentLogStream: (id: string) => `/api/deployments/${id}/logs/stream`,
+  backups: () => request<BackupRecord[]>("/api/backups"),
+  createBackup: () => request<BackupRecord>("/api/backups", { method: "POST" }),
+  backupDownloadUrl: (id: string) => `/api/backups/${id}/download`,
+  auditLog: () => request<AuditLogEntry[]>("/api/audit-logs"),
   containers: () => request<ContainerInfo[]>("/api/containers"),
   containerLogs: (id: string) => request<string>(`/api/containers/${id}/logs`),
   containerLogStream: (id: string) => `/api/containers/${id}/logs/stream`,
@@ -57,6 +99,7 @@ export const api = {
   restartContainer: (id: string) => request<{ ok: true }>(`/api/containers/${id}/restart`, { method: "POST" }),
   systemUsage: () => request<SystemUsage>("/api/system/usage"),
   systemLogs: () => request<string>("/api/system/logs"),
+  cleanupPreview: () => request<{ logs: string }>("/api/system/cleanup/preview"),
   cleanup: () => request<{ logs: string }>("/api/system/cleanup", { method: "POST" }),
   saveSshKey: (privateKey: string) =>
     request<{ ok: true; sshKey: { privateKeyPath: string; publicKey: string } }>("/api/settings/ssh-key", {

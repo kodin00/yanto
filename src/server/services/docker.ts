@@ -106,17 +106,37 @@ export async function restartContainer(containerId: string) {
   }
 }
 
-export async function cleanupDocker() {
+const cleanupCommands = [
+  ["docker", ["builder", "prune", "-f"]],
+  ["docker", ["image", "prune", "-f"]],
+  ["docker", ["container", "prune", "-f"]],
+  ["docker", ["network", "prune", "-f"]],
+  ["sh", ["-lc", "command -v apt-get >/dev/null 2>&1 && apt-get clean || true"]]
+] as const;
+
+export async function previewDockerCleanup() {
   const commands = [
-    ["docker", ["builder", "prune", "-f"]],
-    ["docker", ["image", "prune", "-f"]],
-    ["docker", ["container", "prune", "-f"]],
-    ["docker", ["network", "prune", "-f"]],
-    ["sh", ["-lc", "command -v apt-get >/dev/null 2>&1 && apt-get clean || true"]]
+    ["docker", ["system", "df"]],
+    ["docker", ["builder", "du"]],
+    ["docker", ["container", "ls", "-a", "--filter", "status=exited", "--format", "table {{.ID}}\\t{{.Names}}\\t{{.Status}}"]],
+    ["docker", ["image", "ls", "--filter", "dangling=true", "--format", "table {{.ID}}\\t{{.Repository}}\\t{{.Tag}}\\t{{.Size}}"]],
+    ["docker", ["network", "ls", "--filter", "dangling=true", "--format", "table {{.ID}}\\t{{.Name}}\\t{{.Driver}}"]]
   ] as const;
 
   let output = "";
   for (const [command, args] of commands) {
+    const result = await runCommand(command, [...args]);
+    output += `$ ${command} ${args.join(" ")}\n${result.output}\n`;
+    if (result.exitCode !== 0) {
+      throw new Error(output);
+    }
+  }
+  return output;
+}
+
+export async function cleanupDocker() {
+  let output = "Yanto cleanup is limited to Docker builder/image/container/network prune and package cache cleanup. Running containers and named volumes are protected.\n\n";
+  for (const [command, args] of cleanupCommands) {
     const result = await runCommand(command, [...args]);
     output += `$ ${command} ${args.join(" ")}\n${result.output}\n`;
     if (result.exitCode !== 0) {

@@ -17,15 +17,23 @@ services:
       SSH_PRIVATE_KEY_PATH: ${SSH_PRIVATE_KEY_PATH:-/root/.ssh/id_ed25519}
       MANAGED_SSH_PRIVATE_KEY_PATH: ${MANAGED_SSH_PRIVATE_KEY_PATH:-/data/ssh/id_ed25519}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
+      BACKUPS_DIR: /data/backups
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${HOST_PROJECTS_ROOT:-~/projects}:/projects
       - ${SSH_SOURCE_DIR:-~/.ssh}:/root/.ssh:ro
       - yanto_ssh:/data/ssh
+      - yanto_backups:/data/backups
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/api/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   postgres:
     image: postgres:17-alpine
@@ -45,3 +53,4 @@ services:
 volumes:
   yanto_postgres:
   yanto_ssh:
+  yanto_backups:

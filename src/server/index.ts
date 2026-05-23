@@ -10,11 +10,15 @@ import { config, warnOnUnsafeDefaults } from "./config.js";
 import { db, migrate, pool } from "./db/index.js";
 import { projects } from "./db/schema.js";
 import { logger } from "./logger.js";
-import { cleanupDocker, containerLogs, listContainers, restartContainer, stopContainer } from "./services/docker.js";
-import { findDeployment, latestDeployments, startDeployment } from "./services/deployments.js";
+import { listAuditLogs, recordAuditLog } from "./services/audit.js";
+import { createPostgresBackup, getBackup, listBackups, markBackupDownloaded } from "./services/backups.js";
+import { cleanupDocker, containerLogs, listContainers, previewDockerCleanup, restartContainer, stopContainer } from "./services/docker.js";
+import { findDeployment, latestDeployments, rollbackTargetForProject, startDeployment } from "./services/deployments.js";
+import { previewEnvContent, previewProjectEnv, readProjectEnvVariables, writeProjectEnv, writeProjectEnvVariables } from "./services/project-env.js";
+import { restartProjectCompose, stopProjectCompose } from "./services/project-runtime.js";
 import { createProject, deleteProject, getProject, listProjectsWithContainerCounts, updateProject } from "./services/projects.js";
 import { managedSshKeyStatus, saveManagedSshPrivateKey } from "./services/ssh.js";
-import { systemUsage } from "./services/system.js";
+import { healthStatus, systemUsage } from "./services/system.js";
 import { constantTimeEqual } from "./services/tokens.js";
 
 const app = express();
@@ -28,7 +32,27 @@ const projectInput = z.object({
   folderName: z.string().optional().default(""),
   composeFile: z.string().min(1).optional(),
   composeContent: z.string().optional(),
+  envFile: z.string().min(1).optional(),
   autoStart: z.boolean().optional().default(false)
+});
+
+const deploymentInput = z.object({
+  targetRef: z.string().optional()
+});
+
+const rollbackInput = z.object({
+  deploymentId: z.string().optional(),
+  targetRef: z.string().optional()
+});
+
+const envInput = z.object({
+  envFile: z.string().min(1).optional(),
+  content: z.string()
+});
+
+const envVariablesInput = z.object({
+  envFile: z.string().min(1).optional(),
+  variables: z.array(z.object({ key: z.string(), value: z.string().nullable().optional(), masked: z.boolean().optional() }))
 });
 
 function asyncRoute(handler: (req: express.Request, res: express.Response) => Promise<void>) {
@@ -40,6 +64,10 @@ function asyncRoute(handler: (req: express.Request, res: express.Response) => Pr
 function routeParam(req: express.Request, name: string) {
   const value = req.params[name];
   return Array.isArray(value) ? value[0] : value;
+}
+
+function actor(req: express.Request) {
+  return currentUser(req)?.username ?? "admin";
 }
 
 function startEventStream(res: express.Response) {
@@ -61,18 +89,21 @@ app.post(
     const body = z.object({ username: z.string(), password: z.string() }).parse(req.body);
     const ok = await verifyAdminPassword(body.username, body.password);
     if (!ok) {
+      await recordAuditLog({ actor: body.username || "unknown", action: "auth.login.failed", entityType: "auth", metadata: { username: body.username } });
       res.status(401).json({ message: "Invalid username or password." });
       return;
     }
     setSessionCookie(res);
+    await recordAuditLog({ actor: config.adminUsername, action: "auth.login.success", entityType: "auth", metadata: { username: config.adminUsername } });
     res.json({ username: config.adminUsername });
   })
 );
 
-app.post("/api/auth/logout", (_req, res) => {
+app.post("/api/auth/logout", asyncRoute(async (req, res) => {
+  await recordAuditLog({ actor: actor(req), action: "auth.logout", entityType: "auth" });
   clearSessionCookie(res);
   res.json({ ok: true });
-});
+}));
 
 app.get("/api/auth/me", (req, res) => {
   const user = currentUser(req);
@@ -82,6 +113,14 @@ app.get("/api/auth/me", (req, res) => {
   }
   res.json({ username: user.username });
 });
+
+app.get(
+  "/api/health",
+  asyncRoute(async (_req, res) => {
+    const health = await healthStatus();
+    res.status(health.ok ? 200 : 503).json(health);
+  })
+);
 
 app.get(
   "/api/projects",
@@ -97,6 +136,7 @@ app.post(
   asyncRoute(async (req, res) => {
     const body = projectInput.parse(req.body);
     const project = await createProject(body);
+    await recordAuditLog({ actor: actor(req), action: "project.create", entityType: "project", entityId: project.id, projectId: project.id });
     res.status(201).json(project);
   })
 );
@@ -111,6 +151,7 @@ app.patch(
       res.status(404).json({ message: "Project not found." });
       return;
     }
+    await recordAuditLog({ actor: actor(req), action: "project.update", entityType: "project", entityId: project.id, projectId: project.id });
     res.json(project);
   })
 );
@@ -119,7 +160,9 @@ app.delete(
   "/api/projects/:id",
   requireAuth,
   asyncRoute(async (req, res) => {
-    await deleteProject(routeParam(req, "id"));
+    const id = routeParam(req, "id");
+    await deleteProject(id);
+    await recordAuditLog({ actor: actor(req), action: "project.delete", entityType: "project", entityId: id });
     res.status(204).end();
   })
 );
@@ -128,8 +171,191 @@ app.post(
   "/api/projects/:id/deploy",
   requireAuth,
   asyncRoute(async (req, res) => {
-    const result = await startDeployment(routeParam(req, "id"), "manual");
+    const body = deploymentInput.parse(req.body ?? {});
+    const result = await startDeployment(routeParam(req, "id"), "manual", body);
+    await recordAuditLog({
+      actor: actor(req),
+      action: "deployment.start",
+      entityType: "deployment",
+      entityId: result.deployment.id,
+      projectId: routeParam(req, "id"),
+      metadata: { trigger: "manual", targetRef: body.targetRef ?? null, reused: result.reused }
+    });
     res.status(result.reused ? 200 : 202).json(result);
+  })
+);
+
+app.post(
+  "/api/projects/:id/rollback",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const body = rollbackInput.parse(req.body ?? {});
+    const projectId = routeParam(req, "id");
+    const target = await rollbackTargetForProject(projectId, body.deploymentId, body.targetRef);
+    const result = await startDeployment(projectId, "rollback", {
+      targetRef: target.targetRef,
+      rollbackFromDeploymentId: target.rollbackFromDeploymentId ?? undefined
+    });
+    await recordAuditLog({
+      actor: actor(req),
+      action: "deployment.rollback",
+      entityType: "deployment",
+      entityId: result.deployment.id,
+      projectId,
+      metadata: { targetRef: target.targetRef, rollbackFromDeploymentId: target.rollbackFromDeploymentId, reused: result.reused }
+    });
+    res.status(result.reused ? 200 : 202).json(result);
+  })
+);
+
+app.get(
+  "/api/projects/:id/env",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const project = await getProject(routeParam(req, "id"));
+    if (!project) {
+      res.status(404).json({ message: "Project not found." });
+      return;
+    }
+    res.json(await readProjectEnvVariables(project, typeof req.query.envFile === "string" ? req.query.envFile : undefined));
+  })
+);
+
+app.get(
+  "/api/projects/:id/env/preview",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const project = await getProject(routeParam(req, "id"));
+    if (!project) {
+      res.status(404).json({ message: "Project not found." });
+      return;
+    }
+    res.json(await previewProjectEnv(project, typeof req.query.envFile === "string" ? req.query.envFile : undefined));
+  })
+);
+
+app.post(
+  "/api/projects/:id/env/preview",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const body = envInput.parse(req.body);
+    res.json(previewEnvContent(body.content, body.envFile ?? ".env"));
+  })
+);
+
+app.put(
+  "/api/projects/:id/env",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const project = await getProject(routeParam(req, "id"));
+    if (!project) {
+      res.status(404).json({ message: "Project not found." });
+      return;
+    }
+    const body = envInput.parse(req.body);
+    const preview = await writeProjectEnv(project, body.content, body.envFile);
+    await recordAuditLog({
+      actor: actor(req),
+      action: "project.env.write",
+      entityType: "project",
+      entityId: project.id,
+      projectId: project.id,
+      metadata: { envFile: preview.envFile, entryCount: preview.entryCount }
+    });
+    res.json(preview);
+  })
+);
+
+app.patch(
+  "/api/projects/:id/env",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const project = await getProject(routeParam(req, "id"));
+    if (!project) {
+      res.status(404).json({ message: "Project not found." });
+      return;
+    }
+    const body = envVariablesInput.parse(req.body);
+    const preview = await writeProjectEnvVariables(project, body.variables, body.envFile);
+    await recordAuditLog({
+      actor: actor(req),
+      action: "project.env.write",
+      entityType: "project",
+      entityId: project.id,
+      projectId: project.id,
+      metadata: { envFile: preview.envFile, entryCount: preview.entryCount }
+    });
+    res.json({ ok: true, preview });
+  })
+);
+
+app.post(
+  "/api/projects/:id/stop",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const project = await getProject(routeParam(req, "id"));
+    if (!project) {
+      res.status(404).json({ message: "Project not found." });
+      return;
+    }
+    const logs = await stopProjectCompose(project);
+    await recordAuditLog({ actor: actor(req), action: "project.compose.stop", entityType: "project", entityId: project.id, projectId: project.id });
+    res.json({ ok: true, logs });
+  })
+);
+
+app.post(
+  "/api/projects/:id/restart",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const project = await getProject(routeParam(req, "id"));
+    if (!project) {
+      res.status(404).json({ message: "Project not found." });
+      return;
+    }
+    const logs = await restartProjectCompose(project);
+    await recordAuditLog({ actor: actor(req), action: "project.compose.restart", entityType: "project", entityId: project.id, projectId: project.id });
+    res.json({ ok: true, logs });
+  })
+);
+
+app.get(
+  "/api/backups",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 50)));
+    res.json(await listBackups(limit));
+  })
+);
+
+app.post(
+  "/api/backups",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const backup = await createPostgresBackup();
+    await recordAuditLog({
+      actor: actor(req),
+      action: "backup.create",
+      entityType: "backup",
+      entityId: backup.id,
+      metadata: { kind: backup.kind, status: backup.status, fileSizeBytes: backup.fileSizeBytes }
+    });
+    res.status(201).json(backup);
+  })
+);
+
+app.get(
+  "/api/backups/:id/download",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const backup = await getBackup(routeParam(req, "id"));
+    if (!backup || backup.status !== "success") {
+      res.status(404).json({ message: "Backup not found." });
+      return;
+    }
+    await markBackupDownloaded(backup.id);
+    await recordAuditLog({ actor: actor(req), action: "backup.download", entityType: "backup", entityId: backup.id, metadata: { filename: backup.filename } });
+    res.download(backup.filePath, backup.filename);
   })
 );
 
@@ -145,6 +371,7 @@ app.post(
       return;
     }
     const result = await startDeployment(id, "webhook");
+    await recordAuditLog({ action: "deployment.webhook", entityType: "deployment", entityId: result.deployment.id, projectId: id, metadata: { reused: result.reused } });
     res.status(result.reused ? 200 : 202).json(result);
   })
 );
@@ -301,7 +528,9 @@ app.post(
   "/api/containers/:id/stop",
   requireAuth,
   asyncRoute(async (req, res) => {
-    await stopContainer(routeParam(req, "id"));
+    const id = routeParam(req, "id");
+    await stopContainer(id);
+    await recordAuditLog({ actor: actor(req), action: "container.stop", entityType: "container", entityId: id });
     res.json({ ok: true });
   })
 );
@@ -310,8 +539,19 @@ app.post(
   "/api/containers/:id/restart",
   requireAuth,
   asyncRoute(async (req, res) => {
-    await restartContainer(routeParam(req, "id"));
+    const id = routeParam(req, "id");
+    await restartContainer(id);
+    await recordAuditLog({ actor: actor(req), action: "container.restart", entityType: "container", entityId: id });
     res.json({ ok: true });
+  })
+);
+
+app.get(
+  "/api/audit-logs",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit ?? 100)));
+    res.json(await listAuditLogs(limit, typeof req.query.projectId === "string" ? req.query.projectId : undefined));
   })
 );
 
@@ -331,11 +571,21 @@ app.get(
   })
 );
 
+app.get(
+  "/api/system/cleanup/preview",
+  requireAuth,
+  asyncRoute(async (_req, res) => {
+    res.json({ logs: await previewDockerCleanup() });
+  })
+);
+
 app.post(
   "/api/system/cleanup",
   requireAuth,
-  asyncRoute(async (_req, res) => {
-    res.json({ logs: await cleanupDocker() });
+  asyncRoute(async (req, res) => {
+    const logs = await cleanupDocker();
+    await recordAuditLog({ actor: actor(req), action: "system.cleanup", entityType: "system", metadata: { protected: true } });
+    res.json({ logs });
   })
 );
 
@@ -362,6 +612,7 @@ app.post(
   asyncRoute(async (req, res) => {
     const body = z.object({ privateKey: z.string().min(1) }).parse(req.body);
     const sshKey = await saveManagedSshPrivateKey(body.privateKey);
+    await recordAuditLog({ actor: actor(req), action: "settings.ssh_key.save", entityType: "settings" });
     res.json({ ok: true, sshKey });
   })
 );

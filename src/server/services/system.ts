@@ -1,5 +1,6 @@
 import os from "node:os";
-import type { SystemUsage } from "../../shared/types.js";
+import type { HealthStatus, SystemUsage } from "../../shared/types.js";
+import { pool } from "../db/index.js";
 import { runCommand } from "./commands.js";
 
 function parseDfLine(line: string) {
@@ -15,6 +16,30 @@ function parseDfLine(line: string) {
     available: Number(available) * 1024,
     usedPercent: Number(percent.replace("%", "")),
     mount
+  };
+}
+
+export async function healthStatus(): Promise<HealthStatus> {
+  const checks: HealthStatus["checks"] = {
+    database: { ok: false },
+    docker: { ok: false }
+  };
+
+  try {
+    await pool.query("SELECT 1");
+    checks.database = { ok: true };
+  } catch (error) {
+    checks.database = { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
+
+  const docker = await runCommand("docker", ["version", "--format", "{{.Server.Version}}"]);
+  checks.docker = docker.exitCode === 0 ? { ok: true, message: docker.output.trim() } : { ok: false, message: docker.output.trim() };
+
+  return {
+    ok: Object.values(checks).every((check) => check.ok),
+    uptimeSeconds: Math.round(process.uptime()),
+    checkedAt: new Date().toISOString(),
+    checks
   };
 }
 

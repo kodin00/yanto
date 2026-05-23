@@ -3,7 +3,7 @@ import { db } from "../db/index.js";
 import { projects } from "../db/schema.js";
 import { createDeployToken, createId } from "./tokens.js";
 import { listContainers } from "./docker.js";
-import { ensureProjectsRoot, normalizeComposeFile, projectPath, slugifyFolderName } from "./paths.js";
+import { ensureProjectsRoot, normalizeComposeFile, normalizeEnvFile, projectPath, slugifyFolderName } from "./paths.js";
 
 export type CreateProjectInput = {
   name: string;
@@ -12,6 +12,7 @@ export type CreateProjectInput = {
   folderName: string;
   composeFile?: string;
   composeContent?: string;
+  envFile?: string;
   autoStart?: boolean;
 };
 
@@ -52,6 +53,7 @@ export async function createProject(input: CreateProjectInput) {
       localPath,
       composeFile: normalizeComposeFile(input.composeFile ?? "docker-compose.yml"),
       composeContent: input.composeContent?.trim() || null,
+      envFile: normalizeEnvFile(input.envFile ?? ".env"),
       autoStart: input.autoStart ?? false,
       deployToken: createDeployToken(),
       sshPrivateKeyPath: null,
@@ -81,6 +83,7 @@ export async function updateProject(id: string, input: Partial<CreateProjectInpu
   if (input.branch !== undefined) patch.branch = input.branch.trim() || "master";
   if (input.composeFile !== undefined) patch.composeFile = normalizeComposeFile(input.composeFile);
   if (input.composeContent !== undefined) patch.composeContent = input.composeContent.trim();
+  if (input.envFile !== undefined) patch.envFile = normalizeEnvFile(input.envFile);
   if (input.autoStart !== undefined) patch.autoStart = input.autoStart;
   if (input.folderName !== undefined) {
     const folderName = input.folderName.trim() || (input.name ? slugifyFolderName(input.name) : "");

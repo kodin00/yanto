@@ -56,6 +56,14 @@ async function runLoggedOutput(deploymentId: string, command: string, args: stri
   return result.output;
 }
 
+async function commandOutput(command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv) {
+  const result = await runCommand(command, args, { cwd, env });
+  if (result.exitCode !== 0) {
+    throw new Error(result.output || `${command} ${args.join(" ")} failed.`);
+  }
+  return result.output.trim();
+}
+
 function countLines(output: string) {
   return output
     .split("\n")
@@ -109,11 +117,26 @@ async function runDeployment(project: ProjectRow, deployment: DeploymentRow) {
 
     const gitDirExists = await pathExists(`${project.localPath}/.git`);
     if (gitDirExists && project.gitUrl) {
-      await runLogged(deployment.id, "git", ["fetch", "origin", project.branch], project.localPath, env);
-      await runLogged(deployment.id, "git", ["checkout", project.branch], project.localPath, env);
-      await runLogged(deployment.id, "git", ["pull", "--ff-only", "origin", project.branch], project.localPath, env);
+      const targetRef = deployment.targetRef?.trim();
+      if (targetRef) {
+        await appendDeploymentLog(deployment.id, `Checking out deployment target ${targetRef}.\n`);
+        await runLogged(deployment.id, "git", ["fetch", "--all", "--tags"], project.localPath, env);
+        await runLogged(deployment.id, "git", ["checkout", targetRef], project.localPath, env);
+      } else {
+        await runLogged(deployment.id, "git", ["fetch", "origin", project.branch], project.localPath, env);
+        await runLogged(deployment.id, "git", ["checkout", project.branch], project.localPath, env);
+        await runLogged(deployment.id, "git", ["pull", "--ff-only", "origin", project.branch], project.localPath, env);
+      }
     } else {
       await appendDeploymentLog(deployment.id, "Project folder is not a git repository; skipping git pull.\n");
+    }
+
+    if (gitDirExists) {
+      const commitSha = await commandOutput("git", ["rev-parse", "HEAD"], project.localPath, env);
+      const commitMessage = await commandOutput("git", ["log", "-1", "--pretty=%s"], project.localPath, env).catch(() => "");
+      await db.update(deployments).set({ commitSha, commitMessage, targetRef: deployment.targetRef ?? commitSha }).where(eq(deployments.id, deployment.id));
+      deployment.commitSha = commitSha;
+      await appendDeploymentLog(deployment.id, `Using commit ${commitSha}${commitMessage ? ` (${commitMessage})` : ""}.\n`);
     }
 
     const composeFile = await detectComposeFile(project);
@@ -157,7 +180,12 @@ async function runDeployment(project: ProjectRow, deployment: DeploymentRow) {
   }
 }
 
-export async function startDeployment(projectId: string, trigger: "manual" | "webhook") {
+export type StartDeploymentOptions = {
+  targetRef?: string;
+  rollbackFromDeploymentId?: string;
+};
+
+export async function startDeployment(projectId: string, trigger: "manual" | "webhook" | "rollback", options: StartDeploymentOptions = {}) {
   const active = activeDeployments.get(projectId);
   if (active) {
     return { deployment: active, reused: true };
@@ -175,6 +203,8 @@ export async function startDeployment(projectId: string, trigger: "manual" | "we
       projectId,
       status: "running",
       trigger,
+      targetRef: options.targetRef?.trim() || null,
+      rollbackFromDeploymentId: options.rollbackFromDeploymentId?.trim() || null,
       logs: "",
       startedAt: now()
     })
@@ -193,6 +223,10 @@ export async function latestDeployments(limit = 20) {
       projectName: projects.name,
       status: deployments.status,
       trigger: deployments.trigger,
+      targetRef: deployments.targetRef,
+      commitSha: deployments.commitSha,
+      commitMessage: deployments.commitMessage,
+      rollbackFromDeploymentId: deployments.rollbackFromDeploymentId,
       logs: deployments.logs,
       exitCode: deployments.exitCode,
       startedAt: deployments.startedAt,
@@ -207,6 +241,38 @@ export async function latestDeployments(limit = 20) {
 export async function findDeployment(id: string) {
   const [deployment] = await db.select().from(deployments).where(eq(deployments.id, id)).limit(1);
   return deployment;
+}
+
+export async function rollbackTargetForProject(projectId: string, deploymentId?: string, targetRef?: string) {
+  if (targetRef?.trim()) {
+    return { targetRef: targetRef.trim(), rollbackFromDeploymentId: deploymentId ?? null };
+  }
+
+  if (deploymentId) {
+    const [deployment] = await db.select().from(deployments).where(and(eq(deployments.id, deploymentId), eq(deployments.projectId, projectId))).limit(1);
+    const ref = deployment?.commitSha ?? deployment?.targetRef;
+    if (!ref) {
+      throw new Error("Selected deployment does not have a recorded Git commit.");
+    }
+    return { targetRef: ref, rollbackFromDeploymentId: deployment.id };
+  }
+
+  const rows = await db
+    .select()
+    .from(deployments)
+    .where(and(eq(deployments.projectId, projectId), eq(deployments.status, "success")))
+    .orderBy(desc(deployments.startedAt))
+    .limit(20);
+  const distinct = rows.filter((deployment, index) => {
+    const ref = deployment.commitSha ?? deployment.targetRef;
+    return ref && rows.findIndex((candidate) => (candidate.commitSha ?? candidate.targetRef) === ref) === index;
+  });
+  const target = distinct[1];
+  const ref = target?.commitSha ?? target?.targetRef;
+  if (!target || !ref) {
+    throw new Error("No previous successful Git deployment is available to roll back to.");
+  }
+  return { targetRef: ref, rollbackFromDeploymentId: target.id };
 }
 
 export async function activeDeploymentFor(projectId: string) {

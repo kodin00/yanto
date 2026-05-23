@@ -223,6 +223,10 @@ button:disabled {
   text-transform: uppercase;
 }
 
+a.button {
+  text-decoration: none;
+}
+
 .button.primary {
   color: #fff;
   background: var(--green);
@@ -408,7 +412,7 @@ button:disabled {
 
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 1px;
   background: var(--line);
   border: 1px solid var(--line);
@@ -514,17 +518,57 @@ button:disabled {
   color: var(--muted);
 }
 
-.meter-track {
-  height: 7px;
-  overflow: hidden;
-  background: #e5e5e5;
-  border-radius: 0;
+.segmented-meter {
+  display: grid;
+  grid-template-columns: repeat(50, minmax(2px, 1fr));
+  gap: 2px;
 }
 
-.meter-track span {
-  display: block;
-  height: 100%;
+.segmented-meter span {
+  height: 14px;
+  background: #e5e5e5;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.segmented-meter span.on {
   background: var(--ink);
+  border-color: var(--ink);
+}
+
+.warning-panel {
+  border-color: #d7a94c;
+}
+
+.warning-panel .panel-head {
+  color: var(--amber);
+}
+
+.warning-list {
+  display: grid;
+  gap: 1px;
+  background: var(--line-light);
+  border: 1px solid var(--line-light);
+}
+
+.warning-list div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(160px, auto);
+  gap: 10px;
+  align-items: center;
+  padding: 11px;
+  background: #fffaf0;
+}
+
+.warning-list span,
+.warning-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.warning-list small {
+  color: var(--muted);
 }
 
 .row-item {
@@ -718,6 +762,43 @@ summary {
   font-weight: 700;
 }
 
+.container-groups {
+  display: grid;
+  gap: 12px;
+}
+
+.container-groups details {
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+}
+
+.container-groups summary {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 13px;
+  color: var(--ink);
+  list-style: none;
+}
+
+.container-groups summary::-webkit-details-marker {
+  display: none;
+}
+
+.container-groups summary span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.container-groups summary small {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 details pre {
   overflow: auto;
   padding: 10px;
@@ -865,6 +946,11 @@ th {
 }
 
 .status.idle {
+  background: #f4efe5;
+  color: var(--amber);
+}
+
+.status.warning {
   background: #f4efe5;
   color: var(--amber);
 }
@@ -1048,6 +1134,83 @@ th {
   gap: 14px;
 }
 
+.rollback-list,
+.env-editor,
+.env-rows,
+.env-diff {
+  display: grid;
+  gap: 10px;
+}
+
+.rollback-list button {
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  color: var(--ink);
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  text-align: left;
+}
+
+.rollback-list button:hover {
+  background: var(--field);
+}
+
+.rollback-list span,
+.rollback-list strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(180px, 1fr) minmax(150px, 0.6fr) 34px;
+  gap: 10px;
+  align-items: end;
+  padding: 10px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line-light);
+}
+
+.env-add-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(180px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding-top: 4px;
+}
+
+.env-diff {
+  padding: 12px;
+  background: var(--field);
+  border: 1px solid var(--line);
+}
+
+.env-diff div:not(.section-kicker) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.env-diff span,
+.env-diff strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-diff strong {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .log-viewer {
   min-height: 360px;
   max-height: 60vh;
@@ -1133,7 +1296,7 @@ th {
   }
 
   .sidebar nav {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(0, 1fr));
   }
 
   .sidebar nav button,
@@ -1175,6 +1338,11 @@ th {
   .project-card {
     grid-template-columns: 1fr;
   }
+
+  .env-row,
+  .env-add-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 620px) {
@@ -1214,5 +1382,10 @@ th {
 
   .action-cell .table-actions {
     justify-content: flex-end;
+  }
+
+  .warning-list div,
+  .rollback-list button {
+    grid-template-columns: 1fr;
   }
 }

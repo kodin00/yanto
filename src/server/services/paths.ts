@@ -4,6 +4,7 @@ import { config } from "../config.js";
 
 const safeFolderPattern = /^[a-zA-Z0-9._-]+$/;
 const safeComposeFilePattern = /^[a-zA-Z0-9._/-]+\.ya?ml$/;
+const safeEnvFilePattern = /^[a-zA-Z0-9._/-]+$/;
 
 export function slugifyFolderName(input: string) {
   const slug = input
@@ -37,6 +38,15 @@ export function normalizeComposeFile(input: string) {
   const trimmed = input.trim() || "docker-compose.yml";
   if (path.isAbsolute(trimmed) || trimmed.includes("..") || !safeComposeFilePattern.test(trimmed)) {
     throw new Error("Compose file must be a relative .yml/.yaml path inside the project folder.");
+  }
+  return trimmed;
+}
+
+export function normalizeEnvFile(input: string) {
+  const trimmed = input.trim() || ".env";
+  const baseName = path.basename(trimmed);
+  if (path.isAbsolute(trimmed) || trimmed.includes("..") || !safeEnvFilePattern.test(trimmed) || !baseName.startsWith(".env")) {
+    throw new Error("Env file must be a relative .env file path inside the project folder.");
   }
   return trimmed;
 }
