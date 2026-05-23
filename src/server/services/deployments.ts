@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { db } from "../db/index.js";
 import { deployments, projects, type DeploymentRow, type ProjectRow } from "../db/schema.js";
+import { config } from "../config.js";
 import { logger } from "../logger.js";
 import { runCommand } from "./commands.js";
 import { autoStartOverrideFile, buildAutoStartOverride } from "./compose.js";
@@ -17,9 +18,17 @@ function now() {
 }
 
 async function appendDeploymentLog(deploymentId: string, chunk: string) {
+  const nextLogs = sql`${deployments.logs} || ${chunk}`;
+  const truncationNotice = "[... older deployment logs truncated ...]\n";
+  const retainedChars = Math.max(0, config.deploymentLogMaxChars - truncationNotice.length);
   await db
     .update(deployments)
-    .set({ logs: sql`${deployments.logs} || ${chunk}` })
+    .set({
+      logs:
+        config.deploymentLogMaxChars > 0
+          ? sql`CASE WHEN length(${nextLogs}) > ${config.deploymentLogMaxChars} THEN ${truncationNotice} || right(${nextLogs}, ${retainedChars}) ELSE ${nextLogs} END`
+          : nextLogs
+    })
     .where(eq(deployments.id, deploymentId));
 }
 
@@ -191,28 +200,45 @@ export async function startDeployment(projectId: string, trigger: "manual" | "we
     return { deployment: active, reused: true };
   }
 
-  const [project] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
-  if (!project) {
-    throw new Error("Project not found.");
+  const result = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`deployment:${projectId}`}))`);
+
+    const [runningDeployment] = await tx
+      .select()
+      .from(deployments)
+      .where(and(eq(deployments.projectId, projectId), eq(deployments.status, "running")))
+      .limit(1);
+    if (runningDeployment) {
+      return { deployment: runningDeployment, project: null, reused: true };
+    }
+
+    const [project] = await tx.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+    if (!project) {
+      throw new Error("Project not found.");
+    }
+
+    const [deployment] = await tx
+      .insert(deployments)
+      .values({
+        id: createId("dep"),
+        projectId,
+        status: "running",
+        trigger,
+        targetRef: options.targetRef?.trim() || null,
+        rollbackFromDeploymentId: options.rollbackFromDeploymentId?.trim() || null,
+        logs: "",
+        startedAt: now()
+      })
+      .returning();
+
+    return { deployment, project, reused: false };
+  });
+
+  if (!result.reused && result.project) {
+    activeDeployments.set(projectId, result.deployment);
+    void runDeployment(result.project, result.deployment);
   }
-
-  const [deployment] = await db
-    .insert(deployments)
-    .values({
-      id: createId("dep"),
-      projectId,
-      status: "running",
-      trigger,
-      targetRef: options.targetRef?.trim() || null,
-      rollbackFromDeploymentId: options.rollbackFromDeploymentId?.trim() || null,
-      logs: "",
-      startedAt: now()
-    })
-    .returning();
-
-  activeDeployments.set(projectId, deployment);
-  void runDeployment(project, deployment);
-  return { deployment, reused: false };
+  return { deployment: result.deployment, reused: result.reused };
 }
 
 export async function latestDeployments(limit = 20) {
@@ -282,4 +308,24 @@ export async function activeDeploymentFor(projectId: string) {
     .where(and(eq(deployments.projectId, projectId), eq(deployments.status, "running")))
     .limit(1);
   return deployment;
+}
+
+export async function recoverInterruptedDeployments() {
+  const interruptedAt = now();
+  const notice = `\nDeployment marked failed because Yanto restarted at ${interruptedAt.toISOString()} before it finished.\n`;
+  const rows = await db
+    .update(deployments)
+    .set({
+      status: "failed",
+      exitCode: 1,
+      finishedAt: interruptedAt,
+      logs: sql`${deployments.logs} || ${notice}`
+    })
+    .where(eq(deployments.status, "running"))
+    .returning();
+
+  if (rows.length) {
+    logger.warn("recovered interrupted deployments", { count: rows.length });
+  }
+  return rows.length;
 }

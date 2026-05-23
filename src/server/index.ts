@@ -9,11 +9,13 @@ import { clearSessionCookie, currentUser, requireAuth, setSessionCookie, verifyA
 import { config, warnOnUnsafeDefaults } from "./config.js";
 import { db, migrate, pool } from "./db/index.js";
 import { projects } from "./db/schema.js";
+import { asyncRoute, routeParam, sendStreamEvent, startEventStream } from "./http-utils.js";
 import { logger } from "./logger.js";
+import { backupInput, deploymentInput, envInput, envVariablesInput, projectInput, rollbackInput } from "./route-schemas.js";
 import { listAuditLogs, recordAuditLog } from "./services/audit.js";
 import { createPostgresBackup, deleteBackup, getBackup, listBackups, listPostgresBackupTargets, markBackupDownloaded } from "./services/backups.js";
 import { cleanupDocker, containerLogs, listContainers, previewDockerCleanup, restartContainer, stopContainer } from "./services/docker.js";
-import { findDeployment, latestDeployments, rollbackTargetForProject, startDeployment } from "./services/deployments.js";
+import { findDeployment, latestDeployments, recoverInterruptedDeployments, rollbackTargetForProject, startDeployment } from "./services/deployments.js";
 import { previewEnvContent, previewProjectEnv, readProjectEnvVariables, writeProjectEnv, writeProjectEnvVariables } from "./services/project-env.js";
 import { restartProjectCompose, stopProjectCompose } from "./services/project-runtime.js";
 import { createProject, deleteProject, getProject, listProjectsWithContainerCounts, updateProject } from "./services/projects.js";
@@ -25,66 +27,8 @@ const app = express();
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 
-const projectInput = z.object({
-  name: z.string().min(1),
-  gitUrl: z.string().optional(),
-  branch: z.string().optional().default("master"),
-  folderName: z.string().optional().default(""),
-  composeFile: z.string().min(1).optional(),
-  composeContent: z.string().optional(),
-  envFile: z.string().min(1).optional(),
-  autoStart: z.boolean().optional().default(false)
-});
-
-const deploymentInput = z.object({
-  targetRef: z.string().optional()
-});
-
-const rollbackInput = z.object({
-  deploymentId: z.string().optional(),
-  targetRef: z.string().optional()
-});
-
-const envInput = z.object({
-  envFile: z.string().min(1).optional(),
-  content: z.string()
-});
-
-const envVariablesInput = z.object({
-  envFile: z.string().min(1).optional(),
-  variables: z.array(z.object({ key: z.string(), value: z.string().nullable().optional(), masked: z.boolean().optional() }))
-});
-
-const backupInput = z.object({
-  containerId: z.string().min(1).optional()
-});
-
-function asyncRoute(handler: (req: express.Request, res: express.Response) => Promise<void>) {
-  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    handler(req, res).catch(next);
-  };
-}
-
-function routeParam(req: express.Request, name: string) {
-  const value = req.params[name];
-  return Array.isArray(value) ? value[0] : value;
-}
-
 function actor(req: express.Request) {
   return currentUser(req)?.username ?? "admin";
-}
-
-function startEventStream(res: express.Response) {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache, no-transform",
-    Connection: "keep-alive",
-    "X-Accel-Buffering": "no"
-  });
-}
-
-function sendStreamEvent(res: express.Response, payload: unknown) {
-  res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
 app.post(
@@ -666,6 +610,7 @@ app.get(/.*/, (_req, res) => {
 async function main() {
   warnOnUnsafeDefaults();
   await migrate();
+  await recoverInterruptedDeployments();
   app.listen(config.port, () => {
     logger.info("server started", { port: config.port });
   });

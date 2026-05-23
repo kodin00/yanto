@@ -93,4 +93,14 @@ export async function migrate() {
       created_at timestamptz NOT NULL DEFAULT now()
     );
   `);
+
+  await pool.query(`CREATE INDEX IF NOT EXISTS projects_created_at_idx ON projects(created_at);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS projects_folder_name_idx ON projects(folder_name);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS deployments_project_started_at_idx ON deployments(project_id, started_at DESC);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS deployments_status_idx ON deployments(status);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS deployments_started_at_idx ON deployments(started_at DESC);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS backups_created_at_idx ON backups(created_at DESC);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS backups_status_idx ON backups(status);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS audit_logs_created_at_idx ON audit_logs(created_at DESC);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS audit_logs_project_created_at_idx ON audit_logs(project_id, created_at DESC);`);
 }

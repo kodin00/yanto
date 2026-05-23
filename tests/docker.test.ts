@@ -6,7 +6,7 @@ vi.mock("../src/server/services/commands.js", () => ({
   runCommand
 }));
 
-import { cleanupDocker, listContainers, restartContainer, stopContainer } from "../src/server/services/docker.js";
+import { cleanupDocker, listContainers, normalizeDockerCreatedAt, restartContainer, stopContainer } from "../src/server/services/docker.js";
 
 describe("docker helpers", () => {
   beforeEach(() => {
@@ -100,6 +100,7 @@ describe("docker helpers", () => {
     await expect(listContainers()).resolves.toMatchObject([
       {
         id: "pg-id",
+        createdAt: "2026-05-23T10:00:00.000Z",
         composeProject: "shop",
         composeService: "db",
         isPostgresCandidate: true
@@ -111,5 +112,11 @@ describe("docker helpers", () => {
         isPostgresCandidate: false
       }
     ]);
+  });
+
+  it("normalizes Docker created timestamps with timezone names", () => {
+    expect(normalizeDockerCreatedAt("2026-05-23 10:00:00 +0700 WIB")).toBe("2026-05-23T03:00:00.000Z");
+    expect(normalizeDockerCreatedAt("2026-05-23 10:00:00 +0000 UTC")).toBe("2026-05-23T10:00:00.000Z");
+    expect(normalizeDockerCreatedAt(undefined)).toBeNull();
   });
 });

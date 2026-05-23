@@ -55,6 +55,9 @@ Important environment variables:
 - `SSH_PRIVATE_KEY_PATH` private key path inside the app container, default `/root/.ssh/id_ed25519`
 - `SSH_KEYS_DIR`, default `/data/ssh`
 - `APP_BASE_URL`
+- `COMMAND_TIMEOUT_MS`, default `3600000` (one hour) for Git, Docker, and backup helper commands
+- `COMMAND_OUTPUT_MAX_BYTES`, default `2097152`, caps in-memory command output while still streaming deployment logs
+- `DEPLOYMENT_LOG_MAX_CHARS`, default `500000`, keeps recent deployment logs bounded in Postgres
 
 ## Git SSH On A VPS
 
@@ -85,6 +88,8 @@ Alternatively, paste a private key in `Settings -> Git SSH key`. Yanto stores it
 ```bash
 npm run dev
 npm run dev:client
+npm run db:generate
+npm run db:push
 npm run typecheck
 npm test
 npm run lint

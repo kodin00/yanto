@@ -8,7 +8,6 @@ import {
   Container,
   Copy,
   DatabaseZap,
-  Download,
   FileClock,
   GitBranch,
   HardDrive,
@@ -19,7 +18,6 @@ import {
   Plus,
   RefreshCw,
   RotateCw,
-  ScrollText,
   Server,
   Settings,
   ShieldCheck,
@@ -29,14 +27,26 @@ import {
 } from "lucide-react";
 import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import type { ContainerInfo, Deployment, Project, SystemUsage } from "../shared/types";
+import {
+  bytes,
+  dateTime,
+  durationBetween,
+  endpoint,
+  normalizeEnvRows,
+  pageItems,
+  pageSize,
+  slugifyFolderName,
+  totalPages
+} from "./app-utils";
 import { Button, ConfirmDialog, IconButton, LoadingInline, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast, ToggleField } from "./components/ui";
+import { AuditTable, BackupTable, ContainerGroups, DeploymentTable, PostgresTargetTable } from "./data-tables";
 import { api, type AuditLogEntry, type BackupRecord, type PostgresTarget, type ProjectEnvVariable } from "./lib/api";
 
 type View = "dashboard" | "projects" | "deployments" | "containers" | "backups" | "audit" | "settings";
 type ToastState = { message: string; kind?: "ok" | "error" | "loading" } | null;
 type LogModalState = { title: string; logs: string; streamPath?: string; live?: boolean; status?: string };
 type LogStreamPayload = { logs?: string; chunk?: string; status?: string; error?: string; done?: boolean };
-type EnvModalState = { project: Project; rows: ProjectEnvVariable[]; baseline: ProjectEnvVariable[]; draftKey: string; draftValue: string; loading: boolean };
+type ProjectEnvState = { rows: ProjectEnvVariable[]; baseline: ProjectEnvVariable[]; draftKey: string; draftValue: string; loading: boolean; available: boolean };
 type RollbackModalState = { project: Project; deployments: Deployment[] };
 
 const emptyProject = {
@@ -58,121 +68,14 @@ const emptySshKeySettings = {
   publicKey: null as string | null
 };
 
-const pageSize = 10;
-
-function bytes(value: number) {
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let current = value;
-  let unit = 0;
-  while (current >= 1024 && unit < units.length - 1) {
-    current /= 1024;
-    unit += 1;
-  }
-  return `${current.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
-}
-
-function dateTime(value: string | null) {
-  if (!value) return "-";
-  return new Date(value).toLocaleString();
-}
-
-function durationSince(value: string | null) {
-  if (!value) return "-";
-  const started = new Date(value).getTime();
-  if (Number.isNaN(started)) return "-";
-  const seconds = Math.max(0, Math.floor((Date.now() - started) / 1000));
-  const units = [
-    ["d", 86400],
-    ["h", 3600],
-    ["m", 60]
-  ] as const;
-  const parts: string[] = [];
-  let remaining = seconds;
-  for (const [label, unitSeconds] of units) {
-    const amount = Math.floor(remaining / unitSeconds);
-    if (amount) {
-      parts.push(`${amount}${label}`);
-      remaining %= unitSeconds;
-    }
-    if (parts.length === 2) break;
-  }
-  if (!parts.length) return `${seconds}s`;
-  return parts.join(" ");
-}
-
-function durationBetween(startedAt: string | null, finishedAt: string | null) {
-  if (!startedAt) return "-";
-  const start = new Date(startedAt).getTime();
-  const end = finishedAt ? new Date(finishedAt).getTime() : Date.now();
-  if (Number.isNaN(start) || Number.isNaN(end)) return "-";
-  const seconds = Math.max(0, Math.floor((end - start) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-  if (minutes < 60) return remainingSeconds ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
-}
-
-function endpoint(project: Project, baseUrl: string) {
-  return `${baseUrl.replace(/\/$/, "")}/deploy?id=${project.id}`;
-}
-
-function slugifyFolderName(input: string) {
-  return input
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
-}
-
-function pageItems<T>(items: T[], page: number) {
-  return items.slice((page - 1) * pageSize, page * pageSize);
-}
-
-function totalPages(items: unknown[]) {
-  return Math.max(1, Math.ceil(items.length / pageSize));
-}
-
-function usedMemoryMb(memoryUsage: string) {
-  const used = memoryUsage.split("/")[0]?.trim();
-  if (!used || used === "-") return "-";
-  const match = used.match(/^([\d.]+)\s*([KMGT]?i?B)$/i);
-  if (!match) return used;
-  const value = Number(match[1] ?? 0);
-  const unit = (match[2] ?? "").toLowerCase();
-  const multipliers: Record<string, number> = {
-    b: 1 / 1024 / 1024,
-    kb: 1 / 1024,
-    kib: 1 / 1024,
-    mb: 1,
-    mib: 1,
-    gb: 1024,
-    gib: 1024,
-    tb: 1024 * 1024,
-    tib: 1024 * 1024
-  };
-  const mb = value * (multipliers[unit] ?? 1);
-  return `${mb >= 10 ? mb.toFixed(0) : mb.toFixed(1)} MB`;
-}
-
-function isProtectedYantoContainer(container: ContainerInfo) {
-  return /^yanto-(app|postgres)-\d+$/.test(container.name);
-}
-
-function normalizeEnvRows(rows: ProjectEnvVariable[]) {
-  return rows.map((row) => ({ key: row.key, value: row.value ?? "", masked: Boolean(row.masked) })).sort((a, b) => a.key.localeCompare(b.key));
-}
-
-function deploymentChanges(deployment: Deployment) {
-  const extra = deployment as Deployment & { changes?: string | string[] | null; commitSha?: string | null };
-  if (Array.isArray(extra.changes)) return extra.changes.join(", ");
-  if (extra.changes) return extra.changes;
-  if (extra.commitSha) return extra.commitSha.slice(0, 12);
-  return deployment.exitCode === null ? "Running" : `Exit ${deployment.exitCode}`;
-}
+const emptyProjectEnvState: ProjectEnvState = {
+  rows: [],
+  baseline: [],
+  draftKey: "",
+  draftValue: "",
+  loading: false,
+  available: true
+};
 
 export function App() {
   const [user, setUser] = useState<string | null>(null);
@@ -194,7 +97,7 @@ export function App() {
   const [toast, setToast] = useState<ToastState>(null);
   const [projectModal, setProjectModal] = useState<Project | "new" | null>(null);
   const [projectForm, setProjectForm] = useState(emptyProject);
-  const [envModal, setEnvModal] = useState<EnvModalState | null>(null);
+  const [projectEnv, setProjectEnv] = useState<ProjectEnvState>(emptyProjectEnvState);
   const [rollbackModal, setRollbackModal] = useState<RollbackModalState | null>(null);
   const [logModal, setLogModal] = useState<LogModalState | null>(null);
   const [confirm, setConfirm] = useState<{ title: string; body: string; label: string; danger?: boolean; action: () => Promise<void> } | null>(null);
@@ -228,24 +131,82 @@ export function App() {
     setSystemLogs(logRows);
   }, []);
 
+  const loadView = useCallback(async (targetView: View) => {
+    if (targetView === "dashboard") {
+      const [projectRows, deploymentRows, containerRows, systemRows, settingRows] = await Promise.all([
+        api.projects(),
+        api.deployments(),
+        api.containers().catch(() => []),
+        api.systemUsage().catch(() => null),
+        api.settings()
+      ]);
+      setProjects(projectRows);
+      setDeployments(deploymentRows);
+      setContainers(containerRows);
+      setUsage(systemRows);
+      setSettings(settingRows);
+      return;
+    }
+
+    if (targetView === "projects") {
+      const [projectRows, deploymentRows, containerRows, settingRows] = await Promise.all([api.projects(), api.deployments(), api.containers().catch(() => []), api.settings()]);
+      setProjects(projectRows);
+      setDeployments(deploymentRows);
+      setContainers(containerRows);
+      setSettings(settingRows);
+      return;
+    }
+
+    if (targetView === "deployments") {
+      setDeployments(await api.deployments());
+      return;
+    }
+
+    if (targetView === "containers") {
+      setContainers(await api.containers().catch(() => []));
+      return;
+    }
+
+    if (targetView === "backups") {
+      const [backupRows, postgresRows] = await Promise.all([api.backups().catch(() => []), api.postgresBackupTargets().catch(() => [])]);
+      setBackups(backupRows);
+      setPostgresTargets(postgresRows);
+      return;
+    }
+
+    if (targetView === "audit") {
+      setAuditEntries(await api.auditLog().catch(() => []));
+      return;
+    }
+
+    const [settingRows, logRows] = await Promise.all([api.settings(), api.systemLogs().catch(() => "")]);
+    setSettings(settingRows);
+    setSystemLogs(logRows);
+  }, []);
+
   useEffect(() => {
     api
       .me()
       .then((result) => {
         setUser(result.username);
-        return loadAll();
+        return loadView("dashboard");
       })
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
-  }, [loadAll]);
+  }, [loadView]);
 
   useEffect(() => {
     if (!user) return;
     const timer = window.setInterval(() => {
-      void loadAll().catch(() => undefined);
-    }, 8000);
+      void loadView(view).catch(() => undefined);
+    }, 30000);
     return () => window.clearInterval(timer);
-  }, [loadAll, user]);
+  }, [loadView, user, view]);
+
+  useEffect(() => {
+    if (!user) return;
+    void loadView(view).catch(() => undefined);
+  }, [loadView, user, view]);
 
   useEffect(() => {
     if (!logModal?.streamPath) return;
@@ -298,6 +259,14 @@ export function App() {
   );
   const unhealthyContainers = useMemo(() => containers.filter((container) => !["running", "created"].includes(container.state)), [containers]);
   const warningDisks = useMemo(() => usage?.storage.filter((disk) => disk.usedPercent >= 80) ?? [], [usage]);
+  const containersByProjectFolder = useMemo(() => {
+    const map = new Map<string, ContainerInfo[]>();
+    for (const container of containers) {
+      if (!container.composeProject) continue;
+      map.set(container.composeProject, [...(map.get(container.composeProject) ?? []), container]);
+    }
+    return map;
+  }, [containers]);
   const visibleProjects = useMemo(() => pageItems(projects, projectPage), [projectPage, projects]);
   const visibleDeployments = useMemo(() => pageItems(deployments, deploymentPage), [deploymentPage, deployments]);
   const visibleBackups = useMemo(() => pageItems(backups, backupPage), [backupPage, backups]);
@@ -325,7 +294,7 @@ export function App() {
     try {
       const result = await api.login(login.username, login.password);
       setUser(result.username);
-      await loadAll();
+      await loadView("dashboard");
       setToast({ message: "Signed in." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to sign in.", kind: "error" });
@@ -334,24 +303,60 @@ export function App() {
     }
   }
 
-  async function saveProject(event: FormEvent) {
-    event.preventDefault();
+  function projectEnvPayload() {
+    const rows = normalizeEnvRows(projectEnv.rows.filter((row) => row.key.trim()));
+    return rows.map((row) => {
+      const original = projectEnv.baseline.find((item) => item.key === row.key);
+      if (original?.masked && original.value === row.value) {
+        return { key: row.key, masked: row.masked };
+      }
+      return row;
+    });
+  }
+
+  async function persistProjectDetails(event?: FormEvent, after?: "deploy" | "restart") {
+    event?.preventDefault();
+    if (!projectModal) return;
     setBusy("project");
     try {
+      let savedProject: Project;
       if (projectModal === "new") {
-        await api.createProject(projectForm);
-        setToast({ message: "Project registered." });
-      } else if (projectModal) {
-        await api.updateProject(projectModal.id, projectForm);
-        setToast({ message: "Project updated." });
+        savedProject = await api.createProject(projectForm);
+      } else {
+        savedProject = await api.updateProject(projectModal.id, projectForm);
+      }
+
+      const envRows = projectEnvPayload();
+      if (projectEnv.available && !projectEnv.loading && (projectModal !== "new" || envRows.length)) {
+        await api.updateProjectEnv(savedProject.id, envRows);
+      }
+      if (after === "restart") {
+        await api.restartProject(savedProject.id);
+      }
+      if (after === "deploy") {
+        await api.deployProject(savedProject.id);
       }
       setProjectModal(null);
       await loadAll();
+      setToast({
+        message:
+          after === "restart"
+            ? "Project saved and restart started."
+            : after === "deploy"
+              ? "Project saved and deployment started."
+              : projectModal === "new"
+                ? "Project registered."
+                : "Project updated."
+      });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to save project.", kind: "error" });
     } finally {
       setBusy(null);
     }
+  }
+
+  async function saveProject(event: FormEvent) {
+    await persistProjectDetails(event);
   }
 
   async function deploy(project: Project) {
@@ -405,56 +410,23 @@ export function App() {
         composeContent: project.composeContent ?? "",
         autoStart: project.autoStart
       });
+      setProjectEnv({ ...emptyProjectEnvState, loading: true });
       setProjectModal(project);
+      void api
+        .projectEnv(project.id)
+        .then((rows) => {
+          const normalizedRows = normalizeEnvRows(rows);
+          setProjectEnv({ rows: normalizedRows, baseline: normalizedRows, draftKey: "", draftValue: "", loading: false, available: true });
+        })
+        .catch((error) => {
+          setProjectEnv({ ...emptyProjectEnvState, loading: false, available: false });
+          setToast({ message: error instanceof Error ? error.message : "Unable to load environment.", kind: "error" });
+        });
       return;
     }
     setProjectForm(emptyProject);
+    setProjectEnv(emptyProjectEnvState);
     setProjectModal("new");
-  }
-
-  async function openEnvEditor(project: Project) {
-    setEnvModal({ project, rows: [], baseline: [], draftKey: "", draftValue: "", loading: true });
-    try {
-      const rows = normalizeEnvRows(await api.projectEnv(project.id));
-      setEnvModal({ project, rows, baseline: rows, draftKey: "", draftValue: "", loading: false });
-    } catch (error) {
-      setEnvModal(null);
-      setToast({ message: error instanceof Error ? error.message : "Unable to load environment.", kind: "error" });
-    }
-  }
-
-  async function persistProjectEnv(after?: "deploy" | "restart") {
-    if (!envModal) return;
-    setBusy(`env:${envModal.project.id}`);
-    try {
-      const rows = normalizeEnvRows(envModal.rows.filter((row) => row.key.trim()));
-      const payload = rows.map((row) => {
-        const original = envModal.baseline.find((item) => item.key === row.key);
-        if (original?.masked && original.value === row.value) {
-          return { key: row.key, masked: row.masked };
-        }
-        return row;
-      });
-      await api.updateProjectEnv(envModal.project.id, payload);
-      if (after === "restart") {
-        await api.restartProject(envModal.project.id);
-      }
-      if (after === "deploy") {
-        await api.deployProject(envModal.project.id);
-      }
-      setEnvModal(null);
-      await loadAll();
-      setToast({ message: after === "restart" ? "Environment updated and restart started." : after === "deploy" ? "Environment updated and deployment started." : "Environment updated." });
-    } catch (error) {
-      setToast({ message: error instanceof Error ? error.message : "Unable to save environment.", kind: "error" });
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function saveProjectEnv(event: FormEvent) {
-    event.preventDefault();
-    await persistProjectEnv();
   }
 
   function openRollback(project: Project) {
@@ -583,7 +555,7 @@ export function App() {
           <div>
             <h1>{view[0].toUpperCase() + view.slice(1)}</h1>
           </div>
-          <Button variant="secondary" onClick={() => void loadAll()} icon={<RefreshCw size={16} />}>
+          <Button variant="secondary" onClick={() => void loadView(view)} icon={<RefreshCw size={16} />}>
             Refresh
           </Button>
         </header>
@@ -646,8 +618,22 @@ export function App() {
               </Button>
             </div>
             <div className="project-grid">
-              {visibleProjects.map((project) => (
-                <article className="project-card" key={project.id}>
+              {visibleProjects.map((project) => {
+                const projectContainers = containersByProjectFolder.get(project.folderName) ?? [];
+                return (
+                <article
+                  className="project-card"
+                  key={project.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openProject(project)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      openProject(project);
+                    }
+                  }}
+                >
                   <div className="project-card-main">
                     <div className="project-card-head">
                       <div>
@@ -676,29 +662,35 @@ export function App() {
                     </dl>
                   </div>
                   <div className="project-card-side">
-                    <div className="endpoint-box">
+                    <div className="endpoint-box" onClick={(event) => event.stopPropagation()}>
                       <span>{endpoint(project, settings.appBaseUrl)}</span>
                       <button type="button" onClick={() => void copyText(endpoint(project, settings.appBaseUrl))} title="Copy endpoint" aria-label="Copy endpoint">
                         <Copy size={15} />
                       </button>
                     </div>
-                    <div className="token-box">
+                    <div className="token-box" onClick={(event) => event.stopPropagation()}>
                       <span>Bearer {project.deployToken}</span>
                       <button type="button" onClick={() => void copyText(`Bearer ${project.deployToken}`)} title="Copy token" aria-label="Copy token">
                         <Copy size={15} />
                       </button>
                     </div>
-                    <div className="project-side-stat">
+                    <div className="project-container-list">
                       <span>Containers</span>
-                      <strong>{project.containerCount ?? 0} created</strong>
+                      {projectContainers.length ? (
+                        <div>
+                          {projectContainers.slice(0, 4).map((container) => (
+                            <span className="project-container-row" key={container.id}>
+                              <strong>{container.name}</strong>
+                              <StatusBadge status={container.state} />
+                            </span>
+                          ))}
+                          {projectContainers.length > 4 ? <small>+{projectContainers.length - 4} more</small> : null}
+                        </div>
+                      ) : (
+                        <small>No containers</small>
+                      )}
                     </div>
-                    <div className="actions">
-                      <Button variant="secondary" onClick={() => openProject(project)}>
-                        Edit
-                      </Button>
-                      <Button variant="secondary" onClick={() => void openEnvEditor(project)} icon={<KeyRound size={15} />}>
-                        Env
-                      </Button>
+                    <div className="actions" onClick={(event) => event.stopPropagation()}>
                       <Button variant="secondary" onClick={() => openRollback(project)} icon={<Undo2 size={15} />}>
                         Rollback
                       </Button>
@@ -743,7 +735,8 @@ export function App() {
                     </div>
                   </div>
                 </article>
-              ))}
+                );
+              })}
             </div>
             <Pagination label="Projects" page={projectPage} totalItems={projects.length} onPageChange={setProjectPage} />
           </section>
@@ -987,60 +980,64 @@ export function App() {
       </main>
 
       {projectModal ? (
-        <Modal title={projectModal === "new" ? "Add project" : "Edit project"} onClose={() => setProjectModal(null)}>
-          <form className="form-grid" onSubmit={saveProject}>
-            <TextField label="Name" value={projectForm.name} onChange={(name) => setProjectForm((current) => ({ ...current, name }))} required />
-            <TextField label="Git SSH URL" value={projectForm.gitUrl} onChange={(gitUrl) => setProjectForm((current) => ({ ...current, gitUrl }))} placeholder="Optional: git@github.com:user/repo.git" />
-            <TextField label="Branch" value={projectForm.branch} onChange={(branch) => setProjectForm((current) => ({ ...current, branch }))} required />
-            <TextField label="Folder name" value={projectForm.folderName} onChange={(folderName) => setProjectForm((current) => ({ ...current, folderName }))} placeholder={slugifyFolderName(projectForm.name) || "Auto from project name"} />
-            <TextField label="Compose file" value={projectForm.composeFile} onChange={(composeFile) => setProjectForm((current) => ({ ...current, composeFile }))} placeholder="docker-compose.yml" required />
-            <ToggleField
-              label="Auto start after restart"
-              value={projectForm.autoStart}
-              onChange={(autoStart) => setProjectForm((current) => ({ ...current, autoStart }))}
-              description="Deploy with a Yanto compose override that sets restart: unless-stopped."
-            />
-            <TextAreaField
-              label="Compose editor"
-              value={projectForm.composeContent}
-              onChange={(composeContent) => setProjectForm((current) => ({ ...current, composeContent }))}
-              placeholder={"Optional. Paste docker-compose.yml content here for compose-only projects or to override the file during deploy."}
-            />
-            <div className="actions">
+        <Modal title={projectModal === "new" ? "Add project" : "Edit project"} size="wide" onClose={() => setProjectModal(null)}>
+          <form className="project-edit-form" onSubmit={saveProject}>
+            <div className="project-edit-layout">
+              <section className="project-edit-section">
+                <div className="section-kicker">Project</div>
+                <TextField label="Name" value={projectForm.name} onChange={(name) => setProjectForm((current) => ({ ...current, name }))} required />
+                <TextField label="Git SSH URL" value={projectForm.gitUrl} onChange={(gitUrl) => setProjectForm((current) => ({ ...current, gitUrl }))} placeholder="Optional: git@github.com:user/repo.git" />
+                <div className="project-edit-pair">
+                  <TextField label="Branch" value={projectForm.branch} onChange={(branch) => setProjectForm((current) => ({ ...current, branch }))} required />
+                  <TextField label="Compose file" value={projectForm.composeFile} onChange={(composeFile) => setProjectForm((current) => ({ ...current, composeFile }))} placeholder="docker-compose.yml" required />
+                </div>
+                <TextField label="Folder name" value={projectForm.folderName} onChange={(folderName) => setProjectForm((current) => ({ ...current, folderName }))} placeholder={slugifyFolderName(projectForm.name) || "Auto from project name"} />
+                <ToggleField
+                  label="Auto start after restart"
+                  value={projectForm.autoStart}
+                  onChange={(autoStart) => setProjectForm((current) => ({ ...current, autoStart }))}
+                  description="Deploy with a Yanto compose override that sets restart: unless-stopped."
+                />
+              </section>
+
+              <section className="project-edit-section compose-section">
+                <div className="section-kicker">Compose</div>
+                <TextAreaField
+                  label="Compose editor"
+                  value={projectForm.composeContent}
+                  onChange={(composeContent) => setProjectForm((current) => ({ ...current, composeContent }))}
+                  placeholder={"Optional. Paste docker-compose.yml content here for compose-only projects or to override the file during deploy."}
+                />
+              </section>
+
+              <section className="project-edit-section env-section">
+                <div className="section-kicker">Environment</div>
+                {projectEnv.loading ? (
+                  <LoadingInline label="Loading environment" />
+                ) : projectEnv.available ? (
+                  <EnvEditor modal={projectEnv} onChange={setProjectEnv} />
+                ) : (
+                  <p className="muted">Environment could not be loaded. Project fields can still be saved.</p>
+                )}
+              </section>
+            </div>
+            <div className="actions project-edit-actions">
               <Button variant="secondary" onClick={() => setProjectModal(null)}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={busy === "project"}>
+              {projectModal !== "new" ? (
+                <Button type="button" variant="secondary" disabled={busy === "project" || projectEnv.loading} onClick={() => void persistProjectDetails(undefined, "restart")} icon={<RotateCw size={15} />}>
+                  Save & Restart
+                </Button>
+              ) : null}
+              <Button type="button" variant="secondary" disabled={busy === "project" || projectEnv.loading} onClick={() => void persistProjectDetails(undefined, "deploy")} icon={<Play size={15} />}>
+                Save & Deploy
+              </Button>
+              <Button type="submit" disabled={busy === "project" || projectEnv.loading}>
                 Save project
               </Button>
             </div>
           </form>
-        </Modal>
-      ) : null}
-
-      {envModal ? (
-        <Modal title={`${envModal.project.name} environment`} onClose={() => setEnvModal(null)}>
-          {envModal.loading ? (
-            <LoadingInline label="Loading environment" />
-          ) : (
-            <form className="form-grid" onSubmit={saveProjectEnv}>
-              <EnvEditor modal={envModal} onChange={setEnvModal} />
-              <div className="actions">
-                <Button variant="secondary" onClick={() => setEnvModal(null)}>
-                  Cancel
-                </Button>
-                  <Button type="submit" disabled={busy === `env:${envModal.project.id}`}>
-                    Save
-                  </Button>
-                  <Button type="button" variant="secondary" disabled={busy === `env:${envModal.project.id}`} onClick={() => void persistProjectEnv("restart")} icon={<RotateCw size={15} />}>
-                    Save & Restart
-                  </Button>
-                  <Button type="button" disabled={busy === `env:${envModal.project.id}`} onClick={() => void persistProjectEnv("deploy")} icon={<Play size={15} />}>
-                    Save & Deploy
-                  </Button>
-                </div>
-              </form>
-          )}
         </Modal>
       ) : null}
 
@@ -1253,254 +1250,7 @@ function SegmentedMeter({ label, value, detail, icon }: { label: string; value: 
   );
 }
 
-function PostgresTargetTable({ targets, busy, onDump }: { targets: PostgresTarget[]; busy: string | null; onDump: (containerId: string) => Promise<void> }) {
-  if (!targets.length) {
-    return <p className="muted">No likely Postgres containers detected yet.</p>;
-  }
-
-  return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Project</th>
-            <th>Container</th>
-            <th>Database</th>
-            <th>Status</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {targets.map((target) => {
-            const running = target.state === "running";
-            return (
-              <tr key={target.containerId}>
-                <td>
-                  <div className="stacked-cell">
-                    <strong>{target.projectName ?? target.composeProject ?? "Standalone"}</strong>
-                    <span>{target.composeService ?? target.image}</span>
-                  </div>
-                </td>
-                <td>{target.containerName}</td>
-                <td>
-                  <div className="stacked-cell">
-                    <strong>{target.databaseName}</strong>
-                    <span>{target.databaseUser}</span>
-                  </div>
-                </td>
-                <td><StatusBadge status={running ? "postgres" : target.state} /></td>
-                <td className="table-actions">
-                  <Button disabled={!running || busy === `backup:${target.containerId}`} onClick={() => void onDump(target.containerId)} icon={<Archive size={15} />}>
-                    Dump
-                  </Button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function BackupTable({ backups, onDelete }: { backups: BackupRecord[]; onDelete: (backup: BackupRecord) => void }) {
-  if (!backups.length) {
-    return <p className="muted">No backups recorded yet.</p>;
-  }
-
-  return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Backup</th>
-            <th>Source</th>
-            <th>Status</th>
-            <th>Size</th>
-            <th>Created</th>
-            <th>Duration</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {backups.map((backup) => (
-            <tr key={backup.id}>
-              <td>{backup.filename || backup.id}</td>
-              <td>{backup.note ?? backup.kind}</td>
-              <td><StatusBadge status={backup.status} /></td>
-              <td>{backup.fileSizeBytes ? bytes(backup.fileSizeBytes) : "-"}</td>
-              <td>{dateTime(backup.createdAt)}</td>
-              <td>{durationBetween(backup.createdAt, backup.finishedAt)}</td>
-              <td className="table-actions">
-                <a className={`button secondary link-button ${backup.status !== "success" ? "disabled" : ""}`} href={backup.status === "success" ? api.backupDownloadUrl(backup.id) : undefined}>
-                  <Download size={15} />
-                  <span>Download</span>
-                </a>
-                <IconButton label="Remove backup" variant="danger" onClick={() => onDelete(backup)}>
-                  <Trash2 size={15} />
-                </IconButton>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function AuditTable({ entries }: { entries: AuditLogEntry[] }) {
-  if (!entries.length) {
-    return <p className="muted">No audit events recorded yet.</p>;
-  }
-
-  return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Actor</th>
-            <th>Action</th>
-            <th>Target</th>
-            <th>Status</th>
-            <th>Message</th>
-          </tr>
-        </thead>
-        <tbody>
-          {entries.map((entry) => (
-            <tr key={entry.id}>
-              <td>{dateTime(entry.createdAt)}</td>
-              <td>{entry.actor ?? "system"}</td>
-              <td>{entry.action}</td>
-              <td>{entry.entityId ? `${entry.entityType}:${entry.entityId}` : entry.entityType}</td>
-              <td><StatusBadge status="recorded" /></td>
-              <td>{JSON.stringify(entry.metadata ?? {})}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function ContainerGroups({
-  containers,
-  onLogs,
-  onConfirm,
-  onReload
-}: {
-  containers: ContainerInfo[];
-  onLogs: (container: ContainerInfo) => void;
-  onConfirm: (confirm: { title: string; body: string; label: string; danger?: boolean; action: () => Promise<void> }) => void;
-  onReload: () => Promise<void>;
-}) {
-  const groups = Array.from(
-    containers.reduce((map, container) => {
-      const key = container.composeProject || "standalone";
-      map.set(key, [...(map.get(key) ?? []), container]);
-      return map;
-    }, new Map<string, ContainerInfo[]>())
-  ).sort(([a], [b]) => a.localeCompare(b));
-
-  if (!groups.length) {
-    return <p className="muted">No containers found yet.</p>;
-  }
-
-  return (
-    <div className="container-groups">
-      {groups.map(([group, rows]) => (
-        <details key={group} open>
-          <summary>
-            <span>{group}</span>
-            <small>{rows.filter((container) => container.state === "running").length} / {rows.length} running</small>
-          </summary>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Image</th>
-                  <th>Role</th>
-                  <th>Status</th>
-                  <th>Uptime</th>
-                  <th>Ports</th>
-                  <th>CPU</th>
-                  <th>Memory</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((container) => {
-                  const protectedContainer = isProtectedYantoContainer(container);
-                  return (
-                    <tr key={container.id}>
-                      <td>{container.name}</td>
-                      <td>{container.image}</td>
-                      <td>{container.isPostgresCandidate ? <StatusBadge status="postgres" /> : "-"}</td>
-                      <td><StatusBadge status={container.state} /></td>
-                      <td title={dateTime(container.createdAt)}>{durationSince(container.createdAt)}</td>
-                      <td className="ports-cell">{container.ports || "-"}</td>
-                      <td>{container.cpuPercent}</td>
-                      <td>{usedMemoryMb(container.memoryUsage)} ({container.memoryPercent})</td>
-                      <td className="action-cell">
-                        {protectedContainer ? (
-                          <span className="protected-label">Protected</span>
-                        ) : (
-                          <div className="table-actions icon-actions">
-                            <IconButton label="View logs" variant="secondary" onClick={() => void onLogs(container)}>
-                              <ScrollText size={15} />
-                            </IconButton>
-                            <IconButton
-                              label="Restart container"
-                              variant="secondary"
-                              onClick={() =>
-                                onConfirm({
-                                  title: "Restart container",
-                                  body: `Restart ${container.name}?`,
-                                  label: "Restart",
-                                  action: async () => {
-                                    await api.restartContainer(container.id);
-                                    await onReload();
-                                  }
-                                })
-                              }
-                            >
-                              <RotateCw size={15} />
-                            </IconButton>
-                            <IconButton
-                              label="Stop container"
-                              variant="danger"
-                              onClick={() =>
-                                onConfirm({
-                                  title: "Stop container",
-                                  body: `Stop ${container.name}?`,
-                                  label: "Stop",
-                                  danger: true,
-                                  action: async () => {
-                                    await api.stopContainer(container.id);
-                                    await onReload();
-                                  }
-                                })
-                              }
-                            >
-                              <Square size={15} />
-                            </IconButton>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </details>
-      ))}
-    </div>
-  );
-}
-
-function EnvEditor({ modal, onChange }: { modal: EnvModalState; onChange: (next: EnvModalState) => void }) {
+function EnvEditor({ modal, onChange }: { modal: ProjectEnvState; onChange: (next: ProjectEnvState) => void }) {
   const baselineKeys = new Set(modal.baseline.map((row) => row.key));
   const currentKeys = new Set(modal.rows.map((row) => row.key));
   const changedRows = modal.rows.filter((row) => {
@@ -1562,47 +1312,6 @@ function EnvEditor({ modal, onChange }: { modal: EnvModalState; onChange: (next:
         })}
         {!changedRows.length && !removedRows.length ? <p className="muted">No pending environment changes.</p> : null}
       </div>
-    </div>
-  );
-}
-
-function DeploymentTable({ deployments, onLogs, compact }: { deployments: Deployment[]; onLogs: (deployment: Deployment) => void; compact?: boolean }) {
-  if (!deployments.length) {
-    return <p className="muted">No deployments recorded yet.</p>;
-  }
-
-  return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Project</th>
-            <th>Trigger</th>
-            <th>Started</th>
-            <th>Status</th>
-            <th>Duration</th>
-            {!compact ? <th>Changes</th> : null}
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {deployments.map((deployment) => (
-            <tr key={deployment.id}>
-              <td>{deployment.projectName ?? deployment.projectId}</td>
-              <td>{deployment.trigger}</td>
-              <td>{dateTime(deployment.startedAt)}</td>
-              <td><StatusBadge status={deployment.status} /></td>
-              <td>{durationBetween(deployment.startedAt, deployment.finishedAt)}</td>
-              {!compact ? <td>{deploymentChanges(deployment)}</td> : null}
-              <td className="table-actions">
-                <Button variant="secondary" onClick={() => onLogs(deployment)}>
-                  Logs
-                </Button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }

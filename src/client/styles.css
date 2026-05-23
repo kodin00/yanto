@@ -633,6 +633,13 @@ a.button {
   border: 0;
   border-radius: 0;
   background: var(--panel-strong);
+  cursor: pointer;
+}
+
+.project-card:hover,
+.project-card:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 .project-card-main,
@@ -716,17 +723,15 @@ dd {
   flex: 1;
 }
 
-.project-side-stat {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.project-container-list {
+  display: grid;
   gap: 12px;
   padding: 8px 10px;
   background: var(--panel-strong);
   border: 1px solid var(--line-light);
 }
 
-.project-side-stat span {
+.project-container-list > span {
   color: var(--muted);
   font-size: 10px;
   font-weight: 800;
@@ -734,10 +739,29 @@ dd {
   text-transform: uppercase;
 }
 
-.project-side-stat strong {
-  font-family: var(--font-display);
-  font-size: 13px;
+.project-container-list > div {
+  display: grid;
+  gap: 7px;
+}
+
+.project-container-list small {
+  color: var(--muted);
+}
+
+.project-container-row {
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.project-container-row strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 13px;
 }
 
 .endpoint-box button,
@@ -1135,6 +1159,10 @@ th {
   box-shadow: var(--shadow);
 }
 
+.modal.wide {
+  width: min(1180px, calc(100vw - 36px));
+}
+
 .modal-head {
   display: flex;
   align-items: center;
@@ -1151,6 +1179,47 @@ th {
 .form-grid {
   display: grid;
   gap: 14px;
+}
+
+.project-edit-form,
+.project-edit-section {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.project-edit-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(280px, 1fr) minmax(360px, 1.25fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.project-edit-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.compose-section .text-area-field,
+.compose-section textarea {
+  height: 100%;
+  min-height: 420px;
+}
+
+.env-section .env-editor {
+  max-height: min(560px, calc(100vh - 230px));
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.env-section .env-row {
+  grid-template-columns: minmax(100px, 0.7fr) minmax(140px, 1fr) minmax(110px, 0.5fr) 34px;
+}
+
+.project-edit-actions {
+  justify-content: flex-end;
+  padding-top: 4px;
 }
 
 .rollback-list,
@@ -1379,6 +1448,20 @@ th {
 
   .project-card {
     grid-template-columns: 1fr;
+  }
+
+  .project-edit-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .compose-section .text-area-field,
+  .compose-section textarea {
+    min-height: 280px;
+  }
+
+  .env-section .env-editor {
+    max-height: none;
+    overflow: visible;
   }
 
   .env-row,

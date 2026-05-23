@@ -43,6 +43,21 @@ function parseLabels(labels: string | undefined) {
   return result;
 }
 
+export function normalizeDockerCreatedAt(value: string | undefined) {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  if (!Number.isNaN(parsed)) {
+    return new Date(parsed).toISOString();
+  }
+
+  const match = value.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) ([+-]\d{2})(\d{2})(?:\s+\S+)?$/);
+  if (!match) return null;
+  const [, date, time, offsetHour, offsetMinute] = match;
+  const normalized = `${date}T${time}${offsetHour}:${offsetMinute}`;
+  const normalizedParsed = Date.parse(normalized);
+  return Number.isNaN(normalizedParsed) ? null : new Date(normalizedParsed).toISOString();
+}
+
 export function isPostgresContainerLike(container: Pick<ContainerInfo, "name" | "image"> & { composeService?: string | null }) {
   const haystack = [container.name, container.image, container.composeService ?? ""].join(" ").toLowerCase();
   return /\b(postgres|postgresql|postgis|timescale|timescaledb|pgvector)\b/.test(haystack) || haystack.includes("bitnami/postgresql");
@@ -68,7 +83,7 @@ export async function listContainers(): Promise<ContainerInfo[]> {
       status: container.Status,
       state: container.State,
       ports: container.Ports,
-      createdAt: container.CreatedAt ?? null,
+      createdAt: normalizeDockerCreatedAt(container.CreatedAt),
       cpuPercent: stat?.CPUPerc ?? "0%",
       memoryUsage: stat?.MemUsage ?? "-",
       memoryPercent: stat?.MemPerc ?? "0%",

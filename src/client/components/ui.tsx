@@ -139,7 +139,7 @@ export function CustomSelect<T extends string>({
   );
 }
 
-export function Modal({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+export function Modal({ title, children, onClose, size = "default" }: { title: string; children: ReactNode; onClose: () => void; size?: "default" | "wide" }) {
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -156,7 +156,7 @@ export function Modal({ title, children, onClose }: { title: string; children: R
         onClose();
       }
     }}>
-      <div className="modal" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
+      <div className={`modal ${size}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-head">
           <h2>{title}</h2>
           <IconButton label="Close" onClick={onClose}>

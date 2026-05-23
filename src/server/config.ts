@@ -16,6 +16,9 @@ export const config = {
   sshPrivateKeyPath: process.env.SSH_PRIVATE_KEY_PATH ?? "/root/.ssh/id_ed25519",
   managedSshPrivateKeyPath: path.resolve(process.env.MANAGED_SSH_PRIVATE_KEY_PATH ?? path.join(process.env.SSH_KEYS_DIR ?? "/tmp/yanto-ssh", "id_ed25519")),
   appBaseUrl: process.env.APP_BASE_URL ?? `http://localhost:${process.env.PORT ?? "8080"}`,
+  commandTimeoutMs: Number(process.env.COMMAND_TIMEOUT_MS ?? 60 * 60 * 1000),
+  commandOutputMaxBytes: Number(process.env.COMMAND_OUTPUT_MAX_BYTES ?? 2 * 1024 * 1024),
+  deploymentLogMaxChars: Number(process.env.DEPLOYMENT_LOG_MAX_CHARS ?? 500_000),
   cookieSecure:
     process.env.COOKIE_SECURE === undefined
       ? (process.env.APP_BASE_URL ?? "").startsWith("https://")

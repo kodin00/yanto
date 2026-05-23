@@ -34,4 +34,27 @@ describe("command runner", () => {
     expect(result.output).toContain("err");
     expect(chunks.join("")).toBe(result.output);
   });
+
+  it("caps collected output without stopping streamed chunks", async () => {
+    const chunks: string[] = [];
+    const result = await runCommand("node", ["-e", "process.stdout.write('abcdefghijklmnop')"], {
+      maxOutputBytes: 5,
+      onData: (chunk) => chunks.push(chunk)
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toBe("abcde");
+    expect(result.truncated).toBe(true);
+    expect(chunks.join("")).toBe("abcdefghijklmnop");
+  });
+
+  it("times out long-running commands when requested", async () => {
+    const result = await runCommand("node", ["-e", "setTimeout(() => {}, 1000)"], {
+      timeoutMs: 25
+    });
+
+    expect(result.exitCode).toBe(124);
+    expect(result.timedOut).toBe(true);
+    expect(result.output).toContain("Command timed out");
+  });
 });
