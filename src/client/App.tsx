@@ -427,7 +427,6 @@ export function App() {
         <header className="topbar">
           <div>
             <h1>{view[0].toUpperCase() + view.slice(1)}</h1>
-            {view !== "dashboard" ? <p>{projects.length} projects, {containers.length} containers, {runningDeployments.length} active deployments</p> : null}
           </div>
           <Button variant="secondary" onClick={() => void loadAll()} icon={<RefreshCw size={16} />}>
             Refresh

@@ -39,6 +39,46 @@ async function runLogged(deploymentId: string, command: string, args: string[], 
   }
 }
 
+async function runLoggedOutput(deploymentId: string, command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv) {
+  await appendDeploymentLog(deploymentId, `$ ${command} ${args.join(" ")}\n`);
+  const result = await runCommand(command, args, {
+    cwd,
+    env,
+    onData: (chunk) => {
+      void appendDeploymentLog(deploymentId, chunk);
+    }
+  });
+  await appendDeploymentLog(deploymentId, `\n`);
+  if (result.exitCode !== 0) {
+    const tail = result.output.trim().split("\n").slice(-12).join("\n");
+    throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.exitCode}${tail ? `:\n${tail}` : ""}`);
+  }
+  return result.output;
+}
+
+function countLines(output: string) {
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean).length;
+}
+
+async function replaceComposeDeployment(deploymentId: string, composeArgs: string[], cwd: string) {
+  const runningContainers = countLines(await runLoggedOutput(deploymentId, "docker", [...composeArgs, "ps", "-q", "--status", "running"], cwd));
+  if (runningContainers > 0) {
+    await appendDeploymentLog(
+      deploymentId,
+      `Found ${runningContainers} running compose container${runningContainers === 1 ? "" : "s"}; building before replacement to reduce downtime.\n`
+    );
+    await runLogged(deploymentId, "docker", [...composeArgs, "build"], cwd);
+    await runLogged(deploymentId, "docker", [...composeArgs, "up", "-d", "--remove-orphans"], cwd);
+    return;
+  }
+
+  await appendDeploymentLog(deploymentId, "No running compose containers found; starting with a fresh build.\n");
+  await runLogged(deploymentId, "docker", [...composeArgs, "up", "-d", "--build", "--remove-orphans"], cwd);
+}
+
 async function detectComposeFile(project: ProjectRow) {
   if (project.composeFile) {
     return project.composeFile;
@@ -97,7 +137,7 @@ async function runDeployment(project: ProjectRow, deployment: DeploymentRow) {
       await fs.rm(restartOverridePath, { force: true });
       await appendDeploymentLog(deployment.id, "Auto start is disabled; running compose without restart override.\n");
     }
-    await runLogged(deployment.id, "docker", [...composeArgs, "up", "-d", "--build"], project.localPath);
+    await replaceComposeDeployment(deployment.id, composeArgs, project.localPath);
 
     await db
       .update(deployments)
