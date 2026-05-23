@@ -142,19 +142,22 @@ const cleanupCommands = [
 
 export async function previewDockerCleanup() {
   const commands = [
-    ["docker", ["system", "df"]],
-    ["docker", ["builder", "du"]],
-    ["docker", ["container", "ls", "-a", "--filter", "status=exited", "--format", "table {{.ID}}\\t{{.Names}}\\t{{.Status}}"]],
-    ["docker", ["image", "ls", "--filter", "dangling=true", "--format", "table {{.ID}}\\t{{.Repository}}\\t{{.Tag}}\\t{{.Size}}"]],
-    ["docker", ["network", "ls", "--filter", "dangling=true", "--format", "table {{.ID}}\\t{{.Name}}\\t{{.Driver}}"]]
+    { command: "docker", args: ["system", "df"], required: true },
+    { command: "docker", args: ["builder", "du"], required: false },
+    { command: "docker", args: ["container", "ls", "-a", "--filter", "status=exited", "--format", "table {{.ID}}\\t{{.Names}}\\t{{.Status}}"], required: false },
+    { command: "docker", args: ["image", "ls", "--filter", "dangling=true", "--format", "table {{.ID}}\\t{{.Repository}}\\t{{.Tag}}\\t{{.Size}}"], required: false },
+    { command: "docker", args: ["network", "ls", "--filter", "dangling=true", "--format", "table {{.ID}}\\t{{.Name}}\\t{{.Driver}}"], required: false }
   ] as const;
 
   let output = "";
-  for (const [command, args] of commands) {
+  for (const { command, args, required } of commands) {
     const result = await runCommand(command, [...args]);
     output += `$ ${command} ${args.join(" ")}\n${result.output}\n`;
     if (result.exitCode !== 0) {
-      throw new Error(output);
+      if (required) {
+        throw new Error(output);
+      }
+      output += `Preview detail command failed; continuing with available cleanup information.\n\n`;
     }
   }
   return output;

@@ -1,15 +1,17 @@
 import { desc, eq, sql } from "drizzle-orm";
 import { spawn } from "node:child_process";
-import { createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { createGzip } from "node:zlib";
+import { pipeline } from "node:stream/promises";
+import { createGunzip, createGzip } from "node:zlib";
 import { config } from "../config.js";
 import { db } from "../db/index.js";
 import { backups } from "../db/schema.js";
 import { listContainers } from "./docker.js";
 import { listProjects } from "./projects.js";
 import { runCommand } from "./commands.js";
+import { uploadFileToR2 } from "./r2.js";
 import { createId } from "./tokens.js";
 
 function backupTimestamp() {
@@ -90,6 +92,79 @@ async function runContainerPgDumpGzip(containerId: string, filePath: string) {
     ],
     filePath
   );
+}
+
+async function isCustomPgDump(dumpPath: string, originalFilename: string) {
+  const lower = originalFilename.toLowerCase().replace(/\.gz$/, "");
+  if (lower.endsWith(".dump") || lower.endsWith(".backup")) {
+    return true;
+  }
+  const handle = await fs.open(dumpPath, "r");
+  try {
+    const buffer = Buffer.alloc(5);
+    const result = await handle.read(buffer, 0, buffer.length, 0);
+    return result.bytesRead === 5 && buffer.toString() === "PGDMP";
+  } finally {
+    await handle.close();
+  }
+}
+
+async function runContainerRestore(containerId: string, dumpPath: string, originalFilename: string) {
+  const customDump = await isCustomPgDump(dumpPath, originalFilename);
+  const source = createReadStream(dumpPath);
+  const sqlStream = originalFilename.toLowerCase().endsWith(".gz") ? source.pipe(createGunzip()) : source;
+  const restoreCommand = customDump
+    ? 'exec pg_restore -U "$PGUSER" -d "$PGDATABASE" --clean --if-exists --no-owner'
+    : 'exec psql -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1';
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(
+      "docker",
+      [
+        "exec",
+        "-i",
+        containerId,
+        "sh",
+        "-lc",
+        [
+          'PGUSER="${POSTGRES_USER:-${PGUSER:-postgres}}"',
+          'PGDATABASE="${POSTGRES_DB:-${PGDATABASE:-$PGUSER}}"',
+          'export PGPASSWORD="${POSTGRES_PASSWORD:-${PGPASSWORD:-}}"',
+          'psql -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"',
+          restoreCommand
+        ].join("; ")
+      ],
+      {
+        env: process.env,
+        shell: false,
+        stdio: ["pipe", "pipe", "pipe"]
+      }
+    );
+    const output: string[] = [];
+    let settled = false;
+
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGTERM");
+      reject(error);
+    };
+
+    child.stdout.on("data", (chunk: Buffer) => output.push(chunk.toString()));
+    child.stderr.on("data", (chunk: Buffer) => output.push(chunk.toString()));
+    child.on("error", fail);
+    child.on("close", (exitCode) => {
+      if (settled) return;
+      settled = true;
+      if (exitCode !== 0) {
+        reject(new Error(output.join("").trim() || `Postgres restore failed with exit code ${exitCode ?? 1}.`));
+        return;
+      }
+      resolve();
+    });
+
+    pipeline(sqlStream, child.stdin).catch(fail);
+  });
 }
 
 async function inspectContainerEnv(containerId: string) {
@@ -205,6 +280,31 @@ export async function createPostgresBackup(containerId?: string) {
       .returning();
     return failed ?? { ...backup, status: "failed", error: message, finishedAt: new Date() };
   }
+}
+
+export async function restorePostgresBackupTarget(containerId: string, dumpPath: string, originalFilename: string) {
+  const target = (await listPostgresBackupTargets()).find((item) => item.containerId === containerId);
+  if (!target) {
+    throw new Error("Container is not a recognized Postgres backup target.");
+  }
+  if (target.state !== "running") {
+    throw new Error(`${target.containerName} must be running before it can be restored.`);
+  }
+  await runContainerRestore(target.containerId, dumpPath, originalFilename);
+  return target;
+}
+
+export async function uploadBackupToR2(id: string) {
+  const backup = await getBackup(id);
+  if (!backup || backup.status !== "success") {
+    throw new Error("Backup not found.");
+  }
+  const result = await uploadFileToR2({
+    filePath: backup.filePath,
+    filename: backup.filename || `${backup.id}.sql.gz`,
+    contentType: backup.filename.endsWith(".gz") ? "application/gzip" : "application/sql"
+  });
+  return { backup, result };
 }
 
 export async function deleteBackup(id: string) {

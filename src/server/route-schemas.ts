@@ -33,3 +33,12 @@ export const envVariablesInput = z.object({
 export const backupInput = z.object({
   containerId: z.string().min(1).optional()
 });
+
+export const r2SettingsInput = z.object({
+  enabled: z.boolean().optional().default(false),
+  accountId: z.string().optional().default(""),
+  bucket: z.string().optional().default(""),
+  accessKeyId: z.string().optional().default(""),
+  secretAccessKey: z.string().optional().default(""),
+  prefix: z.string().optional().default("postgres-dumps")
+});

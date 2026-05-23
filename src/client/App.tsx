@@ -10,6 +10,7 @@ import {
   DatabaseZap,
   FileClock,
   GitBranch,
+  Cloud,
   HardDrive,
   KeyRound,
   LogOut,
@@ -68,6 +69,15 @@ const emptySshKeySettings = {
   publicKey: null as string | null
 };
 
+const emptyR2Settings = {
+  enabled: false,
+  accountId: "",
+  bucket: "",
+  accessKeyId: "",
+  hasSecretAccessKey: false,
+  prefix: "postgres-dumps"
+};
+
 const emptyProjectEnvState: ProjectEnvState = {
   rows: [],
   baseline: [],
@@ -88,7 +98,8 @@ export function App() {
   const [postgresTargets, setPostgresTargets] = useState<PostgresTarget[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
   const [usage, setUsage] = useState<SystemUsage | null>(null);
-  const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: "", sshKey: emptySshKeySettings });
+  const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: "", sshKey: emptySshKeySettings, r2: emptyR2Settings });
+  const [r2Form, setR2Form] = useState({ enabled: false, accountId: "", bucket: "", accessKeyId: "", secretAccessKey: "", prefix: "postgres-dumps" });
   const [systemLogs, setSystemLogs] = useState("");
   const [cleanupLogs, setCleanupLogs] = useState("");
   const [cleanupLogTitle, setCleanupLogTitle] = useState("Cleanup preview");
@@ -207,6 +218,17 @@ export function App() {
     if (!user) return;
     void loadView(view).catch(() => undefined);
   }, [loadView, user, view]);
+
+  useEffect(() => {
+    setR2Form({
+      enabled: settings.r2?.enabled ?? false,
+      accountId: settings.r2?.accountId ?? "",
+      bucket: settings.r2?.bucket ?? "",
+      accessKeyId: settings.r2?.accessKeyId ?? "",
+      secretAccessKey: "",
+      prefix: settings.r2?.prefix ?? "postgres-dumps"
+    });
+  }, [settings.r2]);
 
   useEffect(() => {
     if (!logModal?.streamPath) return;
@@ -448,6 +470,53 @@ export function App() {
       setToast({ message: "Postgres backup created." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to create backup.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function restorePostgresTarget(target: PostgresTarget, file: File) {
+    setConfirm({
+      title: "Restore Postgres dump",
+      body: `Replace ${target.databaseName} on ${target.containerName} with ${file.name}? The current public schema will be dropped before importing the dump.`,
+      label: "Restore",
+      danger: true,
+      action: async () => {
+        setBusy(`restore:${target.containerId}`);
+        setToast({ message: "Restoring Postgres dump...", kind: "loading" });
+        try {
+          await api.restorePostgresTarget(target.containerId, file);
+          await loadAll();
+          setToast({ message: "Postgres dump restored." });
+        } finally {
+          setBusy(null);
+        }
+      }
+    });
+  }
+
+  async function uploadBackupR2(backup: BackupRecord) {
+    setBusy(`r2:${backup.id}`);
+    setToast({ message: "Uploading dump to Cloudflare R2...", kind: "loading" });
+    try {
+      const result = await api.uploadBackupToR2(backup.id);
+      setToast({ message: `Uploaded to R2: ${result.key}` });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to upload to R2.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function saveR2Settings(event: FormEvent) {
+    event.preventDefault();
+    setBusy("r2-settings");
+    try {
+      const result = await api.saveR2Settings(r2Form);
+      setSettings((current) => ({ ...current, r2: result.r2 }));
+      setToast({ message: "R2 settings saved." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to save R2 settings.", kind: "error" });
     } finally {
       setBusy(null);
     }
@@ -765,7 +834,7 @@ export function App() {
                   </Button>
                 </div>
               </div>
-              <PostgresTargetTable targets={postgresTargets} busy={busy} onDump={dumpPostgresTarget} />
+              <PostgresTargetTable targets={postgresTargets} busy={busy} onDump={dumpPostgresTarget} onRestore={restorePostgresTarget} />
             </section>
             <section className="panel">
               <div className="panel-head">
@@ -774,6 +843,8 @@ export function App() {
               </div>
               <BackupTable
                 backups={visibleBackups}
+                busy={busy}
+                onUploadR2={uploadBackupR2}
                 onDelete={(backup) =>
                   setConfirm({
                     title: "Remove backup",
@@ -815,12 +886,11 @@ export function App() {
 
         {view === "settings" ? (
           <section className="settings-grid">
-            <section className="panel webhook-settings">
+            <section className="panel webhook-settings compact-settings-panel">
               <div className="panel-head">
                 <h2>Deployment webhook</h2>
                 <GitBranch size={19} />
               </div>
-              <p className="muted">Use this endpoint from Git webhooks or your own automation. Replace the project id and token with values from the project card.</p>
               <div className="settings-code-list">
                 <div>
                   <dt>Endpoint</dt>
@@ -840,15 +910,47 @@ export function App() {
                     </button>
                   </div>
                 </div>
-                <p className="muted">Get the token from Projects, then copy the Bearer token shown on that project.</p>
               </div>
             </section>
-            <section className="panel webhook-settings">
+            <section className="panel r2-settings-panel">
+              <div className="panel-head">
+                <h2>Cloudflare R2</h2>
+                <Cloud size={19} />
+              </div>
+              <form className="form-grid compact-form" onSubmit={saveR2Settings}>
+                <ToggleField
+                  label="Upload enabled"
+                  value={r2Form.enabled}
+                  onChange={(enabled) => setR2Form((current) => ({ ...current, enabled }))}
+                  description={settings.r2?.hasSecretAccessKey ? "Secret key saved" : "Add an R2 secret key before uploading"}
+                />
+                <div className="settings-form-pair">
+                  <TextField label="Account ID" value={r2Form.accountId} onChange={(accountId) => setR2Form((current) => ({ ...current, accountId }))} />
+                  <TextField label="Bucket" value={r2Form.bucket} onChange={(bucket) => setR2Form((current) => ({ ...current, bucket }))} />
+                </div>
+                <div className="settings-form-pair">
+                  <TextField label="Access key ID" value={r2Form.accessKeyId} onChange={(accessKeyId) => setR2Form((current) => ({ ...current, accessKeyId }))} />
+                  <TextField
+                    label="Secret access key"
+                    type="password"
+                    value={r2Form.secretAccessKey}
+                    onChange={(secretAccessKey) => setR2Form((current) => ({ ...current, secretAccessKey }))}
+                    placeholder={settings.r2?.hasSecretAccessKey ? "Saved; leave blank to keep" : ""}
+                  />
+                </div>
+                <TextField label="Object prefix" value={r2Form.prefix} onChange={(prefix) => setR2Form((current) => ({ ...current, prefix }))} />
+                <div className="actions">
+                  <Button type="submit" disabled={busy === "r2-settings"} icon={<Cloud size={16} />}>
+                    Save R2
+                  </Button>
+                </div>
+              </form>
+            </section>
+            <section className="panel ssh-settings-panel">
               <div className="panel-head">
                 <h2>Git SSH key</h2>
                 <KeyRound size={19} />
               </div>
-              <p className="muted">Paste the private key Yanto should use for Git clone and pull. It is stored as a file in the persistent SSH volume, not shown again after saving.</p>
               <dl className="settings-list ssh-status-list">
                 <div>
                   <dt>Active key path</dt>
@@ -885,7 +987,7 @@ export function App() {
                 </div>
               </form>
             </section>
-            <section className="panel">
+            <section className="panel runtime-settings-panel">
               <div className="panel-head">
                 <h2>Runtime</h2>
               </div>

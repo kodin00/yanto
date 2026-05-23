@@ -6,7 +6,7 @@ vi.mock("../src/server/services/commands.js", () => ({
   runCommand
 }));
 
-import { cleanupDocker, listContainers, normalizeDockerCreatedAt, restartContainer, stopContainer } from "../src/server/services/docker.js";
+import { cleanupDocker, listContainers, normalizeDockerCreatedAt, previewDockerCleanup, restartContainer, stopContainer } from "../src/server/services/docker.js";
 
 describe("docker helpers", () => {
   beforeEach(() => {
@@ -39,6 +39,19 @@ describe("docker helpers", () => {
       "$ docker builder prune -f\nok\n$ docker image prune -f\nimage prune failed\n"
     );
     expect(runCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps cleanup preview usable when optional docker detail commands are unavailable", async () => {
+    runCommand.mockImplementation(async (_command: string, args: string[]) => ({
+      exitCode: args[0] === "builder" ? 1 : 0,
+      output: args[0] === "builder" ? "Usage: docker builder COMMAND" : "ok"
+    }));
+
+    const output = await previewDockerCleanup();
+
+    expect(output).toContain("$ docker system df\nok\n");
+    expect(output).toContain("$ docker builder du\nUsage: docker builder COMMAND\n");
+    expect(output).toContain("Preview detail command failed; continuing");
   });
 
   it("protects Yanto app containers from stop actions", async () => {

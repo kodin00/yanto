@@ -11,9 +11,9 @@ import { db, migrate, pool } from "./db/index.js";
 import { projects } from "./db/schema.js";
 import { asyncRoute, routeParam, sendStreamEvent, startEventStream } from "./http-utils.js";
 import { logger } from "./logger.js";
-import { backupInput, deploymentInput, envInput, envVariablesInput, projectInput, rollbackInput } from "./route-schemas.js";
+import { backupInput, deploymentInput, envInput, envVariablesInput, projectInput, r2SettingsInput, rollbackInput } from "./route-schemas.js";
 import { listAuditLogs, recordAuditLog } from "./services/audit.js";
-import { createPostgresBackup, deleteBackup, getBackup, listBackups, listPostgresBackupTargets, markBackupDownloaded } from "./services/backups.js";
+import { createPostgresBackup, deleteBackup, getBackup, listBackups, listPostgresBackupTargets, markBackupDownloaded, restorePostgresBackupTarget, uploadBackupToR2 } from "./services/backups.js";
 import { cleanupDocker, containerLogs, listContainers, previewDockerCleanup, restartContainer, stopContainer } from "./services/docker.js";
 import { findDeployment, latestDeployments, recoverInterruptedDeployments, rollbackTargetForProject, startDeployment } from "./services/deployments.js";
 import { previewEnvContent, previewProjectEnv, readProjectEnvVariables, writeProjectEnv, writeProjectEnvVariables } from "./services/project-env.js";
@@ -21,6 +21,7 @@ import { restartProjectCompose, stopProjectCompose } from "./services/project-ru
 import { createProject, deleteProject, getProject, listProjectsWithContainerCounts, updateProject } from "./services/projects.js";
 import { managedSshKeyStatus, saveManagedSshPrivateKey } from "./services/ssh.js";
 import { healthStatus, systemUsage } from "./services/system.js";
+import { publicR2Settings, saveR2Settings } from "./services/settings.js";
 import { constantTimeEqual } from "./services/tokens.js";
 
 const app = express();
@@ -29,6 +30,41 @@ app.use(cookieParser());
 
 function actor(req: express.Request) {
   return currentUser(req)?.username ?? "admin";
+}
+
+async function saveRequestBodyToTempFile(req: express.Request) {
+  await fs.promises.mkdir(config.backupsDir, { recursive: true, mode: 0o700 });
+  const filenameHeader = req.header("x-filename") ?? "uploaded-dump.sql";
+  const originalFilename = path.basename(decodeURIComponent(filenameHeader)).replace(/[^\w .-]+/g, "-") || "uploaded-dump.sql";
+  const filePath = path.join(config.backupsDir, `.restore-${Date.now()}-${Math.random().toString(16).slice(2)}-${originalFilename}`);
+  let received = 0;
+
+  await new Promise<void>((resolve, reject) => {
+    const output = fs.createWriteStream(filePath, { mode: 0o600 });
+    const fail = (error: Error) => {
+      req.destroy();
+      output.destroy();
+      reject(error);
+    };
+
+    req.on("data", (chunk: Buffer) => {
+      received += chunk.byteLength;
+      if (received > config.backupUploadMaxBytes) {
+        fail(new Error(`Dump upload is larger than ${config.backupUploadMaxBytes} bytes.`));
+      }
+    });
+    req.on("error", fail);
+    output.on("error", fail);
+    output.on("finish", resolve);
+    req.pipe(output);
+  });
+
+  if (received === 0) {
+    await fs.promises.rm(filePath, { force: true });
+    throw new Error("Upload a Postgres dump file first.");
+  }
+
+  return { filePath, originalFilename, size: received };
 }
 
 app.post(
@@ -302,6 +338,45 @@ app.post(
   })
 );
 
+app.post(
+  "/api/backups/postgres-targets/:containerId/restore",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const upload = await saveRequestBodyToTempFile(req);
+    try {
+      const target = await restorePostgresBackupTarget(routeParam(req, "containerId"), upload.filePath, upload.originalFilename);
+      await recordAuditLog({
+        actor: actor(req),
+        action: "backup.restore",
+        entityType: "container",
+        entityId: target.containerId,
+        projectId: target.projectId,
+        metadata: { filename: upload.originalFilename, size: upload.size, database: target.databaseName }
+      });
+      res.json({ ok: true, target });
+    } finally {
+      await fs.promises.rm(upload.filePath, { force: true });
+    }
+  })
+);
+
+app.post(
+  "/api/backups/:id/upload-r2",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const { backup, result } = await uploadBackupToR2(routeParam(req, "id"));
+    await recordAuditLog({
+      actor: actor(req),
+      action: "backup.r2_upload",
+      entityType: "backup",
+      entityId: backup.id,
+      projectId: backup.projectId,
+      metadata: { bucket: result.bucket, key: result.key, size: result.size }
+    });
+    res.json(result);
+  })
+);
+
 app.get(
   "/api/backups/:id/download",
   requireAuth,
@@ -565,16 +640,27 @@ app.get(
   "/api/settings",
   requireAuth,
   asyncRoute(async (_req, res) => {
-    const count = await db.select().from(projects);
-    const sshKey = await managedSshKeyStatus();
+    const [count, sshKey, r2] = await Promise.all([db.select().from(projects), managedSshKeyStatus(), publicR2Settings()]);
     res.json({
       projectsRoot: config.projectsRoot,
       hostProjectsRoot: config.hostProjectsRoot,
       sshKeysDir: config.sshKeysDir,
       appBaseUrl: config.appBaseUrl,
       projectCount: count.length,
-      sshKey
+      sshKey,
+      r2
     });
+  })
+);
+
+app.post(
+  "/api/settings/r2",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const body = r2SettingsInput.parse(req.body ?? {});
+    const r2 = await saveR2Settings(body);
+    await recordAuditLog({ actor: actor(req), action: "settings.r2.save", entityType: "settings", metadata: { enabled: r2.enabled, bucket: r2.bucket, prefix: r2.prefix } });
+    res.json({ ok: true, r2 });
   })
 );
 

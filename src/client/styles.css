@@ -57,6 +57,12 @@ button:disabled {
   opacity: 0.6;
 }
 
+.button.disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
 .login-shell {
   min-height: 100vh;
   display: grid;
@@ -227,6 +233,19 @@ a.button {
   text-decoration: none;
 }
 
+.file-button {
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.file-button input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .button.primary {
   color: #fff;
   background: var(--green);
@@ -299,20 +318,32 @@ a.button {
 }
 
 .settings-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(360px, 0.9fr) minmax(420px, 1.1fr);
+  align-items: start;
 }
 
 .webhook-settings {
-  grid-column: span 2;
+  grid-column: span 1;
 }
 
 .system-log-panel {
   grid-column: span 2;
 }
 
+.ssh-settings-panel {
+  grid-row: span 2;
+}
+
+.compact-settings-panel,
+.runtime-settings-panel,
+.r2-settings-panel {
+  padding: 18px;
+}
+
 .settings-code-list {
   display: grid;
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
 }
 
 .dashboard-main-grid {
@@ -678,6 +709,10 @@ dl {
 .settings-list {
   display: grid;
   gap: 8px;
+}
+
+.runtime-settings-panel .settings-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .project-card dl div,
@@ -1181,6 +1216,21 @@ th {
   gap: 14px;
 }
 
+.compact-form {
+  gap: 10px;
+}
+
+.settings-form-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ssh-key-form textarea {
+  min-height: 150px;
+  max-height: 220px;
+}
+
 .project-edit-form,
 .project-edit-section {
   display: grid;
@@ -1440,6 +1490,15 @@ th {
 
   .webhook-settings {
     grid-column: auto;
+  }
+
+  .ssh-settings-panel {
+    grid-row: auto;
+  }
+
+  .settings-form-pair,
+  .runtime-settings-panel .settings-list {
+    grid-template-columns: 1fr;
   }
 
   .system-log-panel {

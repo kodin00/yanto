@@ -94,6 +94,14 @@ export async function migrate() {
     );
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key text PRIMARY KEY,
+      value text NOT NULL,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+
   await pool.query(`CREATE INDEX IF NOT EXISTS projects_created_at_idx ON projects(created_at);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS projects_folder_name_idx ON projects(folder_name);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS deployments_project_started_at_idx ON deployments(project_id, started_at DESC);`);

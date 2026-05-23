@@ -81,6 +81,15 @@ export type PostgresBackupTarget = {
   databaseUser: string;
 };
 
+export type R2PublicSettings = {
+  enabled: boolean;
+  accountId: string;
+  bucket: string;
+  accessKeyId: string;
+  hasSecretAccessKey: boolean;
+  prefix: string;
+};
+
 export type AuditLog = {
   id: string;
   actor: string;

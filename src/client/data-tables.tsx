@@ -1,4 +1,4 @@
-import { Archive, Download, RotateCw, ScrollText, Square, Trash2 } from "lucide-react";
+import { Archive, Download, RotateCw, ScrollText, Square, Trash2, Upload } from "lucide-react";
 import type { ContainerInfo, Deployment } from "../shared/types";
 import { bytes, dateTime, deploymentChanges, durationBetween, durationSince, isProtectedYantoContainer, usedMemoryMb } from "./app-utils";
 import { Button, IconButton, StatusBadge } from "./components/ui";
@@ -6,7 +6,17 @@ import { api, type AuditLogEntry, type BackupRecord, type PostgresTarget } from 
 
 type ConfirmState = { title: string; body: string; label: string; danger?: boolean; action: () => Promise<void> };
 
-export function PostgresTargetTable({ targets, busy, onDump }: { targets: PostgresTarget[]; busy: string | null; onDump: (containerId: string) => Promise<void> }) {
+export function PostgresTargetTable({
+  targets,
+  busy,
+  onDump,
+  onRestore
+}: {
+  targets: PostgresTarget[];
+  busy: string | null;
+  onDump: (containerId: string) => Promise<void>;
+  onRestore: (target: PostgresTarget, file: File) => Promise<void>;
+}) {
   if (!targets.length) {
     return <p className="muted">No likely Postgres containers detected yet.</p>;
   }
@@ -48,6 +58,22 @@ export function PostgresTargetTable({ targets, busy, onDump }: { targets: Postgr
                   <Button disabled={!running || busy === `backup:${target.containerId}`} onClick={() => void onDump(target.containerId)} icon={<Archive size={15} />}>
                     Dump
                   </Button>
+                  <label className={`button secondary file-button ${!running || busy === `restore:${target.containerId}` ? "disabled" : ""}`}>
+                    <Upload size={15} />
+                    <span>{busy === `restore:${target.containerId}` ? "Restoring" : "Restore"}</span>
+                    <input
+                      type="file"
+                      accept=".sql,.gz,.dump,.backup,application/sql,application/gzip,application/octet-stream"
+                      disabled={!running || busy === `restore:${target.containerId}`}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.currentTarget.value = "";
+                        if (file) {
+                          void onRestore(target, file);
+                        }
+                      }}
+                    />
+                  </label>
                 </td>
               </tr>
             );
@@ -58,7 +84,17 @@ export function PostgresTargetTable({ targets, busy, onDump }: { targets: Postgr
   );
 }
 
-export function BackupTable({ backups, onDelete }: { backups: BackupRecord[]; onDelete: (backup: BackupRecord) => void }) {
+export function BackupTable({
+  backups,
+  busy,
+  onDelete,
+  onUploadR2
+}: {
+  backups: BackupRecord[];
+  busy: string | null;
+  onDelete: (backup: BackupRecord) => void;
+  onUploadR2: (backup: BackupRecord) => Promise<void>;
+}) {
   if (!backups.length) {
     return <p className="muted">No backups recorded yet.</p>;
   }
@@ -93,6 +129,9 @@ export function BackupTable({ backups, onDelete }: { backups: BackupRecord[]; on
                   <Download size={15} />
                   <span>Download</span>
                 </a>
+                <Button disabled={backup.status !== "success" || busy === `r2:${backup.id}`} variant="secondary" onClick={() => void onUploadR2(backup)} icon={<Upload size={15} />}>
+                  {busy === `r2:${backup.id}` ? "Uploading" : "R2"}
+                </Button>
                 <IconButton label="Remove backup" variant="danger" onClick={() => onDelete(backup)}>
                   <Trash2 size={15} />
                 </IconButton>

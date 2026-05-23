@@ -1,4 +1,4 @@
-import type { AuditLog, Backup, ContainerInfo, Deployment, PostgresBackupTarget, Project, SystemUsage } from "../../shared/types";
+import type { AuditLog, Backup, ContainerInfo, Deployment, PostgresBackupTarget, Project, R2PublicSettings, SystemUsage } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -9,6 +9,8 @@ export type ProjectEnvVariable = {
   value?: string | null;
   masked?: boolean;
 };
+
+export type R2SettingsPayload = Omit<R2PublicSettings, "hasSecretAccessKey"> & { secretAccessKey?: string };
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
@@ -96,7 +98,24 @@ export const api = {
       method: "POST",
       body: JSON.stringify(containerId ? { containerId } : {})
     }),
+  restorePostgresTarget: async (containerId: string, file: File) => {
+    const response = await fetch(`/api/backups/postgres-targets/${containerId}/restore`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+        "X-Filename": encodeURIComponent(file.name)
+      },
+      body: file
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => ({ message: response.statusText }))) as { message?: string };
+      throw new Error(body.message ?? "Restore failed.");
+    }
+    return response.json() as Promise<{ ok: true; target: PostgresTarget }>;
+  },
   deleteBackup: (id: string) => request<void>(`/api/backups/${id}`, { method: "DELETE" }),
+  uploadBackupToR2: (id: string) => request<{ bucket: string; key: string; endpoint: string; filename: string; size: number }>(`/api/backups/${id}/upload-r2`, { method: "POST" }),
   backupDownloadUrl: (id: string) => `/api/backups/${id}/download`,
   auditLog: () => request<AuditLogEntry[]>("/api/audit-logs"),
   containers: () => request<ContainerInfo[]>("/api/containers"),
@@ -113,6 +132,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ privateKey })
     }),
+  saveR2Settings: (payload: R2SettingsPayload) =>
+    request<{ ok: true; r2: R2PublicSettings }>("/api/settings/r2", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
   settings: () =>
     request<{
       projectsRoot: string;
@@ -120,6 +144,7 @@ export const api = {
       sshKeysDir: string;
       appBaseUrl: string;
       projectCount: number;
+      r2: R2PublicSettings;
       sshKey: {
         hasManagedKey: boolean;
         hasMountedKey: boolean;

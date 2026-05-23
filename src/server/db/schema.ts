@@ -80,6 +80,12 @@ export const auditLogs = pgTable(
   (table) => [index("audit_logs_created_at_idx").on(table.createdAt), index("audit_logs_project_created_at_idx").on(table.projectId, table.createdAt)]
 );
 
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+});
+
 export type ProjectRow = typeof projects.$inferSelect;
 export type NewProjectRow = typeof projects.$inferInsert;
 export type DeploymentRow = typeof deployments.$inferSelect;
@@ -88,3 +94,4 @@ export type BackupRow = typeof backups.$inferSelect;
 export type NewBackupRow = typeof backups.$inferInsert;
 export type AuditLogRow = typeof auditLogs.$inferSelect;
 export type NewAuditLogRow = typeof auditLogs.$inferInsert;
+export type AppSettingRow = typeof appSettings.$inferSelect;
