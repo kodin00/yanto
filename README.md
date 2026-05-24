@@ -107,9 +107,11 @@ Add these repository secrets in GitHub under `Settings -> Secrets and variables 
 - `VPS_APP_DIR`: absolute repo path on the VPS, for example `/home/ubuntu/yanto`
 - `VPS_PORT`: optional SSH port, defaults to `22`
 
+The SSH user must be able to run Docker with passwordless sudo.
+
 The deploy command is:
 
 ```bash
 git pull --ff-only origin master
-docker compose -f compose.yml up -d --build --remove-orphans
+sudo -n docker compose -f compose.yml up -d --build --remove-orphans
 ```
