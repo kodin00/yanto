@@ -94,3 +94,22 @@ npm run typecheck
 npm test
 npm run lint
 ```
+
+## GitHub Actions Deploy
+
+Pushes to `master` run typecheck, lint, tests, build, then deploy to the VPS over SSH.
+
+Add these repository secrets in GitHub under `Settings -> Secrets and variables -> Actions`:
+
+- `VPS_HOST`: VPS hostname or IP address
+- `VPS_USER`: SSH user, for example `ubuntu`
+- `VPS_SSH_KEY`: private SSH key allowed to log in to the VPS
+- `VPS_APP_DIR`: absolute repo path on the VPS, for example `/home/ubuntu/yanto`
+- `VPS_PORT`: optional SSH port, defaults to `22`
+
+The deploy command is:
+
+```bash
+git pull --ff-only origin master
+docker compose -f compose.yml up -d --build --remove-orphans
+```
