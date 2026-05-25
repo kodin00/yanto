@@ -16,7 +16,7 @@ import { listAuditLogs, recordAuditLog } from "./services/audit.js";
 import { createPostgresBackup, deleteBackup, getBackup, listBackups, listPostgresBackupTargets, markBackupDownloaded, restorePostgresBackupTarget, uploadBackupToR2 } from "./services/backups.js";
 import { cleanupDocker, containerLogs, listContainers, previewDockerCleanup, restartContainer, stopContainer } from "./services/docker.js";
 import { findDeployment, latestDeployments, recoverInterruptedDeployments, rollbackTargetForProject, startDeployment } from "./services/deployments.js";
-import { previewEnvContent, previewProjectEnv, readProjectEnvVariables, writeProjectEnv, writeProjectEnvVariables } from "./services/project-env.js";
+import { previewEnvContent, previewProjectEnv, readProjectEnv, readProjectEnvVariables, writeProjectEnv, writeProjectEnvVariables } from "./services/project-env.js";
 import { restartProjectCompose, stopProjectCompose } from "./services/project-runtime.js";
 import { createProject, deleteProject, getProject, listProjectsWithContainerCounts, updateProject } from "./services/projects.js";
 import { managedSshKeyStatus, saveManagedSshPrivateKey } from "./services/ssh.js";
@@ -202,6 +202,19 @@ app.get(
       return;
     }
     res.json(await readProjectEnvVariables(project, typeof req.query.envFile === "string" ? req.query.envFile : undefined));
+  })
+);
+
+app.get(
+  "/api/projects/:id/env/content",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const project = await getProject(routeParam(req, "id"));
+    if (!project) {
+      res.status(404).json({ message: "Project not found." });
+      return;
+    }
+    res.json(await readProjectEnv(project, typeof req.query.envFile === "string" ? req.query.envFile : undefined));
   })
 );
 

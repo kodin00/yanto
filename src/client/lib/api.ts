@@ -9,6 +9,10 @@ export type ProjectEnvVariable = {
   value?: string | null;
   masked?: boolean;
 };
+export type ProjectEnvContent = {
+  envFile: string;
+  content: string;
+};
 
 export type R2SettingsPayload = Omit<R2PublicSettings, "hasSecretAccessKey"> & { secretAccessKey?: string };
 
@@ -83,10 +87,16 @@ export const api = {
       body: JSON.stringify({ deploymentId })
     }),
   projectEnv: async (id: string) => normalizeProjectEnv(await request<unknown>(`/api/projects/${id}/env`)),
+  projectEnvContent: (id: string) => request<ProjectEnvContent>(`/api/projects/${id}/env/content`),
   updateProjectEnv: (id: string, variables: ProjectEnvVariable[]) =>
     request<{ ok: true }>(`/api/projects/${id}/env`, {
       method: "PATCH",
       body: JSON.stringify({ variables })
+    }),
+  updateProjectEnvContent: (id: string, content: string) =>
+    request<{ envFile: string; entryCount: number }>(`/api/projects/${id}/env`, {
+      method: "PUT",
+      body: JSON.stringify({ content })
     }),
   deployments: () => request<Deployment[]>("/api/deployments"),
   deploymentLogs: (id: string) => request<string>(`/api/deployments/${id}/logs`),

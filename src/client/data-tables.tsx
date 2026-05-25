@@ -22,7 +22,7 @@ export function PostgresTargetTable({
   }
 
   return (
-    <div className="table-wrap">
+    <div className="table-wrap postgres-target-wrap">
       <table>
         <thead>
           <tr>
@@ -87,11 +87,13 @@ export function PostgresTargetTable({
 export function BackupTable({
   backups,
   busy,
+  r2Ready,
   onDelete,
   onUploadR2
 }: {
   backups: BackupRecord[];
   busy: string | null;
+  r2Ready: boolean;
   onDelete: (backup: BackupRecord) => void;
   onUploadR2: (backup: BackupRecord) => Promise<void>;
 }) {
@@ -129,7 +131,7 @@ export function BackupTable({
                   <Download size={15} />
                   <span>Download</span>
                 </a>
-                <Button disabled={backup.status !== "success" || busy === `r2:${backup.id}`} variant="secondary" onClick={() => void onUploadR2(backup)} icon={<Upload size={15} />}>
+                <Button disabled={backup.status !== "success" || !r2Ready || busy === `r2:${backup.id}`} variant="secondary" onClick={() => void onUploadR2(backup)} icon={<Upload size={15} />}>
                   {busy === `r2:${backup.id}` ? "Uploading" : "R2"}
                 </Button>
                 <IconButton label="Remove backup" variant="danger" onClick={() => onDelete(backup)}>

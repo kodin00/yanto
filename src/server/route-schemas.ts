@@ -8,7 +8,7 @@ export const projectInput = z.object({
   composeFile: z.string().min(1).optional(),
   composeContent: z.string().optional(),
   envFile: z.string().min(1).optional(),
-  autoStart: z.boolean().optional().default(false)
+  autoStart: z.boolean().optional().default(true)
 });
 
 export const deploymentInput = z.object({

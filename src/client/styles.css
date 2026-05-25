@@ -317,6 +317,10 @@ a.button {
   gap: 16px;
 }
 
+.backup-layout > .panel {
+  min-width: 0;
+}
+
 .settings-grid {
   grid-template-columns: minmax(360px, 0.9fr) minmax(420px, 1.1fr);
   align-items: start;
@@ -563,8 +567,8 @@ a.button {
 }
 
 .segmented-meter span.on {
-  background: var(--ink);
-  border-color: var(--ink);
+  background: var(--green);
+  border-color: var(--green-dark);
 }
 
 .warning-panel {
@@ -885,6 +889,15 @@ details pre {
   overflow-x: auto;
 }
 
+.postgres-target-wrap th,
+.postgres-target-wrap td {
+  max-width: none;
+}
+
+.postgres-target-wrap .table-actions {
+  width: 210px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -949,7 +962,7 @@ td {
 .page-count {
   color: var(--muted);
   font-size: 11px;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
@@ -1267,6 +1280,10 @@ th {
   grid-template-columns: minmax(100px, 0.7fr) minmax(140px, 1fr) minmax(110px, 0.5fr) 34px;
 }
 
+.env-section .text-area-field textarea {
+  min-height: min(520px, calc(100vh - 340px));
+}
+
 .project-edit-actions {
   justify-content: flex-end;
   padding-top: 4px;
@@ -1312,6 +1329,40 @@ th {
   padding: 10px;
   background: var(--panel-strong);
   border: 1px solid var(--line-light);
+}
+
+.env-mode-toggle {
+  display: inline-flex;
+  width: fit-content;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.env-mode-toggle button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  padding: 0 11px;
+  color: var(--muted);
+  background: transparent;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.env-mode-toggle button:last-child {
+  border-right: 0;
+}
+
+.env-mode-toggle button.active {
+  color: #fff;
+  background: var(--green);
 }
 
 .env-add-row {
