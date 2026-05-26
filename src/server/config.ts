@@ -45,7 +45,4 @@ export function warnOnUnsafeDefaults() {
   if (config.nodeEnv === "production" && config.adminPassword === "change-this-admin-password") {
     console.warn("ADMIN_PASSWORD is using the default value. Set a strong admin password.");
   }
-  if (config.nodeEnv === "production" && config.nodeRole === "master" && !config.workerJoinToken) {
-    console.warn("WORKER_JOIN_TOKEN is empty. Worker registration is disabled until it is set.");
-  }
 }

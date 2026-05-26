@@ -1,6 +1,8 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { appSettings } from "../db/schema.js";
+import { config } from "../config.js";
+import { createWorkerJoinToken } from "./tokens.js";
 
 export type R2SettingsInput = {
   enabled?: boolean;
@@ -14,6 +16,7 @@ export type R2SettingsInput = {
 export type StoredR2Settings = Required<R2SettingsInput>;
 
 const r2SettingsKey = "cloudflare.r2";
+const workerJoinTokenKey = "worker.join_token";
 const emptyR2Settings: StoredR2Settings = {
   enabled: false,
   accountId: "",
@@ -81,4 +84,32 @@ export async function saveR2Settings(input: R2SettingsInput) {
     });
 
   return publicR2Settings();
+}
+
+export async function getWorkerJoinToken() {
+  if (config.workerJoinToken) {
+    return config.workerJoinToken;
+  }
+
+  const [row] = await db.select().from(appSettings).where(eq(appSettings.key, workerJoinTokenKey)).limit(1);
+  return row?.value ?? "";
+}
+
+export async function ensureWorkerJoinToken() {
+  const existing = await getWorkerJoinToken();
+  if (existing) {
+    return existing;
+  }
+
+  const token = createWorkerJoinToken();
+  const [row] = await db
+    .insert(appSettings)
+    .values({ key: workerJoinTokenKey, value: token, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: appSettings.key,
+      set: { updatedAt: new Date() }
+    })
+    .returning();
+
+  return row.value;
 }

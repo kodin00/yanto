@@ -12,6 +12,10 @@ export function createWorkerToken() {
   return `ywk_${crypto.randomBytes(32).toString("base64url")}`;
 }
 
+export function createWorkerJoinToken() {
+  return `ywj_${crypto.randomBytes(32).toString("base64url")}`;
+}
+
 export function hashToken(token: string, secret = "") {
   return secret ? crypto.createHmac("sha256", secret).update(token).digest("hex") : crypto.createHash("sha256").update(token).digest("hex");
 }

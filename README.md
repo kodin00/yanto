@@ -49,7 +49,7 @@ Yanto has two runtime roles:
 
 Workers poll the master over outbound HTTP. They do not serve the web UI and `compose.worker.yml` does not publish ports.
 
-Set these on the master before connecting workers:
+Set these on the master before connecting workers if you want to provide your own stable secrets:
 
 ```env
 WORKER_JOIN_TOKEN=<long-random-token>
@@ -58,6 +58,8 @@ APP_BASE_URL=http://MASTER_IP:PORT
 ```
 
 Worker installs write `.env.worker` with `YANTO_MASTER_URL`, `WORKER_JOIN_TOKEN`, and an optional `YANTO_WORKER_NAME`. After registration, the worker stores its persistent token in the `yanto_worker_data` Docker volume.
+
+If `WORKER_JOIN_TOKEN` is not set, Yanto generates and stores one the first time you copy the worker install command from Settings.
 
 ## Deploy Webhook
 

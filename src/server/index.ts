@@ -44,7 +44,7 @@ import { restartProjectCompose, stopProjectCompose } from "./services/project-ru
 import { createProject, deleteProject, getProject, listProjectsWithContainerCounts, updateProject } from "./services/projects.js";
 import { managedSshKeyStatus, saveManagedSshPrivateKey } from "./services/ssh.js";
 import { healthStatus, systemUsage } from "./services/system.js";
-import { publicR2Settings, saveR2Settings } from "./services/settings.js";
+import { ensureWorkerJoinToken, getWorkerJoinToken, publicR2Settings, saveR2Settings } from "./services/settings.js";
 import { constantTimeEqual } from "./services/tokens.js";
 import { githubBranchFromRef, githubPayloadFromRequestBody, githubWebhookPayloadInput, projectDeployBranch, verifyGithubSignature } from "./services/github-webhooks.js";
 
@@ -160,7 +160,8 @@ app.post(
   "/api/workers/register",
   asyncRoute(async (req, res) => {
     const body = workerRegisterInput.parse(req.body ?? {});
-    if (!config.workerJoinToken || !constantTimeEqual(body.joinToken, config.workerJoinToken)) {
+    const joinToken = await getWorkerJoinToken();
+    if (!joinToken || !constantTimeEqual(body.joinToken, joinToken)) {
       res.status(401).json({ message: "Invalid worker join token." });
       return;
     }
@@ -240,13 +241,10 @@ app.post(
   "/api/nodes/join-token",
   requireAuth,
   asyncRoute(async (req, res) => {
-    if (!config.workerJoinToken) {
-      res.status(400).json({ message: "Set WORKER_JOIN_TOKEN on the master before connecting workers." });
-      return;
-    }
-    const command = `curl -fsSL https://raw.githubusercontent.com/kodin00/yanto/master/scripts/install.sh | sudo bash -s -- worker --master ${config.appBaseUrl} --join-token ${config.workerJoinToken}`;
+    const token = await ensureWorkerJoinToken();
+    const command = `curl -fsSL https://raw.githubusercontent.com/kodin00/yanto/master/scripts/install.sh | sudo bash -s -- worker --master ${config.appBaseUrl} --join-token ${token}`;
     await recordAuditLog({ actor: actor(req), action: "node.join_token.view", entityType: "deployment_node" });
-    res.json({ token: config.workerJoinToken, command });
+    res.json({ token, command });
   })
 );
 
