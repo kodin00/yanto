@@ -1,5 +1,22 @@
 import { bigint, boolean, index, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
+export const deploymentNodes = pgTable(
+  "deployment_nodes",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    role: text("role").notNull(),
+    status: text("status").notNull().default("offline"),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    dockerVersion: text("docker_version"),
+    labels: jsonb("labels").$type<Record<string, string>>().notNull().default({}),
+    tokenHash: text("token_hash"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [index("deployment_nodes_role_idx").on(table.role), index("deployment_nodes_status_idx").on(table.status), index("deployment_nodes_token_hash_idx").on(table.tokenHash)]
+);
+
 export const projects = pgTable(
   "projects",
   {
@@ -13,6 +30,9 @@ export const projects = pgTable(
     composeContent: text("compose_content"),
     envFile: text("env_file").notNull().default(".env"),
     autoStart: boolean("auto_start").notNull().default(false),
+    manualDeployEnabled: boolean("manual_deploy_enabled").notNull().default(true),
+    githubWebhookEnabled: boolean("github_webhook_enabled").notNull().default(true),
+    targetNodeId: text("target_node_id").notNull().default("node_master_local").references(() => deploymentNodes.id),
     deployToken: text("deploy_token").notNull(),
     sshPrivateKeyPath: text("ssh_private_key_path"),
     sshPublicKey: text("ssh_public_key"),
@@ -27,6 +47,7 @@ export const deployments = pgTable(
   {
     id: text("id").primaryKey(),
     projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    nodeId: text("node_id").notNull().default("node_master_local").references(() => deploymentNodes.id),
     status: text("status").notNull(),
     trigger: text("trigger").notNull(),
     targetRef: text("target_ref"),
@@ -88,6 +109,8 @@ export const appSettings = pgTable("app_settings", {
 
 export type ProjectRow = typeof projects.$inferSelect;
 export type NewProjectRow = typeof projects.$inferInsert;
+export type DeploymentNodeRow = typeof deploymentNodes.$inferSelect;
+export type NewDeploymentNodeRow = typeof deploymentNodes.$inferInsert;
 export type DeploymentRow = typeof deployments.$inferSelect;
 export type NewDeploymentRow = typeof deployments.$inferInsert;
 export type BackupRow = typeof backups.$inferSelect;

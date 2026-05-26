@@ -11,6 +11,32 @@ export const db = drizzle(pool, { schema });
 
 export async function migrate() {
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS deployment_nodes (
+      id text PRIMARY KEY,
+      name text NOT NULL,
+      role text NOT NULL,
+      status text NOT NULL DEFAULT 'offline',
+      last_seen_at timestamptz,
+      docker_version text,
+      labels jsonb NOT NULL DEFAULT '{}'::jsonb,
+      token_hash text,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+
+  await pool.query(`
+    INSERT INTO deployment_nodes (id, name, role, status, last_seen_at, labels, created_at, updated_at)
+    VALUES ('node_master_local', 'Master', 'master', 'online', now(), '{}'::jsonb, now(), now())
+    ON CONFLICT (id) DO UPDATE SET
+      name = EXCLUDED.name,
+      role = EXCLUDED.role,
+      status = EXCLUDED.status,
+      last_seen_at = EXCLUDED.last_seen_at,
+      updated_at = EXCLUDED.updated_at;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS projects (
       id text PRIMARY KEY,
       name text NOT NULL,
@@ -22,6 +48,9 @@ export async function migrate() {
       compose_content text,
       env_file text NOT NULL DEFAULT '.env',
       auto_start boolean NOT NULL DEFAULT false,
+      manual_deploy_enabled boolean NOT NULL DEFAULT true,
+      github_webhook_enabled boolean NOT NULL DEFAULT true,
+      target_node_id text NOT NULL DEFAULT 'node_master_local',
       deploy_token text NOT NULL,
       ssh_private_key_path text,
       ssh_public_key text,
@@ -34,11 +63,16 @@ export async function migrate() {
   await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS compose_content text;`);
   await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS env_file text NOT NULL DEFAULT '.env';`);
   await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS auto_start boolean NOT NULL DEFAULT false;`);
+  await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS manual_deploy_enabled boolean NOT NULL DEFAULT true;`);
+  await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS github_webhook_enabled boolean NOT NULL DEFAULT true;`);
+  await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS target_node_id text NOT NULL DEFAULT 'node_master_local';`);
+  await pool.query(`UPDATE projects SET target_node_id = 'node_master_local' WHERE target_node_id IS NULL OR target_node_id = '';`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS deployments (
       id text PRIMARY KEY,
       project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      node_id text NOT NULL DEFAULT 'node_master_local',
       status text NOT NULL,
       trigger text NOT NULL,
       target_ref text,
@@ -53,6 +87,8 @@ export async function migrate() {
   `);
 
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS target_ref text;`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS node_id text NOT NULL DEFAULT 'node_master_local';`);
+  await pool.query(`UPDATE deployments SET node_id = 'node_master_local' WHERE node_id IS NULL OR node_id = '';`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS commit_sha text;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS commit_message text;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS rollback_from_deployment_id text;`);
@@ -104,7 +140,12 @@ export async function migrate() {
 
   await pool.query(`CREATE INDEX IF NOT EXISTS projects_created_at_idx ON projects(created_at);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS projects_folder_name_idx ON projects(folder_name);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS projects_target_node_idx ON projects(target_node_id);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS deployment_nodes_role_idx ON deployment_nodes(role);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS deployment_nodes_status_idx ON deployment_nodes(status);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS deployment_nodes_token_hash_idx ON deployment_nodes(token_hash);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS deployments_project_started_at_idx ON deployments(project_id, started_at DESC);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS deployments_node_status_idx ON deployments(node_id, status, started_at);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS deployments_status_idx ON deployments(status);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS deployments_started_at_idx ON deployments(started_at DESC);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS backups_created_at_idx ON backups(created_at DESC);`);

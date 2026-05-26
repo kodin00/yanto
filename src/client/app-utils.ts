@@ -62,6 +62,10 @@ export function endpoint(project: Project, baseUrl: string) {
   return `${baseUrl.replace(/\/$/, "")}/deploy?id=${project.id}`;
 }
 
+export function githubWebhookEndpoint(project: Project, baseUrl: string) {
+  return `${baseUrl.replace(/\/$/, "")}/webhooks/github?id=${project.id}`;
+}
+
 export function slugifyFolderName(input: string) {
   return input
     .trim()

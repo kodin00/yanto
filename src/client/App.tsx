@@ -29,23 +29,24 @@ import {
   Trash2
 } from "lucide-react";
 import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import type { ContainerInfo, Deployment, Project, SystemUsage } from "../shared/types";
+import type { ContainerInfo, Deployment, DeploymentNode, Project, SystemUsage } from "../shared/types";
 import {
   bytes,
   dateTime,
   durationBetween,
   endpoint,
+  githubWebhookEndpoint,
   normalizeEnvRows,
   pageItems,
   pageSize,
   slugifyFolderName,
   totalPages
 } from "./app-utils";
-import { Button, ConfirmDialog, IconButton, LoadingInline, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast, ToggleField } from "./components/ui";
+import { Button, ConfirmDialog, CustomSelect, IconButton, LoadingInline, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast, ToggleField } from "./components/ui";
 import { AuditTable, BackupTable, ContainerGroups, DeploymentTable, PostgresTargetTable } from "./data-tables";
 import { api, type AuditLogEntry, type BackupRecord, type PostgresTarget, type ProjectEnvVariable } from "./lib/api";
 
-type View = "dashboard" | "projects" | "deployments" | "containers" | "backups" | "audit" | "settings";
+type View = "dashboard" | "projects" | "deployments" | "containers" | "nodes" | "backups" | "audit" | "settings";
 type ToastState = { message: string; kind?: "ok" | "error" | "loading" } | null;
 type LogModalState = { title: string; logs: string; streamPath?: string; live?: boolean; status?: string };
 type LogStreamPayload = { logs?: string; chunk?: string; status?: string; error?: string; done?: boolean };
@@ -60,7 +61,10 @@ const emptyProject = {
   folderName: "",
   composeFile: "docker-compose.yml",
   composeContent: "",
-  autoStart: true
+  autoStart: true,
+  manualDeployEnabled: true,
+  githubWebhookEnabled: true,
+  targetNodeId: "node_master_local"
 };
 
 const emptySshKeySettings = {
@@ -119,6 +123,7 @@ export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
+  const [nodes, setNodes] = useState<DeploymentNode[]>([]);
   const [backups, setBackups] = useState<BackupRecord[]>([]);
   const [postgresTargets, setPostgresTargets] = useState<PostgresTarget[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
@@ -145,10 +150,11 @@ export function App() {
   const [auditPage, setAuditPage] = useState(1);
 
   const loadAll = useCallback(async () => {
-    const [projectRows, deploymentRows, containerRows, backupRows, postgresRows, auditRows, systemRows, settingRows, logRows] = await Promise.all([
+    const [projectRows, deploymentRows, containerRows, nodeRows, backupRows, postgresRows, auditRows, systemRows, settingRows, logRows] = await Promise.all([
       api.projects(),
       api.deployments(),
       api.containers().catch(() => []),
+      api.nodes().catch(() => []),
       api.backups().catch(() => []),
       api.postgresBackupTargets().catch(() => []),
       api.auditLog().catch(() => []),
@@ -159,6 +165,7 @@ export function App() {
     setProjects(projectRows);
     setDeployments(deploymentRows);
     setContainers(containerRows);
+    setNodes(nodeRows);
     setBackups(backupRows);
     setPostgresTargets(postgresRows);
     setAuditEntries(auditRows);
@@ -169,26 +176,29 @@ export function App() {
 
   const loadView = useCallback(async (targetView: View) => {
     if (targetView === "dashboard") {
-      const [projectRows, deploymentRows, containerRows, systemRows, settingRows] = await Promise.all([
+      const [projectRows, deploymentRows, containerRows, nodeRows, systemRows, settingRows] = await Promise.all([
         api.projects(),
         api.deployments(),
         api.containers().catch(() => []),
+        api.nodes().catch(() => []),
         api.systemUsage().catch(() => null),
         api.settings()
       ]);
       setProjects(projectRows);
       setDeployments(deploymentRows);
       setContainers(containerRows);
+      setNodes(nodeRows);
       setUsage(systemRows);
       setSettings(settingRows);
       return;
     }
 
     if (targetView === "projects") {
-      const [projectRows, deploymentRows, containerRows, settingRows] = await Promise.all([api.projects(), api.deployments(), api.containers().catch(() => []), api.settings()]);
+      const [projectRows, deploymentRows, containerRows, nodeRows, settingRows] = await Promise.all([api.projects(), api.deployments(), api.containers().catch(() => []), api.nodes().catch(() => []), api.settings()]);
       setProjects(projectRows);
       setDeployments(deploymentRows);
       setContainers(containerRows);
+      setNodes(nodeRows);
       setSettings(settingRows);
       return;
     }
@@ -200,6 +210,11 @@ export function App() {
 
     if (targetView === "containers") {
       setContainers(await api.containers().catch(() => []));
+      return;
+    }
+
+    if (targetView === "nodes") {
+      setNodes(await api.nodes().catch(() => []));
       return;
     }
 
@@ -314,6 +329,11 @@ export function App() {
     }
     return map;
   }, [containers]);
+  const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+  const nodeOptions = useMemo(() => (nodes.length ? nodes : [{ id: "node_master_local", name: "Master", role: "master", status: "online" } as DeploymentNode]).map((node) => ({
+    label: `${node.name} (${node.role})`,
+    value: node.id
+  })), [nodes]);
   const visibleProjects = useMemo(() => pageItems(projects, projectPage), [projectPage, projects]);
   const visibleDeployments = useMemo(() => pageItems(deployments, deploymentPage), [deploymentPage, deployments]);
   const visibleBackups = useMemo(() => pageItems(backups, backupPage), [backupPage, backups]);
@@ -460,7 +480,10 @@ export function App() {
         folderName: project.folderName,
         composeFile: project.composeFile,
         composeContent: project.composeContent ?? "",
-        autoStart: project.autoStart
+        autoStart: project.autoStart,
+        manualDeployEnabled: project.manualDeployEnabled,
+        githubWebhookEnabled: project.githubWebhookEnabled,
+        targetNodeId: project.targetNodeId || "node_master_local"
       });
       setProjectEnv({ ...emptyProjectEnvState, loading: true });
       setProjectModal(project);
@@ -475,7 +498,7 @@ export function App() {
         });
       return;
     }
-    setProjectForm(emptyProject);
+    setProjectForm({ ...emptyProject, targetNodeId: nodes[0]?.id ?? "node_master_local" });
     setProjectEnv(emptyProjectEnvState);
     setProjectModal("new");
   }
@@ -488,6 +511,15 @@ export function App() {
   async function copyText(value: string) {
     await navigator.clipboard.writeText(value);
     setToast({ message: "Copied." });
+  }
+
+  async function copyWorkerInstallCommand() {
+    try {
+      const result = await api.workerJoinToken();
+      await copyText(result.command);
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to load worker command.", kind: "error" });
+    }
   }
 
   async function dumpPostgresTarget(containerId?: string) {
@@ -625,6 +657,7 @@ export function App() {
             ["projects", GitBranch, "Projects"],
             ["deployments", Boxes, "Deployments"],
             ["containers", Container, "Containers"],
+            ["nodes", Server, "Nodes"],
             ["backups", Archive, "Backups"],
             ["audit", FileClock, "Audit"],
             ["settings", Settings, "Settings"]
@@ -662,6 +695,7 @@ export function App() {
           <section className="dashboard">
             <section className="stat-grid">
               <StatTile label="Projects" value={projects.length} detail={`${settings.hostProjectsRoot} root`} />
+              <StatTile label="Nodes" value={nodes.length || 1} detail={`${nodes.filter((node) => node.status === "online").length || 1} online`} />
               {runningDeployments.length ? <StatTile label="Active deploys" value={runningDeployments.length} detail="Deployment in progress" /> : null}
               <StatTile label="Running containers" value={containers.filter((container) => container.state === "running").length} detail={`${containers.length} total containers`} />
               <StatTile label="RAM used" value={usage ? `${usage.memory.usedPercent}%` : "-"} detail={usage ? `${bytes(usage.memory.used)} of ${bytes(usage.memory.total)}` : "Unavailable"} />
@@ -754,8 +788,20 @@ export function App() {
                         <dd>{project.composeFile}</dd>
                       </div>
                       <div>
+                        <dt>Node</dt>
+                        <dd>{nodeById.get(project.targetNodeId)?.name ?? project.targetNodeId}</dd>
+                      </div>
+                      <div>
                         <dt>Auto start</dt>
                         <dd>{project.autoStart ? "On restart" : "Off"}</dd>
+                      </div>
+                      <div>
+                        <dt>Manual API</dt>
+                        <dd>{project.manualDeployEnabled ? "On" : "Off"}</dd>
+                      </div>
+                      <div>
+                        <dt>GitHub hook</dt>
+                        <dd>{project.githubWebhookEnabled ? "On" : "Off"}</dd>
                       </div>
                     </dl>
                   </div>
@@ -766,9 +812,15 @@ export function App() {
                         <Copy size={15} />
                       </button>
                     </div>
+                    <div className="endpoint-box" onClick={(event) => event.stopPropagation()}>
+                      <span>{githubWebhookEndpoint(project, settings.appBaseUrl)}</span>
+                      <button type="button" onClick={() => void copyText(githubWebhookEndpoint(project, settings.appBaseUrl))} title="Copy GitHub webhook URL" aria-label="Copy GitHub webhook URL">
+                        <Copy size={15} />
+                      </button>
+                    </div>
                     <div className="token-box" onClick={(event) => event.stopPropagation()}>
-                      <span>Bearer {project.deployToken}</span>
-                      <button type="button" onClick={() => void copyText(`Bearer ${project.deployToken}`)} title="Copy token" aria-label="Copy token">
+                      <span>Secret {project.deployToken}</span>
+                      <button type="button" onClick={() => void copyText(project.deployToken)} title="Copy secret" aria-label="Copy secret">
                         <Copy size={15} />
                       </button>
                     </div>
@@ -792,7 +844,7 @@ export function App() {
                       <Button variant="secondary" onClick={() => openRollback(project)} icon={<Undo2 size={15} />}>
                         Rollback
                       </Button>
-                      <Button disabled={busy === `deploy:${project.id}`} onClick={() => void deploy(project)} icon={<Play size={15} />}>
+                      <Button disabled={busy === `deploy:${project.id}` || !project.manualDeployEnabled} onClick={() => void deploy(project)} icon={<Play size={15} />}>
                         Deploy
                       </Button>
                       <Button
@@ -914,6 +966,44 @@ export function App() {
           </section>
         ) : null}
 
+        {view === "nodes" ? (
+          <section className="panel">
+            <div className="panel-head">
+              <h2>Deployment nodes</h2>
+              <span className="count">{nodes.length} registered</span>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Docker</th>
+                    <th>Projects</th>
+                    <th>Active</th>
+                    <th>Last seen</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {nodes.map((node) => (
+                    <tr key={node.id}>
+                      <td>{node.name}</td>
+                      <td>{node.role}</td>
+                      <td><StatusBadge status={node.status} /></td>
+                      <td>{node.dockerVersion ?? "-"}</td>
+                      <td>{node.projectCount ?? 0}</td>
+                      <td>{node.runningDeploymentCount ?? 0}</td>
+                      <td>{node.lastSeenAt ? dateTime(node.lastSeenAt) : "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {!nodes.length ? <p className="muted">No nodes registered yet.</p> : null}
+          </section>
+        ) : null}
+
         {view === "settings" ? (
           <section className="settings-grid">
             <section className="panel webhook-settings compact-settings-panel">
@@ -941,6 +1031,15 @@ export function App() {
                   </div>
                 </div>
               </div>
+            </section>
+            <section className="panel webhook-settings compact-settings-panel">
+              <div className="panel-head">
+                <h2>Worker install</h2>
+                <Server size={19} />
+              </div>
+              <Button variant="secondary" onClick={() => void copyWorkerInstallCommand()} icon={<Copy size={16} />}>
+                Copy worker command
+              </Button>
             </section>
             <section className="panel r2-settings-panel">
               <div className="panel-head">
@@ -1124,11 +1223,24 @@ export function App() {
                   <TextField label="Compose file" value={projectForm.composeFile} onChange={(composeFile) => setProjectForm((current) => ({ ...current, composeFile }))} placeholder="docker-compose.yml" required />
                 </div>
                 <TextField label="Folder name" value={projectForm.folderName} onChange={(folderName) => setProjectForm((current) => ({ ...current, folderName }))} placeholder={slugifyFolderName(projectForm.name) || "Auto from project name"} />
+                <CustomSelect label="Deployment node" value={projectForm.targetNodeId} options={nodeOptions} onChange={(targetNodeId) => setProjectForm((current) => ({ ...current, targetNodeId }))} />
                 <ToggleField
                   label="Auto start after restart"
                   value={projectForm.autoStart}
                   onChange={(autoStart) => setProjectForm((current) => ({ ...current, autoStart }))}
                   description="Deploy with a Yanto compose override that sets restart: unless-stopped."
+                />
+                <ToggleField
+                  label="Manual API deployments"
+                  value={projectForm.manualDeployEnabled}
+                  onChange={(manualDeployEnabled) => setProjectForm((current) => ({ ...current, manualDeployEnabled }))}
+                  description="Allow deployments from the authenticated deploy action and token endpoint."
+                />
+                <ToggleField
+                  label="GitHub webhook deployments"
+                  value={projectForm.githubWebhookEnabled}
+                  onChange={(githubWebhookEnabled) => setProjectForm((current) => ({ ...current, githubWebhookEnabled }))}
+                  description="Allow signed GitHub push webhooks to deploy this project."
                 />
               </section>
 
@@ -1162,7 +1274,7 @@ export function App() {
                   Save & Restart
                 </Button>
               ) : null}
-              <Button type="button" variant="secondary" disabled={busy === "project" || projectEnv.loading} onClick={() => void persistProjectDetails(undefined, "deploy")} icon={<Play size={15} />}>
+              <Button type="button" variant="secondary" disabled={busy === "project" || projectEnv.loading || !projectForm.manualDeployEnabled} onClick={() => void persistProjectDetails(undefined, "deploy")} icon={<Play size={15} />}>
                 Save & Deploy
               </Button>
               <Button type="submit" disabled={busy === "project" || projectEnv.loading}>
