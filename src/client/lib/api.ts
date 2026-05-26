@@ -1,4 +1,4 @@
-import type { AuditLog, Backup, ContainerInfo, Deployment, PostgresBackupTarget, Project, R2PublicSettings, SystemUsage } from "../../shared/types";
+import type { AuditLog, Backup, ContainerInfo, Deployment, DeploymentNode, PostgresBackupTarget, Project, R2PublicSettings, SystemUsage } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -67,12 +67,27 @@ export const api = {
   logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
   me: () => request<{ username: string }>("/api/auth/me"),
   projects: () => request<Project[]>("/api/projects"),
-  createProject: (payload: Pick<Project, "name" | "branch" | "folderName" | "composeFile" | "autoStart"> & { gitUrl?: string | null; composeContent?: string | null }) =>
+  nodes: () => request<DeploymentNode[]>("/api/nodes"),
+  workerJoinToken: () => request<{ token: string; command: string }>("/api/nodes/join-token", { method: "POST" }),
+  createProject: (
+    payload: Pick<Project, "name" | "branch" | "folderName" | "composeFile" | "autoStart" | "manualDeployEnabled" | "githubWebhookEnabled" | "targetNodeId"> & {
+      gitUrl?: string | null;
+      composeContent?: string | null;
+    }
+  ) =>
     request<Project>("/api/projects", {
       method: "POST",
       body: JSON.stringify(payload)
     }),
-  updateProject: (id: string, payload: Partial<Pick<Project, "name" | "branch" | "folderName" | "composeFile" | "autoStart"> & { gitUrl?: string | null; composeContent?: string | null }>) =>
+  updateProject: (
+    id: string,
+    payload: Partial<
+      Pick<Project, "name" | "branch" | "folderName" | "composeFile" | "autoStart" | "manualDeployEnabled" | "githubWebhookEnabled" | "targetNodeId"> & {
+        gitUrl?: string | null;
+        composeContent?: string | null;
+      }
+    >
+  ) =>
     request<Project>(`/api/projects/${id}`, {
       method: "PATCH",
       body: JSON.stringify(payload)

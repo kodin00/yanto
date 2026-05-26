@@ -13,6 +13,22 @@ make docker
 
 Open `http://localhost:8080` and sign in with `ADMIN_USERNAME` and `ADMIN_PASSWORD` from `.env`.
 
+## One-Line Install
+
+Master node:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kodin00/yanto/master/scripts/install.sh | sudo bash -s -- master
+```
+
+Worker node:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kodin00/yanto/master/scripts/install.sh | sudo bash -s -- worker --master http://MASTER_IP:PORT --join-token TOKEN
+```
+
+The installer supports Ubuntu/Debian hosts. It installs Git and Docker when missing, clones Yanto into `/opt/yanto`, and starts Docker Compose.
+
 ## Docker Runtime
 
 The app is designed to run with:
@@ -23,6 +39,25 @@ The app is designed to run with:
 - A persistent SSH volume at `/data/ssh` is reserved for app-managed keys.
 
 Docker socket access is powerful. Run this only for your own trusted admin dashboard.
+
+## Multi-Node Runtime
+
+Yanto has two runtime roles:
+
+- `YANTO_NODE_ROLE=master` runs the dashboard, API, database migrations, and local deploy worker.
+- `YANTO_NODE_ROLE=worker` runs only the headless worker process.
+
+Workers poll the master over outbound HTTP. They do not serve the web UI and `compose.worker.yml` does not publish ports.
+
+Set these on the master before connecting workers:
+
+```env
+WORKER_JOIN_TOKEN=<long-random-token>
+WORKER_TOKEN_SECRET=<long-random-secret>
+APP_BASE_URL=http://MASTER_IP:PORT
+```
+
+Worker installs write `.env.worker` with `YANTO_MASTER_URL`, `WORKER_JOIN_TOKEN`, and an optional `YANTO_WORKER_NAME`. After registration, the worker stores its persistent token in the `yanto_worker_data` Docker volume.
 
 ## Deploy Webhook
 
@@ -55,6 +90,12 @@ Important environment variables:
 - `SSH_PRIVATE_KEY_PATH` private key path inside the app container, default `/root/.ssh/id_ed25519`
 - `SSH_KEYS_DIR`, default `/data/ssh`
 - `APP_BASE_URL`
+- `YANTO_NODE_ROLE`, default `master`
+- `WORKER_JOIN_TOKEN` for worker registration
+- `WORKER_TOKEN_SECRET` for worker token signing/hashing configuration
+- `YANTO_MASTER_URL` for worker nodes
+- `YANTO_WORKER_TOKEN` optional pre-provisioned worker token
+- `YANTO_WORKER_NAME` optional display name for worker nodes
 - `COMMAND_TIMEOUT_MS`, default `3600000` (one hour) for Git, Docker, and backup helper commands
 - `COMMAND_OUTPUT_MAX_BYTES`, default `2097152`, caps in-memory command output while still streaming deployment logs
 - `DEPLOYMENT_LOG_MAX_CHARS`, default `500000`, keeps recent deployment logs bounded in Postgres

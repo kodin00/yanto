@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_URL="${YANTO_REPO_URL:-https://github.com/kodin00/yanto.git}"
+BRANCH="${YANTO_BRANCH:-master}"
+INSTALL_DIR="${YANTO_INSTALL_DIR:-/opt/yanto}"
+ROLE="${1:-}"
+
+usage() {
+  echo "Usage: install.sh master|worker [--master URL] [--join-token TOKEN] [--name NAME] [--dir PATH]"
+}
+
+need_root() {
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "Run with sudo/root."
+    exit 1
+  fi
+}
+
+install_packages() {
+  if command -v git >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
+    return
+  fi
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "Automatic prerequisite install currently supports Ubuntu/Debian only."
+    exit 1
+  fi
+  apt-get update
+  apt-get install -y --no-install-recommends ca-certificates curl git docker.io docker-compose-plugin
+  systemctl enable --now docker >/dev/null 2>&1 || true
+}
+
+clone_or_update() {
+  if [ -d "$INSTALL_DIR/.git" ]; then
+    git -C "$INSTALL_DIR" fetch origin "$BRANCH"
+    git -C "$INSTALL_DIR" checkout "$BRANCH"
+    git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH"
+  else
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+  fi
+}
+
+random_secret() {
+  openssl rand -hex 32 2>/dev/null | tr -d '\n' || date +%s%N
+}
+
+write_master_env() {
+  cd "$INSTALL_DIR"
+  if [ ! -f .env ]; then
+    cp .env.example .env
+  fi
+  grep -q '^YANTO_NODE_ROLE=' .env && sed -i 's/^YANTO_NODE_ROLE=.*/YANTO_NODE_ROLE=master/' .env || echo 'YANTO_NODE_ROLE=master' >> .env
+  grep -q '^WORKER_JOIN_TOKEN=change-this-worker-join-token' .env && sed -i "s/^WORKER_JOIN_TOKEN=.*/WORKER_JOIN_TOKEN=$(random_secret)/" .env || true
+  grep -q '^WORKER_TOKEN_SECRET=change-this-worker-token-secret' .env && sed -i "s/^WORKER_TOKEN_SECRET=.*/WORKER_TOKEN_SECRET=$(random_secret)/" .env || true
+}
+
+write_worker_env() {
+  local master_url="$1"
+  local join_token="$2"
+  local worker_name="$3"
+  if [ -z "$master_url" ] || [ -z "$join_token" ]; then
+    echo "Worker install requires --master URL and --join-token TOKEN."
+    exit 1
+  fi
+  cd "$INSTALL_DIR"
+  cat > .env.worker <<EOF
+YANTO_NODE_ROLE=worker
+YANTO_MASTER_URL=$master_url
+WORKER_JOIN_TOKEN=$join_token
+YANTO_WORKER_TOKEN=
+YANTO_WORKER_NAME=$worker_name
+HOST_PROJECTS_ROOT=/opt/yanto-projects
+SSH_SOURCE_DIR=/root/.ssh
+COMMAND_TIMEOUT_MS=3600000
+COMMAND_OUTPUT_MAX_BYTES=2097152
+EOF
+}
+
+run_master() {
+  cd "$INSTALL_DIR"
+  docker compose -f compose.yml --env-file .env up -d --build
+}
+
+run_worker() {
+  cd "$INSTALL_DIR"
+  docker compose -f compose.worker.yml --env-file .env.worker up -d --build
+}
+
+need_root
+
+if [ -z "$ROLE" ]; then
+  usage
+  exit 1
+fi
+shift || true
+
+MASTER_URL=""
+JOIN_TOKEN=""
+WORKER_NAME="$(hostname)"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --master)
+      MASTER_URL="${2:-}"
+      shift 2
+      ;;
+    --join-token)
+      JOIN_TOKEN="${2:-}"
+      shift 2
+      ;;
+    --name)
+      WORKER_NAME="${2:-}"
+      shift 2
+      ;;
+    --dir)
+      INSTALL_DIR="${2:-}"
+      shift 2
+      ;;
+    *)
+      usage
+      exit 1
+      ;;
+  esac
+done
+
+install_packages
+clone_or_update
+
+case "$ROLE" in
+  master)
+    write_master_env
+    run_master
+    ;;
+  worker)
+    write_worker_env "$MASTER_URL" "$JOIN_TOKEN" "$WORKER_NAME"
+    run_worker
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+esac

@@ -317,6 +317,7 @@ export function DeploymentTable({ deployments, onLogs, compact }: { deployments:
         <thead>
           <tr>
             <th>Project</th>
+            <th>Node</th>
             <th>Trigger</th>
             <th>Started</th>
             <th>Status</th>
@@ -329,6 +330,7 @@ export function DeploymentTable({ deployments, onLogs, compact }: { deployments:
           {deployments.map((deployment) => (
             <tr key={deployment.id}>
               <td>{deployment.projectName ?? deployment.projectId}</td>
+              <td>{deployment.nodeName ?? deployment.nodeId}</td>
               <td>{deployment.trigger}</td>
               <td>{dateTime(deployment.startedAt)}</td>
               <td>

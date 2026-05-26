@@ -20,4 +20,4 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 EXPOSE 8080
-CMD ["node", "dist/server/server/index.js"]
+CMD ["sh", "-c", "if [ \"$YANTO_NODE_ROLE\" = \"worker\" ]; then node dist/server/server/worker.js; else node dist/server/server/index.js; fi"]

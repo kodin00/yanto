@@ -1,0 +1,27 @@
+services:
+  worker:
+    build: .
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      YANTO_NODE_ROLE: worker
+      YANTO_MASTER_URL: ${YANTO_MASTER_URL:?Set YANTO_MASTER_URL}
+      WORKER_JOIN_TOKEN: ${WORKER_JOIN_TOKEN:-}
+      YANTO_WORKER_TOKEN: ${YANTO_WORKER_TOKEN:-}
+      YANTO_WORKER_NAME: ${YANTO_WORKER_NAME:-}
+      YANTO_WORKER_TOKEN_PATH: /data/worker-token
+      PROJECTS_ROOT: /projects
+      HOST_PROJECTS_ROOT: ${HOST_PROJECTS_ROOT:-~/projects}
+      SSH_KEYS_DIR: /data/ssh
+      SSH_PRIVATE_KEY_PATH: ${SSH_PRIVATE_KEY_PATH:-/root/.ssh/id_ed25519}
+      MANAGED_SSH_PRIVATE_KEY_PATH: ${MANAGED_SSH_PRIVATE_KEY_PATH:-/data/ssh/id_ed25519}
+      COMMAND_TIMEOUT_MS: ${COMMAND_TIMEOUT_MS:-3600000}
+      COMMAND_OUTPUT_MAX_BYTES: ${COMMAND_OUTPUT_MAX_BYTES:-2097152}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${HOST_PROJECTS_ROOT:-~/projects}:/projects
+      - ${SSH_SOURCE_DIR:-~/.ssh}:/root/.ssh:ro
+      - yanto_worker_data:/data
+
+volumes:
+  yanto_worker_data:

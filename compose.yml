@@ -6,6 +6,7 @@ services:
       - "127.0.0.1:${PORT:-8080}:8080"
     environment:
       NODE_ENV: production
+      YANTO_NODE_ROLE: master
       PORT: 8080
       DATABASE_URL: postgres://yanto:${POSTGRES_PASSWORD:-yanto}@postgres:5432/yanto
       JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-secret}
@@ -19,6 +20,8 @@ services:
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
       BACKUPS_DIR: /data/backups
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      WORKER_JOIN_TOKEN: ${WORKER_JOIN_TOKEN:-}
+      WORKER_TOKEN_SECRET: ${WORKER_TOKEN_SECRET:-change-this-to-a-long-random-secret}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${HOST_PROJECTS_ROOT:-~/projects}:/projects

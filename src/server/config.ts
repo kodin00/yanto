@@ -4,6 +4,15 @@ const requiredSecretFallback = "change-this-to-a-long-random-secret";
 
 export const config = {
   nodeEnv: process.env.NODE_ENV ?? "development",
+  nodeRole: process.env.YANTO_NODE_ROLE ?? "master",
+  localNodeId: process.env.YANTO_LOCAL_NODE_ID ?? "node_master_local",
+  workerJoinToken: process.env.WORKER_JOIN_TOKEN ?? "",
+  workerTokenSecret: process.env.WORKER_TOKEN_SECRET ?? process.env.JWT_SECRET ?? requiredSecretFallback,
+  workerName: process.env.YANTO_WORKER_NAME ?? "",
+  workerToken: process.env.YANTO_WORKER_TOKEN ?? "",
+  workerTokenPath: process.env.YANTO_WORKER_TOKEN_PATH ?? "/data/worker-token",
+  masterUrl: process.env.YANTO_MASTER_URL ?? "",
+  workerPollIntervalMs: Number(process.env.YANTO_WORKER_POLL_INTERVAL_MS ?? 3000),
   port: Number(process.env.PORT ?? "8080"),
   databaseUrl: process.env.DATABASE_URL ?? "postgres://yanto:yanto@localhost:5432/yanto",
   jwtSecret: process.env.JWT_SECRET ?? requiredSecretFallback,
@@ -27,10 +36,16 @@ export const config = {
 };
 
 export function warnOnUnsafeDefaults() {
+  if (!["master", "worker"].includes(config.nodeRole)) {
+    console.warn(`YANTO_NODE_ROLE should be "master" or "worker"; got "${config.nodeRole}".`);
+  }
   if (config.nodeEnv === "production" && config.jwtSecret === requiredSecretFallback) {
     console.warn("JWT_SECRET is using the default value. Set a strong secret before exposing this app.");
   }
   if (config.nodeEnv === "production" && config.adminPassword === "change-this-admin-password") {
     console.warn("ADMIN_PASSWORD is using the default value. Set a strong admin password.");
+  }
+  if (config.nodeEnv === "production" && config.nodeRole === "master" && !config.workerJoinToken) {
+    console.warn("WORKER_JOIN_TOKEN is empty. Worker registration is disabled until it is set.");
   }
 }

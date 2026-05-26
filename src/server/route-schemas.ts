@@ -8,7 +8,10 @@ export const projectInput = z.object({
   composeFile: z.string().min(1).optional(),
   composeContent: z.string().optional(),
   envFile: z.string().min(1).optional(),
-  autoStart: z.boolean().optional().default(true)
+  autoStart: z.boolean().optional().default(true),
+  manualDeployEnabled: z.boolean().optional().default(true),
+  githubWebhookEnabled: z.boolean().optional().default(true),
+  targetNodeId: z.string().min(1).optional()
 });
 
 export const deploymentInput = z.object({
@@ -41,4 +44,29 @@ export const r2SettingsInput = z.object({
   accessKeyId: z.string().optional().default(""),
   secretAccessKey: z.string().optional().default(""),
   prefix: z.string().optional().default("postgres-dumps")
+});
+
+export const workerRegisterInput = z.object({
+  joinToken: z.string().min(1),
+  name: z.string().optional(),
+  dockerVersion: z.string().optional().nullable(),
+  labels: z.record(z.string(), z.unknown()).optional()
+});
+
+export const workerHeartbeatInput = z.object({
+  name: z.string().optional(),
+  dockerVersion: z.string().optional().nullable(),
+  labels: z.record(z.string(), z.unknown()).optional()
+});
+
+export const workerLogInput = z.object({
+  chunk: z.string()
+});
+
+export const workerDeploymentUpdateInput = z.object({
+  status: z.enum(["success", "failed"]).optional(),
+  exitCode: z.number().int().nullable().optional(),
+  commitSha: z.string().nullable().optional(),
+  commitMessage: z.string().nullable().optional(),
+  targetRef: z.string().nullable().optional()
 });

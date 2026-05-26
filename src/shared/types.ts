@@ -1,5 +1,5 @@
 export type DeploymentStatus = "running" | "success" | "failed";
-export type DeploymentTrigger = "manual" | "webhook" | "rollback";
+export type DeploymentTrigger = "manual" | "webhook" | "github" | "rollback";
 
 export type Project = {
   id: string;
@@ -12,6 +12,9 @@ export type Project = {
   composeContent: string | null;
   envFile: string;
   autoStart: boolean;
+  manualDeployEnabled: boolean;
+  githubWebhookEnabled: boolean;
+  targetNodeId: string;
   deployToken: string;
   sshPublicKey: string | null;
   containerCount?: number;
@@ -23,6 +26,8 @@ export type Deployment = {
   id: string;
   projectId: string;
   projectName?: string;
+  nodeId: string;
+  nodeName?: string | null;
   status: DeploymentStatus;
   trigger: DeploymentTrigger;
   targetRef: string | null;
@@ -33,6 +38,20 @@ export type Deployment = {
   exitCode: number | null;
   startedAt: string;
   finishedAt: string | null;
+};
+
+export type DeploymentNode = {
+  id: string;
+  name: string;
+  role: "master" | "worker" | string;
+  status: "online" | "offline" | string;
+  lastSeenAt: string | null;
+  dockerVersion: string | null;
+  labels: Record<string, string>;
+  projectCount?: number;
+  runningDeploymentCount?: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type ContainerInfo = {

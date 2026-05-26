@@ -4,6 +4,8 @@ import { projects } from "../db/schema.js";
 import { createDeployToken, createId } from "./tokens.js";
 import { listContainers } from "./docker.js";
 import { ensureProjectsRoot, normalizeComposeFile, normalizeEnvFile, projectPath, slugifyFolderName } from "./paths.js";
+import { config } from "../config.js";
+import { assertDeployableNode } from "./nodes.js";
 
 export type CreateProjectInput = {
   name: string;
@@ -14,6 +16,9 @@ export type CreateProjectInput = {
   composeContent?: string;
   envFile?: string;
   autoStart?: boolean;
+  manualDeployEnabled?: boolean;
+  githubWebhookEnabled?: boolean;
+  targetNodeId?: string;
 };
 
 export async function listProjects() {
@@ -37,6 +42,7 @@ export async function listProjectsWithContainerCounts() {
 
 export async function createProject(input: CreateProjectInput) {
   await ensureProjectsRoot();
+  const targetNode = await assertDeployableNode(input.targetNodeId?.trim() || config.localNodeId);
   const id = createId("prj");
   const folderName = input.folderName.trim() || slugifyFolderName(input.name);
   const localPath = projectPath(folderName);
@@ -55,6 +61,9 @@ export async function createProject(input: CreateProjectInput) {
       composeContent: input.composeContent?.trim() || null,
       envFile: normalizeEnvFile(input.envFile ?? ".env"),
       autoStart: input.autoStart ?? false,
+      manualDeployEnabled: input.manualDeployEnabled ?? true,
+      githubWebhookEnabled: input.githubWebhookEnabled ?? true,
+      targetNodeId: targetNode.id,
       deployToken: createDeployToken(),
       sshPrivateKeyPath: null,
       sshPublicKey: null,
@@ -85,6 +94,12 @@ export async function updateProject(id: string, input: Partial<CreateProjectInpu
   if (input.composeContent !== undefined) patch.composeContent = input.composeContent.trim();
   if (input.envFile !== undefined) patch.envFile = normalizeEnvFile(input.envFile);
   if (input.autoStart !== undefined) patch.autoStart = input.autoStart;
+  if (input.manualDeployEnabled !== undefined) patch.manualDeployEnabled = input.manualDeployEnabled;
+  if (input.githubWebhookEnabled !== undefined) patch.githubWebhookEnabled = input.githubWebhookEnabled;
+  if (input.targetNodeId !== undefined) {
+    const targetNode = await assertDeployableNode(input.targetNodeId.trim() || config.localNodeId);
+    patch.targetNodeId = targetNode.id;
+  }
   if (input.folderName !== undefined) {
     const folderName = input.folderName.trim() || (input.name ? slugifyFolderName(input.name) : "");
     if (folderName) {
