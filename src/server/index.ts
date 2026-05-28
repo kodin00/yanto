@@ -46,6 +46,7 @@ import { restartProjectCompose, stopProjectCompose } from "./services/project-ru
 import { createProject, deleteProject, getProject, listProjectsWithContainerCounts, updateProject } from "./services/projects.js";
 import { managedSshKeyStatus, saveManagedSshPrivateKey } from "./services/ssh.js";
 import { healthStatus, systemUsage } from "./services/system.js";
+import { readProjectCompose } from "./services/compose.js";
 import {
   disableProjectRoute,
   deleteProjectRoute,
@@ -360,6 +361,19 @@ app.post(
       metadata: { targetRef: target.targetRef, rollbackFromDeploymentId: target.rollbackFromDeploymentId, reused: result.reused }
     });
     res.status(result.reused ? 200 : 202).json(result);
+  })
+);
+
+app.get(
+  "/api/projects/:id/compose/content",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const project = await getProject(routeParam(req, "id"));
+    if (!project) {
+      res.status(404).json({ message: "Project not found." });
+      return;
+    }
+    res.json(await readProjectCompose(project));
   })
 );
 

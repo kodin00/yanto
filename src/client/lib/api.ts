@@ -13,6 +13,11 @@ export type ProjectEnvContent = {
   envFile: string;
   content: string;
 };
+export type ProjectComposeContent = {
+  composeFile: string;
+  content: string;
+  exists: boolean;
+};
 
 export type R2SettingsPayload = Omit<R2PublicSettings, "hasSecretAccessKey"> & { secretAccessKey?: string };
 
@@ -115,6 +120,7 @@ export const api = {
     }),
   projectEnv: async (id: string) => normalizeProjectEnv(await request<unknown>(`/api/projects/${id}/env`)),
   projectEnvContent: (id: string) => request<ProjectEnvContent>(`/api/projects/${id}/env/content`),
+  projectComposeContent: (id: string) => request<ProjectComposeContent>(`/api/projects/${id}/compose/content`),
   updateProjectEnv: (id: string, variables: ProjectEnvVariable[]) =>
     request<{ ok: true }>(`/api/projects/${id}/env`, {
       method: "PATCH",

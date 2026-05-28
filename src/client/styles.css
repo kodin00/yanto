@@ -1275,6 +1275,39 @@ th {
   gap: 10px;
 }
 
+.lazy-editor-card {
+  min-height: 180px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  padding: 18px;
+  background: var(--field);
+  border: 1px solid var(--line);
+  text-align: center;
+}
+
+.editor-status-line,
+.credential-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.credential-status {
+  min-height: 34px;
+  padding: 0 10px;
+  background: var(--field);
+  border: 1px solid var(--line);
+}
+
+.credential-status.saved {
+  color: var(--green);
+  background: #f2f8f4;
+}
+
 .compose-section .text-area-field,
 .compose-section textarea {
   height: 100%;

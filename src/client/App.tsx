@@ -51,7 +51,8 @@ type ToastState = { message: string; kind?: "ok" | "error" | "loading" } | null;
 type LogModalState = { title: string; logs: string; streamPath?: string; live?: boolean; status?: string };
 type LogStreamPayload = { logs?: string; chunk?: string; status?: string; error?: string; done?: boolean };
 type EnvEditMode = "pairs" | "text";
-type ProjectEnvState = { rows: ProjectEnvVariable[]; baseline: ProjectEnvVariable[]; draftKey: string; draftValue: string; content: string; mode: EnvEditMode; loading: boolean; available: boolean };
+type ProjectEnvState = { rows: ProjectEnvVariable[]; baseline: ProjectEnvVariable[]; draftKey: string; draftValue: string; content: string; mode: EnvEditMode; loading: boolean; available: boolean; opened: boolean };
+type ProjectComposeState = { open: boolean; loading: boolean; available: boolean; source: "saved" | "file" | "empty" | null; message: string };
 type RollbackModalState = { project: Project; deployments: Deployment[] };
 
 const emptyProject = {
@@ -99,7 +100,16 @@ const emptyProjectEnvState: ProjectEnvState = {
   content: "",
   mode: "pairs",
   loading: false,
-  available: true
+  available: true,
+  opened: false
+};
+
+const emptyProjectComposeState: ProjectComposeState = {
+  open: false,
+  loading: false,
+  available: true,
+  source: null,
+  message: ""
 };
 
 function serializeEnvRows(rows: ProjectEnvVariable[]) {
@@ -136,7 +146,9 @@ export function App() {
   const [usage, setUsage] = useState<SystemUsage | null>(null);
   const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: "", sshKey: emptySshKeySettings, r2: emptyR2Settings, cf: emptyCfSettings });
   const [r2Form, setR2Form] = useState({ enabled: false, accountId: "", bucket: "", accessKeyId: "", secretAccessKey: "", prefix: "postgres-dumps" });
+  const [r2FormDirty, setR2FormDirty] = useState(false);
   const [cfForm, setCfForm] = useState({ accountId: "", zoneId: "", apiToken: "" });
+  const [cfFormDirty, setCfFormDirty] = useState(false);
   const [cfRoutes, setCfRoutes] = useState<CloudflareRoute[]>([]);
   const [systemLogs, setSystemLogs] = useState("");
   const [cleanupLogs, setCleanupLogs] = useState("");
@@ -147,6 +159,7 @@ export function App() {
   const [projectModal, setProjectModal] = useState<Project | "new" | null>(null);
   const [projectForm, setProjectForm] = useState(emptyProject);
   const [projectEnv, setProjectEnv] = useState<ProjectEnvState>(emptyProjectEnvState);
+  const [projectCompose, setProjectCompose] = useState<ProjectComposeState>(emptyProjectComposeState);
   const [rollbackModal, setRollbackModal] = useState<RollbackModalState | null>(null);
   const [logModal, setLogModal] = useState<LogModalState | null>(null);
   const [confirm, setConfirm] = useState<{ title: string; body: string; label: string; danger?: boolean; action: () => Promise<void> } | null>(null);
@@ -268,6 +281,7 @@ export function App() {
   }, [loadView, user, view]);
 
   useEffect(() => {
+    if (r2FormDirty) return;
     setR2Form({
       enabled: settings.r2?.enabled ?? false,
       accountId: settings.r2?.accountId ?? "",
@@ -276,15 +290,16 @@ export function App() {
       secretAccessKey: "",
       prefix: settings.r2?.prefix ?? "postgres-dumps"
     });
-  }, [settings.r2]);
+  }, [r2FormDirty, settings.r2]);
 
   useEffect(() => {
+    if (cfFormDirty) return;
     setCfForm({
       accountId: settings.cf?.accountId ?? "",
       zoneId: settings.cf?.zoneId ?? "",
       apiToken: ""
     });
-  }, [settings.cf]);
+  }, [cfFormDirty, settings.cf]);
 
   useEffect(() => {
     if (!logModal?.streamPath) return;
@@ -398,6 +413,16 @@ export function App() {
     });
   }
 
+  function updateR2Form(patch: Partial<typeof r2Form>) {
+    setR2FormDirty(true);
+    setR2Form((current) => ({ ...current, ...patch }));
+  }
+
+  function updateCfForm(patch: Partial<typeof cfForm>) {
+    setCfFormDirty(true);
+    setCfForm((current) => ({ ...current, ...patch }));
+  }
+
   async function persistProjectDetails(event?: FormEvent, after?: "deploy" | "restart") {
     event?.preventDefault();
     if (!projectModal) return;
@@ -411,7 +436,7 @@ export function App() {
       }
 
       const envRows = projectEnvPayload();
-      if (projectEnv.available && !projectEnv.loading && (projectModal !== "new" || envRows.length || projectEnv.content.trim())) {
+      if (projectEnv.opened && projectEnv.available && !projectEnv.loading && (projectModal !== "new" || envRows.length || projectEnv.content.trim())) {
         if (projectEnv.mode === "text") {
           await api.updateProjectEnvContent(savedProject.id, projectEnv.content);
         } else {
@@ -501,24 +526,69 @@ export function App() {
         githubWebhookEnabled: project.githubWebhookEnabled,
         targetNodeId: project.targetNodeId || "node_master_local"
       });
-      setProjectEnv({ ...emptyProjectEnvState, loading: true });
+      setProjectEnv(emptyProjectEnvState);
+      setProjectCompose(emptyProjectComposeState);
       setProjectModal(project);
-      void Promise.all([api.projectEnv(project.id), api.projectEnvContent(project.id), api.projectCfRoutes(project.id).catch(() => [])])
-        .then(([rows, envContent, routes]) => {
-          const normalizedRows = normalizeEnvRows(rows);
-          setProjectEnv({ rows: normalizedRows, baseline: normalizedRows, draftKey: "", draftValue: "", content: envContent.content, mode: "pairs", loading: false, available: true });
+      void api.projectCfRoutes(project.id).catch(() => [])
+        .then((routes) => {
           setCfRoutes(routes);
         })
         .catch((error) => {
-          setProjectEnv({ ...emptyProjectEnvState, loading: false, available: false });
-          setToast({ message: error instanceof Error ? error.message : "Unable to load environment.", kind: "error" });
+          setToast({ message: error instanceof Error ? error.message : "Unable to load Cloudflare routes.", kind: "error" });
         });
       return;
     }
     setProjectForm({ ...emptyProject, targetNodeId: nodes[0]?.id ?? "node_master_local" });
     setProjectEnv(emptyProjectEnvState);
+    setProjectCompose(emptyProjectComposeState);
     setCfRoutes([]);
     setProjectModal("new");
+  }
+
+  async function openComposeEditor() {
+    if (!projectModal || projectCompose.open || projectCompose.loading) return;
+    if (projectModal === "new") {
+      setProjectCompose({ open: true, loading: false, available: true, source: "empty", message: "Custom compose" });
+      return;
+    }
+    if (projectForm.composeContent.trim()) {
+      setProjectCompose({ open: true, loading: false, available: true, source: "saved", message: "Saved override" });
+      return;
+    }
+
+    setProjectCompose({ ...emptyProjectComposeState, loading: true });
+    try {
+      const compose = await api.projectComposeContent(projectModal.id);
+      setProjectForm((current) => ({ ...current, composeContent: compose.content }));
+      setProjectCompose({
+        open: true,
+        loading: false,
+        available: true,
+        source: compose.exists ? "file" : "empty",
+        message: compose.exists ? `Loaded ${compose.composeFile}` : `${compose.composeFile} not found`
+      });
+    } catch (error) {
+      setProjectCompose({ open: false, loading: false, available: false, source: null, message: "Compose could not be loaded" });
+      setToast({ message: error instanceof Error ? error.message : "Unable to load compose file.", kind: "error" });
+    }
+  }
+
+  async function openEnvEditor() {
+    if (!projectModal || projectEnv.opened || projectEnv.loading) return;
+    if (projectModal === "new") {
+      setProjectEnv({ ...emptyProjectEnvState, opened: true });
+      return;
+    }
+
+    setProjectEnv({ ...emptyProjectEnvState, opened: true, loading: true });
+    try {
+      const [rows, envContent] = await Promise.all([api.projectEnv(projectModal.id), api.projectEnvContent(projectModal.id)]);
+      const normalizedRows = normalizeEnvRows(rows);
+      setProjectEnv({ rows: normalizedRows, baseline: normalizedRows, draftKey: "", draftValue: "", content: envContent.content, mode: "pairs", loading: false, available: true, opened: true });
+    } catch (error) {
+      setProjectEnv({ ...emptyProjectEnvState, loading: false, available: false, opened: true });
+      setToast({ message: error instanceof Error ? error.message : "Unable to load environment.", kind: "error" });
+    }
   }
 
   function openRollback(project: Project) {
@@ -592,6 +662,15 @@ export function App() {
     setBusy("r2-settings");
     try {
       const result = await api.saveR2Settings(r2Form);
+      setR2Form({
+        enabled: result.r2.enabled,
+        accountId: result.r2.accountId,
+        bucket: result.r2.bucket,
+        accessKeyId: result.r2.accessKeyId,
+        secretAccessKey: "",
+        prefix: result.r2.prefix
+      });
+      setR2FormDirty(false);
       setSettings((current) => ({ ...current, r2: result.r2 }));
       setToast({ message: "R2 settings saved." });
     } catch (error) {
@@ -606,6 +685,8 @@ export function App() {
     setBusy("cf-settings");
     try {
       const result = await api.saveCloudflareSettings(cfForm);
+      setCfForm({ accountId: result.cf.accountId, zoneId: result.cf.zoneId, apiToken: "" });
+      setCfFormDirty(false);
       setSettings((current) => ({ ...current, cf: result.cf }));
       setToast({ message: "Cloudflare settings saved." });
     } catch (error) {
@@ -1132,24 +1213,24 @@ export function App() {
                 <ToggleField
                   label="Upload enabled"
                   value={r2Form.enabled}
-                  onChange={(enabled) => setR2Form((current) => ({ ...current, enabled }))}
+                  onChange={(enabled) => updateR2Form({ enabled })}
                   description={settings.r2?.hasSecretAccessKey ? "Secret key saved" : "Add an R2 secret key before uploading"}
                 />
                 <div className="settings-form-pair">
-                  <TextField label="Account ID" value={r2Form.accountId} onChange={(accountId) => setR2Form((current) => ({ ...current, accountId }))} />
-                  <TextField label="Bucket" value={r2Form.bucket} onChange={(bucket) => setR2Form((current) => ({ ...current, bucket }))} />
+                  <TextField label="Account ID" value={r2Form.accountId} onChange={(accountId) => updateR2Form({ accountId })} />
+                  <TextField label="Bucket" value={r2Form.bucket} onChange={(bucket) => updateR2Form({ bucket })} />
                 </div>
                 <div className="settings-form-pair">
-                  <TextField label="Access key ID" value={r2Form.accessKeyId} onChange={(accessKeyId) => setR2Form((current) => ({ ...current, accessKeyId }))} />
+                  <TextField label="Access key ID" value={r2Form.accessKeyId} onChange={(accessKeyId) => updateR2Form({ accessKeyId })} />
                   <TextField
                     label="Secret access key"
                     type="password"
                     value={r2Form.secretAccessKey}
-                    onChange={(secretAccessKey) => setR2Form((current) => ({ ...current, secretAccessKey }))}
+                    onChange={(secretAccessKey) => updateR2Form({ secretAccessKey })}
                     placeholder={settings.r2?.hasSecretAccessKey ? "Saved; leave blank to keep" : ""}
                   />
                 </div>
-                <TextField label="Object prefix" value={r2Form.prefix} onChange={(prefix) => setR2Form((current) => ({ ...current, prefix }))} />
+                <TextField label="Object prefix" value={r2Form.prefix} onChange={(prefix) => updateR2Form({ prefix })} />
                 <div className="actions">
                   <Button type="submit" disabled={busy === "r2-settings"} icon={<Cloud size={16} />}>
                     Save R2
@@ -1164,16 +1245,20 @@ export function App() {
               </div>
               <form className="form-grid compact-form" onSubmit={saveCfSettings}>
                 <div className="settings-form-pair">
-                  <TextField label="Account ID" value={cfForm.accountId} onChange={(accountId) => setCfForm((current) => ({ ...current, accountId }))} />
-                  <TextField label="Zone ID" value={cfForm.zoneId} onChange={(zoneId) => setCfForm((current) => ({ ...current, zoneId }))} />
+                  <TextField label="Account ID" value={cfForm.accountId} onChange={(accountId) => updateCfForm({ accountId })} />
+                  <TextField label="Zone ID" value={cfForm.zoneId} onChange={(zoneId) => updateCfForm({ zoneId })} />
                 </div>
                 <TextField
                   label="API Token"
                   type="password"
                   value={cfForm.apiToken}
-                  onChange={(apiToken) => setCfForm((current) => ({ ...current, apiToken }))}
+                  onChange={(apiToken) => updateCfForm({ apiToken })}
                   placeholder={settings.cf?.hasApiToken ? "Saved; leave blank to keep" : ""}
                 />
+                <div className={`credential-status ${settings.cf?.hasApiToken ? "saved" : ""}`}>
+                  <ShieldCheck size={15} />
+                  <span>{settings.cf?.hasApiToken ? "API token saved" : "API token not saved"}</span>
+                </div>
                 <div className="actions">
                   <Button variant="secondary" disabled={busy === "cf-validate"} onClick={() => void validateCfSettings()}>
                     Validate
@@ -1355,17 +1440,40 @@ export function App() {
 
               <section className="project-edit-section compose-section">
                 <div className="section-kicker">Compose</div>
-                <TextAreaField
-                  label="Compose editor"
-                  value={projectForm.composeContent}
-                  onChange={(composeContent) => setProjectForm((current) => ({ ...current, composeContent }))}
-                  placeholder={"Optional. Paste docker-compose.yml content here for compose-only projects or to override the file during deploy."}
-                />
+                {projectCompose.open ? (
+                  <>
+                    <div className="editor-status-line">
+                      <StatusBadge status={projectCompose.source ?? "open"} />
+                      <span>{projectCompose.message}</span>
+                    </div>
+                    <TextAreaField
+                      label="Compose editor"
+                      value={projectForm.composeContent}
+                      onChange={(composeContent) => setProjectForm((current) => ({ ...current, composeContent }))}
+                      placeholder={"Optional. Paste docker-compose.yml content here for compose-only projects or to override the file during deploy."}
+                    />
+                  </>
+                ) : (
+                  <div className="lazy-editor-card">
+                    {projectCompose.loading ? <LoadingInline label="Loading compose" /> : <p className="muted">{projectModal !== "new" && projectForm.composeContent.trim() ? "Saved override available." : "Compose editor is closed."}</p>}
+                    {projectCompose.available ? null : <p className="muted">{projectCompose.message}</p>}
+                    <Button variant="secondary" disabled={projectCompose.loading} onClick={() => void openComposeEditor()} icon={projectCompose.loading ? <RefreshCw size={15} className="spin" /> : <FileText size={15} />}>
+                      {projectCompose.loading ? "Opening" : "Open compose editor"}
+                    </Button>
+                  </div>
+                )}
               </section>
 
               <section className="project-edit-section env-section">
                 <div className="section-kicker">Environment</div>
-                {projectEnv.loading ? (
+                {!projectEnv.opened ? (
+                  <div className="lazy-editor-card">
+                    <p className="muted">Environment editor is closed.</p>
+                    <Button variant="secondary" onClick={() => void openEnvEditor()} icon={<List size={15} />}>
+                      Open env editor
+                    </Button>
+                  </div>
+                ) : projectEnv.loading ? (
                   <LoadingInline label="Loading environment" />
                 ) : projectEnv.available ? (
                   <EnvEditor modal={projectEnv} onChange={setProjectEnv} />

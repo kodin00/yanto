@@ -91,7 +91,7 @@ export async function updateProject(id: string, input: Partial<CreateProjectInpu
   }
   if (input.branch !== undefined) patch.branch = input.branch.trim() || "master";
   if (input.composeFile !== undefined) patch.composeFile = normalizeComposeFile(input.composeFile);
-  if (input.composeContent !== undefined) patch.composeContent = input.composeContent.trim();
+  if (input.composeContent !== undefined) patch.composeContent = input.composeContent.trim() || null;
   if (input.envFile !== undefined) patch.envFile = normalizeEnvFile(input.envFile);
   if (input.autoStart !== undefined) patch.autoStart = input.autoStart;
   if (input.manualDeployEnabled !== undefined) patch.manualDeployEnabled = input.manualDeployEnabled;
