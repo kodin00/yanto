@@ -107,6 +107,44 @@ export const appSettings = pgTable("app_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
 });
 
+export const cloudflareTunnels = pgTable(
+  "cloudflare_tunnels",
+  {
+    id: text("id").primaryKey(),
+    nodeId: text("node_id").notNull().references(() => deploymentNodes.id),
+    cfAccountId: text("cf_account_id").notNull(),
+    cfTunnelId: text("cf_tunnel_id").notNull(),
+    tunnelName: text("tunnel_name").notNull(),
+    tunnelToken: text("tunnel_token").notNull(),
+    status: text("status").notNull().default("active"),
+    lastHealthCheckAt: timestamp("last_health_check_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [index("cloudflare_tunnels_node_id_idx").on(table.nodeId), index("cloudflare_tunnels_cf_tunnel_id_idx").on(table.cfTunnelId)]
+);
+
+export const cloudflareRoutes = pgTable(
+  "cloudflare_routes",
+  {
+    id: text("id").primaryKey(),
+    tunnelId: text("tunnel_id").notNull().references(() => cloudflareTunnels.id, { onDelete: "cascade" }),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    hostname: text("hostname").notNull(),
+    serviceTarget: text("service_target").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    cfDnsRecordId: text("cf_dns_record_id"),
+    lastPublishedAt: timestamp("last_published_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("cloudflare_routes_tunnel_id_idx").on(table.tunnelId),
+    index("cloudflare_routes_project_id_idx").on(table.projectId),
+    index("cloudflare_routes_hostname_idx").on(table.hostname)
+  ]
+);
+
 export type ProjectRow = typeof projects.$inferSelect;
 export type NewProjectRow = typeof projects.$inferInsert;
 export type DeploymentNodeRow = typeof deploymentNodes.$inferSelect;
@@ -118,3 +156,7 @@ export type NewBackupRow = typeof backups.$inferInsert;
 export type AuditLogRow = typeof auditLogs.$inferSelect;
 export type NewAuditLogRow = typeof auditLogs.$inferInsert;
 export type AppSettingRow = typeof appSettings.$inferSelect;
+export type CloudflareTunnelRow = typeof cloudflareTunnels.$inferSelect;
+export type NewCloudflareTunnelRow = typeof cloudflareTunnels.$inferInsert;
+export type CloudflareRouteRow = typeof cloudflareRoutes.$inferSelect;
+export type NewCloudflareRouteRow = typeof cloudflareRoutes.$inferInsert;

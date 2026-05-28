@@ -13,6 +13,8 @@ import { asyncRoute, routeParam, sendStreamEvent, startEventStream } from "./htt
 import { logger } from "./logger.js";
 import {
   backupInput,
+  cloudflareRouteInput,
+  cloudflareSettingsInput,
   deploymentInput,
   envInput,
   envVariablesInput,
@@ -44,6 +46,23 @@ import { restartProjectCompose, stopProjectCompose } from "./services/project-ru
 import { createProject, deleteProject, getProject, listProjectsWithContainerCounts, updateProject } from "./services/projects.js";
 import { managedSshKeyStatus, saveManagedSshPrivateKey } from "./services/ssh.js";
 import { healthStatus, systemUsage } from "./services/system.js";
+import {
+  disableProjectRoute,
+  deleteProjectRoute,
+  enableProjectRoute,
+  getCloudflaredStatus,
+  getTunnelForNode,
+  getTunnelHealth,
+  listRoutesForProject,
+  listTunnels,
+  publishProjectRoute,
+  publicCloudflareSettings,
+  restartCloudflared,
+  saveCloudflareSettings,
+  startCloudflared,
+  stopCloudflared,
+  validateCloudflareSettings
+} from "./services/cloudflare.js";
 import { ensureWorkerJoinToken, getWorkerJoinToken, publicR2Settings, saveR2Settings } from "./services/settings.js";
 import { constantTimeEqual } from "./services/tokens.js";
 import { githubBranchFromRef, githubPayloadFromRequestBody, githubWebhookPayloadInput, projectDeployBranch, verifyGithubSignature } from "./services/github-webhooks.js";
@@ -894,7 +913,7 @@ app.get(
   "/api/settings",
   requireAuth,
   asyncRoute(async (_req, res) => {
-    const [count, sshKey, r2] = await Promise.all([db.select().from(projects), managedSshKeyStatus(), publicR2Settings()]);
+    const [count, sshKey, r2, cf] = await Promise.all([db.select().from(projects), managedSshKeyStatus(), publicR2Settings(), publicCloudflareSettings()]);
     res.json({
       projectsRoot: config.projectsRoot,
       hostProjectsRoot: config.hostProjectsRoot,
@@ -902,7 +921,8 @@ app.get(
       appBaseUrl: config.appBaseUrl,
       projectCount: count.length,
       sshKey,
-      r2
+      r2,
+      cf
     });
   })
 );
@@ -919,6 +939,28 @@ app.post(
 );
 
 app.post(
+  "/api/settings/cloudflare",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const body = cloudflareSettingsInput.parse(req.body ?? {});
+    const cf = await saveCloudflareSettings(body);
+    await recordAuditLog({ actor: actor(req), action: "settings.cloudflare.save", entityType: "settings", metadata: { accountId: cf.accountId, zoneId: cf.zoneId } });
+    res.json({ ok: true, cf });
+  })
+);
+
+app.post(
+  "/api/settings/cloudflare/validate",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const body = cloudflareSettingsInput.parse(req.body ?? {});
+    const result = await validateCloudflareSettings(body);
+    await recordAuditLog({ actor: actor(req), action: "settings.cloudflare.validate", entityType: "settings" });
+    res.json(result);
+  })
+);
+
+app.post(
   "/api/settings/ssh-key",
   requireAuth,
   asyncRoute(async (req, res) => {
@@ -926,6 +968,127 @@ app.post(
     const sshKey = await saveManagedSshPrivateKey(body.privateKey);
     await recordAuditLog({ actor: actor(req), action: "settings.ssh_key.save", entityType: "settings" });
     res.json({ ok: true, sshKey });
+  })
+);
+
+// --- Cloudflare Tunnel Routes ---
+
+app.get(
+  "/api/cloudflare/tunnels",
+  requireAuth,
+  asyncRoute(async (_req, res) => {
+    res.json(await listTunnels());
+  })
+);
+
+app.get(
+  "/api/cloudflare/tunnels/node/:nodeId",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const nodeId = routeParam(req, "nodeId");
+    const tunnel = await getTunnelForNode(nodeId);
+    if (!tunnel) {
+      res.status(404).json({ message: "No tunnel found for this node." });
+      return;
+    }
+    const [runtime, health] = await Promise.all([getCloudflaredStatus(nodeId), getTunnelHealth(tunnel)]);
+    res.json({ tunnel, runtime, health });
+  })
+);
+
+app.post(
+  "/api/cloudflare/tunnels/node/:nodeId/start",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const nodeId = routeParam(req, "nodeId");
+    const tunnel = await getTunnelForNode(nodeId);
+    if (!tunnel) {
+      res.status(404).json({ message: "No tunnel found for this node. Create a route first." });
+      return;
+    }
+    await startCloudflared(tunnel);
+    await recordAuditLog({ actor: actor(req), action: "cloudflare.tunnel.start", entityType: "cloudflare_tunnel", entityId: tunnel.id, metadata: { nodeId } });
+    res.json({ ok: true });
+  })
+);
+
+app.post(
+  "/api/cloudflare/tunnels/node/:nodeId/stop",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const nodeId = routeParam(req, "nodeId");
+    await stopCloudflared(nodeId);
+    await recordAuditLog({ actor: actor(req), action: "cloudflare.tunnel.stop", entityType: "cloudflare_tunnel", metadata: { nodeId } });
+    res.json({ ok: true });
+  })
+);
+
+app.post(
+  "/api/cloudflare/tunnels/node/:nodeId/restart",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const nodeId = routeParam(req, "nodeId");
+    await restartCloudflared(nodeId);
+    await recordAuditLog({ actor: actor(req), action: "cloudflare.tunnel.restart", entityType: "cloudflare_tunnel", metadata: { nodeId } });
+    res.json({ ok: true });
+  })
+);
+
+app.get(
+  "/api/projects/:id/cf-routes",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    res.json(await listRoutesForProject(routeParam(req, "id")));
+  })
+);
+
+app.post(
+  "/api/projects/:id/cf-routes",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const body = cloudflareRouteInput.parse(req.body);
+    const projectId = routeParam(req, "id");
+    const route = await publishProjectRoute(projectId, body.hostname, body.serviceTarget, body.nodeId);
+    await recordAuditLog({
+      actor: actor(req),
+      action: "cloudflare.route.publish",
+      entityType: "cloudflare_route",
+      entityId: route.id,
+      projectId,
+      metadata: { hostname: route.hostname, serviceTarget: route.serviceTarget }
+    });
+    res.status(201).json(route);
+  })
+);
+
+app.patch(
+  "/api/cloudflare/routes/:id/enable",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const route = await enableProjectRoute(routeParam(req, "id"));
+    await recordAuditLog({ actor: actor(req), action: "cloudflare.route.enable", entityType: "cloudflare_route", entityId: route.id, projectId: route.projectId });
+    res.json(route);
+  })
+);
+
+app.patch(
+  "/api/cloudflare/routes/:id/disable",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const route = await disableProjectRoute(routeParam(req, "id"));
+    await recordAuditLog({ actor: actor(req), action: "cloudflare.route.disable", entityType: "cloudflare_route", entityId: route.id, projectId: route.projectId });
+    res.json(route);
+  })
+);
+
+app.delete(
+  "/api/cloudflare/routes/:id",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const id = routeParam(req, "id");
+    await deleteProjectRoute(id);
+    await recordAuditLog({ actor: actor(req), action: "cloudflare.route.delete", entityType: "cloudflare_route", entityId: id });
+    res.status(204).end();
   })
 );
 

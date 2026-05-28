@@ -1,4 +1,4 @@
-import type { AuditLog, Backup, ContainerInfo, Deployment, DeploymentNode, PostgresBackupTarget, Project, R2PublicSettings, SystemUsage } from "../../shared/types";
+import type { AuditLog, Backup, CloudflarePublicSettings, CloudflareRoute, CloudflareTunnel, CloudflareTunnelStatus, ContainerInfo, Deployment, DeploymentNode, PostgresBackupTarget, Project, R2PublicSettings, SystemUsage } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -15,6 +15,18 @@ export type ProjectEnvContent = {
 };
 
 export type R2SettingsPayload = Omit<R2PublicSettings, "hasSecretAccessKey"> & { secretAccessKey?: string };
+
+export type CloudflareSettingsPayload = {
+  accountId?: string;
+  zoneId?: string;
+  apiToken?: string;
+};
+
+export type CloudflareRoutePayload = {
+  hostname: string;
+  serviceTarget: string;
+  nodeId?: string;
+};
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
@@ -170,6 +182,7 @@ export const api = {
       appBaseUrl: string;
       projectCount: number;
       r2: R2PublicSettings;
+      cf: CloudflarePublicSettings;
       sshKey: {
         hasManagedKey: boolean;
         hasMountedKey: boolean;
@@ -178,5 +191,37 @@ export const api = {
         activePrivateKeyPath: string | null;
         publicKey: string | null;
       };
-    }>("/api/settings")
+    }>("/api/settings"),
+  saveCloudflareSettings: (payload: CloudflareSettingsPayload) =>
+    request<{ ok: true; cf: CloudflarePublicSettings }>("/api/settings/cloudflare", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  validateCloudflareSettings: (payload: CloudflareSettingsPayload) =>
+    request<{ ok: boolean; accountName?: string; zoneName?: string }>("/api/settings/cloudflare/validate", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  cloudflareTunnels: () => request<CloudflareTunnel[]>("/api/cloudflare/tunnels"),
+  cloudflareTunnelStatus: (nodeId: string) =>
+    request<CloudflareTunnelStatus>(`/api/cloudflare/tunnels/node/${nodeId}`),
+  startCloudflared: (nodeId: string) =>
+    request<{ ok: true }>(`/api/cloudflare/tunnels/node/${nodeId}/start`, { method: "POST" }),
+  stopCloudflared: (nodeId: string) =>
+    request<{ ok: true }>(`/api/cloudflare/tunnels/node/${nodeId}/stop`, { method: "POST" }),
+  restartCloudflared: (nodeId: string) =>
+    request<{ ok: true }>(`/api/cloudflare/tunnels/node/${nodeId}/restart`, { method: "POST" }),
+  projectCfRoutes: (projectId: string) =>
+    request<CloudflareRoute[]>(`/api/projects/${projectId}/cf-routes`),
+  publishCfRoute: (projectId: string, payload: CloudflareRoutePayload) =>
+    request<CloudflareRoute>(`/api/projects/${projectId}/cf-routes`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  enableCfRoute: (routeId: string) =>
+    request<CloudflareRoute>(`/api/cloudflare/routes/${routeId}/enable`, { method: "PATCH" }),
+  disableCfRoute: (routeId: string) =>
+    request<CloudflareRoute>(`/api/cloudflare/routes/${routeId}/disable`, { method: "PATCH" }),
+  deleteCfRoute: (routeId: string) =>
+    request<void>(`/api/cloudflare/routes/${routeId}`, { method: "DELETE" })
 };

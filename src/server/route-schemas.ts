@@ -46,6 +46,18 @@ export const r2SettingsInput = z.object({
   prefix: z.string().optional().default("postgres-dumps")
 });
 
+export const cloudflareSettingsInput = z.object({
+  accountId: z.string().optional().default(""),
+  zoneId: z.string().optional().default(""),
+  apiToken: z.string().optional().default("")
+});
+
+export const cloudflareRouteInput = z.object({
+  hostname: z.string().min(1),
+  serviceTarget: z.string().min(1),
+  nodeId: z.string().min(1).optional()
+});
+
 export const workerRegisterInput = z.object({
   joinToken: z.string().min(1),
   name: z.string().optional(),

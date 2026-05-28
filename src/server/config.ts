@@ -20,6 +20,7 @@ export const config = {
   adminPassword: process.env.ADMIN_PASSWORD ?? "admin",
   projectsRoot: path.resolve(process.env.PROJECTS_ROOT ?? "/projects"),
   backupsDir: path.resolve(process.env.BACKUPS_DIR ?? "/data/backups"),
+  cloudflaredDir: path.resolve(process.env.CLOUDFLARED_DIR ?? "/data/cloudflared"),
   hostProjectsRoot: process.env.HOST_PROJECTS_ROOT ?? "~/projects",
   sshKeysDir: path.resolve(process.env.SSH_KEYS_DIR ?? "/tmp/yanto-ssh"),
   sshPrivateKeyPath: process.env.SSH_PRIVATE_KEY_PATH ?? "/root/.ssh/id_ed25519",

@@ -152,4 +152,41 @@ export async function migrate() {
   await pool.query(`CREATE INDEX IF NOT EXISTS backups_status_idx ON backups(status);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS audit_logs_created_at_idx ON audit_logs(created_at DESC);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS audit_logs_project_created_at_idx ON audit_logs(project_id, created_at DESC);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cloudflare_tunnels (
+      id text PRIMARY KEY,
+      node_id text NOT NULL REFERENCES deployment_nodes(id),
+      cf_account_id text NOT NULL,
+      cf_tunnel_id text NOT NULL,
+      tunnel_name text NOT NULL,
+      tunnel_token text NOT NULL,
+      status text NOT NULL DEFAULT 'active',
+      last_health_check_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cloudflare_tunnels_node_id_idx ON cloudflare_tunnels(node_id);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cloudflare_tunnels_cf_tunnel_id_idx ON cloudflare_tunnels(cf_tunnel_id);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cloudflare_routes (
+      id text PRIMARY KEY,
+      tunnel_id text NOT NULL REFERENCES cloudflare_tunnels(id) ON DELETE CASCADE,
+      project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      hostname text NOT NULL,
+      service_target text NOT NULL,
+      enabled boolean NOT NULL DEFAULT true,
+      cf_dns_record_id text,
+      last_published_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+
+  await pool.query(`CREATE INDEX IF NOT EXISTS cloudflare_routes_tunnel_id_idx ON cloudflare_routes(tunnel_id);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cloudflare_routes_project_id_idx ON cloudflare_routes(project_id);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cloudflare_routes_hostname_idx ON cloudflare_routes(hostname);`);
 }
