@@ -340,7 +340,8 @@ a.button {
 
 .compact-settings-panel,
 .runtime-settings-panel,
-.r2-settings-panel {
+.r2-settings-panel,
+.cf-tunnel-settings-panel {
   padding: 18px;
 }
 
@@ -1033,6 +1034,16 @@ th {
   color: var(--amber);
 }
 
+.status.enabled {
+  background: #e6f2eb;
+  color: var(--green-dark);
+}
+
+.status.disabled {
+  background: #f4efe5;
+  color: var(--amber);
+}
+
 .field {
   position: relative;
   display: grid;
@@ -1495,6 +1506,70 @@ th {
   to {
     transform: rotate(360deg);
   }
+}
+
+.cf-routes-section {
+  grid-column: 1 / -1;
+}
+
+.cf-route-list {
+  display: grid;
+  gap: 10px;
+}
+
+.cf-route-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.cf-route-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cf-route-hostname {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.cf-route-hostname a {
+  color: var(--cyan);
+  text-decoration: none;
+}
+
+.cf-route-hostname a:hover {
+  text-decoration: underline;
+}
+
+.cf-route-service {
+  font-size: 12px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+.cf-route-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.cf-route-add-form {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
 }
 
 @media (max-width: 900px) {

@@ -109,6 +109,51 @@ export type R2PublicSettings = {
   prefix: string;
 };
 
+export type CloudflarePublicSettings = {
+  accountId: string;
+  zoneId: string;
+  hasApiToken: boolean;
+};
+
+export type CloudflareTunnel = {
+  id: string;
+  nodeId: string;
+  cfAccountId: string;
+  cfTunnelId: string;
+  tunnelName: string;
+  status: string;
+  lastHealthCheckAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CloudflareRoute = {
+  id: string;
+  tunnelId: string;
+  projectId: string;
+  hostname: string;
+  serviceTarget: string;
+  enabled: boolean;
+  cfDnsRecordId: string | null;
+  lastPublishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CloudflareTunnelStatus = {
+  tunnel: CloudflareTunnel;
+  runtime: {
+    running: boolean;
+    containerId?: string;
+    status?: string;
+  };
+  health: {
+    healthy: boolean;
+    connectors?: number;
+    status?: string;
+  };
+};
+
 export type AuditLog = {
   id: string;
   actor: string;

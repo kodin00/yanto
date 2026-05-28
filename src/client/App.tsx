@@ -29,7 +29,7 @@ import {
   Trash2
 } from "lucide-react";
 import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import type { ContainerInfo, Deployment, DeploymentNode, Project, SystemUsage } from "../shared/types";
+import type { CloudflarePublicSettings, CloudflareRoute, ContainerInfo, Deployment, DeploymentNode, Project, SystemUsage } from "../shared/types";
 import {
   bytes,
   dateTime,
@@ -44,7 +44,7 @@ import {
 } from "./app-utils";
 import { Button, ConfirmDialog, CustomSelect, IconButton, LoadingInline, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast, ToggleField } from "./components/ui";
 import { AuditTable, BackupTable, ContainerGroups, DeploymentTable, PostgresTargetTable } from "./data-tables";
-import { api, type AuditLogEntry, type BackupRecord, type PostgresTarget, type ProjectEnvVariable } from "./lib/api";
+import { api, type AuditLogEntry, type BackupRecord, type CloudflareRoutePayload, type PostgresTarget, type ProjectEnvVariable } from "./lib/api";
 
 type View = "dashboard" | "projects" | "deployments" | "containers" | "nodes" | "backups" | "audit" | "settings";
 type ToastState = { message: string; kind?: "ok" | "error" | "loading" } | null;
@@ -83,6 +83,12 @@ const emptyR2Settings = {
   accessKeyId: "",
   hasSecretAccessKey: false,
   prefix: "postgres-dumps"
+};
+
+const emptyCfSettings: CloudflarePublicSettings = {
+  accountId: "",
+  zoneId: "",
+  hasApiToken: false
 };
 
 const emptyProjectEnvState: ProjectEnvState = {
@@ -128,8 +134,10 @@ export function App() {
   const [postgresTargets, setPostgresTargets] = useState<PostgresTarget[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
   const [usage, setUsage] = useState<SystemUsage | null>(null);
-  const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: "", sshKey: emptySshKeySettings, r2: emptyR2Settings });
+  const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: "", sshKey: emptySshKeySettings, r2: emptyR2Settings, cf: emptyCfSettings });
   const [r2Form, setR2Form] = useState({ enabled: false, accountId: "", bucket: "", accessKeyId: "", secretAccessKey: "", prefix: "postgres-dumps" });
+  const [cfForm, setCfForm] = useState({ accountId: "", zoneId: "", apiToken: "" });
+  const [cfRoutes, setCfRoutes] = useState<CloudflareRoute[]>([]);
   const [systemLogs, setSystemLogs] = useState("");
   const [cleanupLogs, setCleanupLogs] = useState("");
   const [cleanupLogTitle, setCleanupLogTitle] = useState("Cleanup preview");
@@ -269,6 +277,14 @@ export function App() {
       prefix: settings.r2?.prefix ?? "postgres-dumps"
     });
   }, [settings.r2]);
+
+  useEffect(() => {
+    setCfForm({
+      accountId: settings.cf?.accountId ?? "",
+      zoneId: settings.cf?.zoneId ?? "",
+      apiToken: ""
+    });
+  }, [settings.cf]);
 
   useEffect(() => {
     if (!logModal?.streamPath) return;
@@ -487,10 +503,11 @@ export function App() {
       });
       setProjectEnv({ ...emptyProjectEnvState, loading: true });
       setProjectModal(project);
-      void Promise.all([api.projectEnv(project.id), api.projectEnvContent(project.id)])
-        .then(([rows, envContent]) => {
+      void Promise.all([api.projectEnv(project.id), api.projectEnvContent(project.id), api.projectCfRoutes(project.id).catch(() => [])])
+        .then(([rows, envContent, routes]) => {
           const normalizedRows = normalizeEnvRows(rows);
           setProjectEnv({ rows: normalizedRows, baseline: normalizedRows, draftKey: "", draftValue: "", content: envContent.content, mode: "pairs", loading: false, available: true });
+          setCfRoutes(routes);
         })
         .catch((error) => {
           setProjectEnv({ ...emptyProjectEnvState, loading: false, available: false });
@@ -500,6 +517,7 @@ export function App() {
     }
     setProjectForm({ ...emptyProject, targetNodeId: nodes[0]?.id ?? "node_master_local" });
     setProjectEnv(emptyProjectEnvState);
+    setCfRoutes([]);
     setProjectModal("new");
   }
 
@@ -580,6 +598,70 @@ export function App() {
       setToast({ message: error instanceof Error ? error.message : "Unable to save R2 settings.", kind: "error" });
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function saveCfSettings(event: FormEvent) {
+    event.preventDefault();
+    setBusy("cf-settings");
+    try {
+      const result = await api.saveCloudflareSettings(cfForm);
+      setSettings((current) => ({ ...current, cf: result.cf }));
+      setToast({ message: "Cloudflare settings saved." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to save Cloudflare settings.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function validateCfSettings() {
+    setBusy("cf-validate");
+    setToast({ message: "Validating Cloudflare credentials...", kind: "loading" });
+    try {
+      const result = await api.validateCloudflareSettings(cfForm);
+      setToast({ message: `Validated. Account: ${result.accountName}${result.zoneName ? `, Zone: ${result.zoneName}` : ""}` });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Validation failed.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const [cfRouteForm, setCfRouteForm] = useState({ hostname: "", serviceTarget: "" });
+
+  async function publishCfRoute(projectId: string) {
+    setBusy("cf-route-publish");
+    try {
+      const payload: CloudflareRoutePayload = { hostname: cfRouteForm.hostname, serviceTarget: cfRouteForm.serviceTarget };
+      const route = await api.publishCfRoute(projectId, payload);
+      setCfRoutes((current) => [...current, route]);
+      setCfRouteForm({ hostname: "", serviceTarget: "" });
+      setToast({ message: `Route published: https://${route.hostname}` });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to publish route.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function toggleCfRoute(route: CloudflareRoute) {
+    try {
+      const updated = route.enabled ? await api.disableCfRoute(route.id) : await api.enableCfRoute(route.id);
+      setCfRoutes((current) => current.map((r) => (r.id === updated.id ? updated : r)));
+      setToast({ message: route.enabled ? "Route disabled." : "Route enabled." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to update route.", kind: "error" });
+    }
+  }
+
+  async function removeCfRoute(routeId: string) {
+    try {
+      await api.deleteCfRoute(routeId);
+      setCfRoutes((current) => current.filter((r) => r.id !== routeId));
+      setToast({ message: "Route deleted." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to delete route.", kind: "error" });
     }
   }
 
@@ -1075,6 +1157,33 @@ export function App() {
                 </div>
               </form>
             </section>
+            <section className="panel cf-tunnel-settings-panel">
+              <div className="panel-head">
+                <h2>Cloudflare Tunnel</h2>
+                <ShieldCheck size={19} />
+              </div>
+              <form className="form-grid compact-form" onSubmit={saveCfSettings}>
+                <div className="settings-form-pair">
+                  <TextField label="Account ID" value={cfForm.accountId} onChange={(accountId) => setCfForm((current) => ({ ...current, accountId }))} />
+                  <TextField label="Zone ID" value={cfForm.zoneId} onChange={(zoneId) => setCfForm((current) => ({ ...current, zoneId }))} />
+                </div>
+                <TextField
+                  label="API Token"
+                  type="password"
+                  value={cfForm.apiToken}
+                  onChange={(apiToken) => setCfForm((current) => ({ ...current, apiToken }))}
+                  placeholder={settings.cf?.hasApiToken ? "Saved; leave blank to keep" : ""}
+                />
+                <div className="actions">
+                  <Button variant="secondary" disabled={busy === "cf-validate"} onClick={() => void validateCfSettings()}>
+                    Validate
+                  </Button>
+                  <Button type="submit" disabled={busy === "cf-settings"} icon={<ShieldCheck size={16} />}>
+                    Save
+                  </Button>
+                </div>
+              </form>
+            </section>
             <section className="panel ssh-settings-panel">
               <div className="panel-head">
                 <h2>Git SSH key</h2>
@@ -1264,6 +1373,49 @@ export function App() {
                   <p className="muted">Environment could not be loaded. Project fields can still be saved.</p>
                 )}
               </section>
+
+              {projectModal !== "new" && settings.cf?.hasApiToken ? (
+                <section className="project-edit-section cf-routes-section">
+                  <div className="section-kicker">Cloudflare Tunnel</div>
+                  {cfRoutes.length > 0 ? (
+                    <div className="cf-route-list">
+                      {cfRoutes.map((route) => (
+                        <div key={route.id} className="cf-route-row">
+                          <div className="cf-route-info">
+                            <span className="cf-route-hostname">
+                              <a href={`https://${route.hostname}`} target="_blank" rel="noopener noreferrer">
+                                https://{route.hostname}
+                              </a>
+                              <IconButton label="Copy URL" onClick={() => void copyText(`https://${route.hostname}`)}><Copy size={14} /></IconButton>
+                            </span>
+                            <span className="cf-route-service">{route.serviceTarget}</span>
+                            <StatusBadge status={route.enabled ? "enabled" : "disabled"} />
+                          </div>
+                          <div className="cf-route-actions">
+                            <Button variant="ghost" onClick={() => void toggleCfRoute(route)}>
+                              {route.enabled ? "Disable" : "Enable"}
+                            </Button>
+                            <Button variant="ghost" onClick={() => void removeCfRoute(route.id)} icon={<Trash2 size={14} />}>
+                              Delete
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="muted">No public hostnames configured for this project.</p>
+                  )}
+                  <div className="cf-route-add-form">
+                    <div className="project-edit-pair">
+                      <TextField label="Hostname" value={cfRouteForm.hostname} onChange={(hostname) => setCfRouteForm((current) => ({ ...current, hostname }))} placeholder="app.example.com" />
+                      <TextField label="Service URL" value={cfRouteForm.serviceTarget} onChange={(serviceTarget) => setCfRouteForm((current) => ({ ...current, serviceTarget }))} placeholder="http://127.0.0.1:3000" />
+                    </div>
+                    <Button disabled={busy === "cf-route-publish" || !cfRouteForm.hostname || !cfRouteForm.serviceTarget} variant="secondary" onClick={() => void publishCfRoute(projectModal.id)} icon={<Plus size={15} />}>
+                      Publish route
+                    </Button>
+                  </div>
+                </section>
+              ) : null}
             </div>
             <div className="actions project-edit-actions">
               <Button variant="secondary" onClick={() => setProjectModal(null)}>
