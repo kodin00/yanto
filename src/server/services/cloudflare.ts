@@ -29,6 +29,14 @@ function normalizeString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+async function runRequiredDocker(args: string[]) {
+  const result = await runCommand("docker", args);
+  if (result.exitCode !== 0) {
+    throw new Error(result.output.trim() || `Docker command failed: docker ${args.join(" ")}`);
+  }
+  return result;
+}
+
 function parseCloudflareSettings(value: string | undefined): CloudflareSettings {
   if (!value) return emptyCloudflareSettings;
   try {
@@ -155,6 +163,13 @@ export async function getTunnelForNode(nodeId: string): Promise<CloudflareTunnel
 
 export async function listTunnels(): Promise<CloudflareTunnelRow[]> {
   return db.select().from(cloudflareTunnels);
+}
+
+export async function listTunnelsWithEnabledRoutes(): Promise<CloudflareTunnelRow[]> {
+  const tunnels = await listTunnels();
+  const routes = await db.select().from(cloudflareRoutes);
+  const tunnelIdsWithEnabledRoutes = new Set(routes.filter((route) => route.enabled).map((route) => route.tunnelId));
+  return tunnels.filter((tunnel) => tunnelIdsWithEnabledRoutes.has(tunnel.id));
 }
 
 export async function ensureTunnelForNode(nodeId: string): Promise<CloudflareTunnelRow> {
@@ -284,6 +299,7 @@ export async function publishProjectRoute(projectId: string, hostname: string, s
   }
 
   await putTunnelConfig(tunnel);
+  await ensureCloudflaredRunning(tunnel);
 
   const [updated] = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.id, routeId)).limit(1);
   return updated;
@@ -309,7 +325,10 @@ export async function enableProjectRoute(routeId: string): Promise<CloudflareRou
   await db.update(cloudflareRoutes).set({ enabled: true, updatedAt: new Date() }).where(eq(cloudflareRoutes.id, routeId));
 
   const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, route.tunnelId)).limit(1);
-  if (tunnel) await putTunnelConfig(tunnel);
+  if (tunnel) {
+    await putTunnelConfig(tunnel);
+    await ensureCloudflaredRunning(tunnel);
+  }
 
   const [updated] = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.id, routeId)).limit(1);
   return updated;
@@ -341,7 +360,7 @@ export async function startCloudflared(tunnel: CloudflareTunnelRow): Promise<voi
   const envPath = path.join(config.cloudflaredDir, `${tunnel.nodeId}.env`);
   await fs.promises.writeFile(envPath, `TUNNEL_TOKEN=${tunnel.tunnelToken}\n`, { mode: 0o600 });
 
-  await runCommand("docker", [
+  await runRequiredDocker([
     "run", "-d",
     "--name", containerName,
     "--restart", "unless-stopped",
@@ -356,8 +375,8 @@ export async function startCloudflared(tunnel: CloudflareTunnelRow): Promise<voi
 
 export async function stopCloudflared(nodeId: string): Promise<void> {
   const containerName = `yanto-cloudflared-${nodeId}`;
-  await runCommand("docker", ["stop", containerName]);
-  await runCommand("docker", ["rm", containerName]);
+  await runRequiredDocker(["stop", containerName]);
+  await runRequiredDocker(["rm", containerName]);
 
   const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.nodeId, nodeId)).limit(1);
   if (tunnel) {
@@ -396,6 +415,33 @@ export async function getCloudflaredStatus(nodeId: string): Promise<{ running: b
   } catch {
     return { running: false };
   }
+}
+
+export async function ensureCloudflaredRunning(tunnel: CloudflareTunnelRow): Promise<void> {
+  const runtime = await getCloudflaredStatus(tunnel.nodeId);
+  if (!runtime.running) {
+    await startCloudflared(tunnel);
+  }
+}
+
+export async function ensureEnabledCloudflaredConnectors(): Promise<{ started: string[]; failed: { nodeId: string; error: string }[] }> {
+  const tunnels = await listTunnelsWithEnabledRoutes();
+  const started: string[] = [];
+  const failed: { nodeId: string; error: string }[] = [];
+
+  for (const tunnel of tunnels) {
+    const runtime = await getCloudflaredStatus(tunnel.nodeId);
+    if (runtime.running) continue;
+
+    try {
+      await startCloudflared(tunnel);
+      started.push(tunnel.nodeId);
+    } catch (error) {
+      failed.push({ nodeId: tunnel.nodeId, error: error instanceof Error ? error.message : "Unable to start cloudflared." });
+    }
+  }
+
+  return { started, failed };
 }
 
 export async function getTunnelHealth(tunnel: CloudflareTunnelRow): Promise<{ healthy: boolean; connectors?: number; status?: string }> {

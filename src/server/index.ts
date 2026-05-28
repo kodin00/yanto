@@ -51,6 +51,7 @@ import {
   disableProjectRoute,
   deleteProjectRoute,
   enableProjectRoute,
+  ensureEnabledCloudflaredConnectors,
   getCloudflaredStatus,
   getTunnelForNode,
   getTunnelHealth,
@@ -1131,6 +1132,15 @@ async function main() {
   await recoverInterruptedDeployments();
   app.listen(config.port, () => {
     logger.info("server started", { port: config.port });
+    void ensureEnabledCloudflaredConnectors()
+      .then((result) => {
+        if (result.started.length || result.failed.length) {
+          logger.info("cloudflared connector reconciliation completed", result);
+        }
+      })
+      .catch((error) => {
+        logger.error("cloudflared connector reconciliation failed", { error: error instanceof Error ? error.message : String(error) });
+      });
   });
 }
 
