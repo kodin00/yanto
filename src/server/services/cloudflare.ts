@@ -3,7 +3,7 @@ import path from "node:path";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { appSettings, cloudflareRoutes, cloudflareTunnels } from "../db/schema.js";
-import type { CloudflareRouteRow, CloudflareTunnelRow } from "../db/schema.js";
+import type { CloudflareRouteRow, CloudflareTunnelRow, ProjectRow } from "../db/schema.js";
 import { config } from "../config.js";
 import { createId } from "./tokens.js";
 import { runCommand } from "./commands.js";
@@ -35,6 +35,27 @@ async function runRequiredDocker(args: string[]) {
     throw new Error(result.output.trim() || `Docker command failed: docker ${args.join(" ")}`);
   }
   return result;
+}
+
+function projectComposeNetwork(project: Pick<ProjectRow, "folderName">) {
+  return `${project.folderName}_default`;
+}
+
+async function dockerNetworkExists(networkName: string) {
+  const result = await runCommand("docker", ["network", "inspect", networkName, "--format", "{{.Name}}"]);
+  return result.exitCode === 0;
+}
+
+async function cloudflaredNetworkNames(nodeId: string) {
+  const containerName = `yanto-cloudflared-${nodeId}`;
+  const result = await runCommand("docker", ["inspect", containerName, "--format", "{{json .NetworkSettings.Networks}}"]);
+  if (result.exitCode !== 0 || !result.output.trim()) return new Set<string>();
+
+  try {
+    return new Set(Object.keys(JSON.parse(result.output.trim()) as Record<string, unknown>));
+  } catch {
+    return new Set<string>();
+  }
 }
 
 function parseCloudflareSettings(value: string | undefined): CloudflareSettings {
@@ -172,6 +193,26 @@ export async function listTunnelsWithEnabledRoutes(): Promise<CloudflareTunnelRo
   return tunnels.filter((tunnel) => tunnelIdsWithEnabledRoutes.has(tunnel.id));
 }
 
+export async function connectCloudflaredToProjectNetwork(tunnel: CloudflareTunnelRow, project: Pick<ProjectRow, "folderName">): Promise<boolean> {
+  const networkName = projectComposeNetwork(project);
+  if (!(await dockerNetworkExists(networkName))) {
+    return false;
+  }
+
+  await ensureCloudflaredRunning(tunnel);
+  const currentNetworks = await cloudflaredNetworkNames(tunnel.nodeId);
+  if (currentNetworks.has(networkName)) {
+    return true;
+  }
+
+  const containerName = `yanto-cloudflared-${tunnel.nodeId}`;
+  const result = await runCommand("docker", ["network", "connect", networkName, containerName]);
+  if (result.exitCode !== 0 && !result.output.toLowerCase().includes("already exists")) {
+    throw new Error(result.output.trim() || `Unable to connect cloudflared to Docker network ${networkName}.`);
+  }
+  return true;
+}
+
 export async function ensureTunnelForNode(nodeId: string): Promise<CloudflareTunnelRow> {
   const existing = await getTunnelForNode(nodeId);
   if (existing) return existing;
@@ -300,6 +341,7 @@ export async function publishProjectRoute(projectId: string, hostname: string, s
 
   await putTunnelConfig(tunnel);
   await ensureCloudflaredRunning(tunnel);
+  await connectCloudflaredToProjectNetwork(tunnel, project);
 
   const [updated] = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.id, routeId)).limit(1);
   return updated;
@@ -325,9 +367,11 @@ export async function enableProjectRoute(routeId: string): Promise<CloudflareRou
   await db.update(cloudflareRoutes).set({ enabled: true, updatedAt: new Date() }).where(eq(cloudflareRoutes.id, routeId));
 
   const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, route.tunnelId)).limit(1);
+  const project = await getProject(route.projectId);
   if (tunnel) {
     await putTunnelConfig(tunnel);
     await ensureCloudflaredRunning(tunnel);
+    if (project) await connectCloudflaredToProjectNetwork(tunnel, project);
   }
 
   const [updated] = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.id, routeId)).limit(1);
@@ -426,16 +470,23 @@ export async function ensureCloudflaredRunning(tunnel: CloudflareTunnelRow): Pro
 
 export async function ensureEnabledCloudflaredConnectors(): Promise<{ started: string[]; failed: { nodeId: string; error: string }[] }> {
   const tunnels = await listTunnelsWithEnabledRoutes();
+  const routes = await db.select().from(cloudflareRoutes);
   const started: string[] = [];
   const failed: { nodeId: string; error: string }[] = [];
 
   for (const tunnel of tunnels) {
-    const runtime = await getCloudflaredStatus(tunnel.nodeId);
-    if (runtime.running) continue;
-
     try {
-      await startCloudflared(tunnel);
-      started.push(tunnel.nodeId);
+      const runtime = await getCloudflaredStatus(tunnel.nodeId);
+      if (!runtime.running) {
+        await startCloudflared(tunnel);
+        started.push(tunnel.nodeId);
+      }
+
+      const enabledRoutes = routes.filter((route) => route.enabled && route.tunnelId === tunnel.id);
+      for (const route of enabledRoutes) {
+        const project = await getProject(route.projectId);
+        if (project) await connectCloudflaredToProjectNetwork(tunnel, project);
+      }
     } catch (error) {
       failed.push({ nodeId: tunnel.nodeId, error: error instanceof Error ? error.message : "Unable to start cloudflared." });
     }
