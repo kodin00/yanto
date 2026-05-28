@@ -32,6 +32,7 @@ import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } 
 import type { CloudflarePublicSettings, CloudflareRoute, ContainerInfo, Deployment, DeploymentNode, Project, SystemUsage } from "../shared/types";
 import {
   bytes,
+  cloudflareServiceUrl,
   dateTime,
   durationBetween,
   endpoint,
@@ -528,6 +529,7 @@ export function App() {
       });
       setProjectEnv(emptyProjectEnvState);
       setProjectCompose(emptyProjectComposeState);
+      setCfRouteForm({ hostname: "", serviceTarget: cloudflareServiceUrl(project, containersByProjectFolder.get(project.folderName) ?? []) });
       setProjectModal(project);
       void api.projectCfRoutes(project.id).catch(() => [])
         .then((routes) => {
@@ -542,6 +544,7 @@ export function App() {
     setProjectEnv(emptyProjectEnvState);
     setProjectCompose(emptyProjectComposeState);
     setCfRoutes([]);
+    setCfRouteForm({ hostname: "", serviceTarget: "" });
     setProjectModal("new");
   }
 
@@ -717,7 +720,8 @@ export function App() {
       const payload: CloudflareRoutePayload = { hostname: cfRouteForm.hostname, serviceTarget: cfRouteForm.serviceTarget };
       const route = await api.publishCfRoute(projectId, payload);
       setCfRoutes((current) => [...current, route]);
-      setCfRouteForm({ hostname: "", serviceTarget: "" });
+      const project = projects.find((item) => item.id === projectId);
+      setCfRouteForm({ hostname: "", serviceTarget: project ? cloudflareServiceUrl(project, containersByProjectFolder.get(project.folderName) ?? []) : "" });
       setToast({ message: `Route published: https://${route.hostname}` });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to publish route.", kind: "error" });
@@ -1516,7 +1520,7 @@ export function App() {
                   <div className="cf-route-add-form">
                     <div className="project-edit-pair">
                       <TextField label="Hostname" value={cfRouteForm.hostname} onChange={(hostname) => setCfRouteForm((current) => ({ ...current, hostname }))} placeholder="app.example.com" />
-                      <TextField label="Service URL" value={cfRouteForm.serviceTarget} onChange={(serviceTarget) => setCfRouteForm((current) => ({ ...current, serviceTarget }))} placeholder="http://127.0.0.1:3000" />
+                      <TextField label="Service URL" value={cfRouteForm.serviceTarget} onChange={(serviceTarget) => setCfRouteForm((current) => ({ ...current, serviceTarget }))} placeholder="http://app-container:3000" />
                     </div>
                     <Button disabled={busy === "cf-route-publish" || !cfRouteForm.hostname || !cfRouteForm.serviceTarget} variant="secondary" onClick={() => void publishCfRoute(projectModal.id)} icon={<Plus size={15} />}>
                       Publish route

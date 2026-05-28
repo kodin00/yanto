@@ -109,6 +109,30 @@ export function isProtectedYantoContainer(container: ContainerInfo) {
   return /^yanto-(app|postgres)-\d+$/.test(container.name);
 }
 
+function internalTcpPort(ports: string) {
+  const published = ports.match(/->(\d+)\/tcp\b/);
+  if (published?.[1]) return published[1];
+
+  const internal = ports.match(/(?:^|,\s*)(\d+)\/tcp\b/);
+  return internal?.[1] ?? "";
+}
+
+export function cloudflareServiceUrl(project: Project, containers: ContainerInfo[]) {
+  const candidates = containers
+    .filter((container) => container.composeProject === project.folderName && container.state === "running" && !container.isPostgresCandidate)
+    .sort((a, b) => {
+      const aApp = a.composeService === "app" || a.name.includes("-app-");
+      const bApp = b.composeService === "app" || b.name.includes("-app-");
+      return Number(bApp) - Number(aApp);
+    });
+
+  const target = candidates[0];
+  if (!target) return "";
+
+  const port = internalTcpPort(target.ports);
+  return port ? `http://${target.name}:${port}` : "";
+}
+
 export function normalizeEnvRows(rows: ProjectEnvVariable[]) {
   return rows.map((row) => ({ key: row.key, value: row.value ?? "", masked: Boolean(row.masked) })).sort((a, b) => a.key.localeCompare(b.key));
 }
