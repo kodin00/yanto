@@ -44,7 +44,7 @@ import {
   slugifyFolderName,
   totalPages
 } from "./app-utils";
-import { Button, ConfirmDialog, CustomSelect, IconButton, LoadingInline, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast, ToggleField } from "./components/ui";
+import { Button, ConfirmDialog, CustomSelect, IconButton, LoadingInline, LoadingSkeleton, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast, ToggleField } from "./components/ui";
 import { AuditTable, BackupTable, ContainerGroups, DeploymentTable, PostgresTargetTable } from "./data-tables";
 import { api, type AuditLogEntry, type BackupRecord, type CloudflareRoutePayload, type PostgresTarget, type ProjectEnvVariable } from "./lib/api";
 
@@ -170,7 +170,8 @@ export function App() {
   const [cleanupLogs, setCleanupLogs] = useState("");
   const [cleanupLogTitle, setCleanupLogTitle] = useState("Cleanup preview");
   const [cleanupPreviewed, setCleanupPreviewed] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [viewLoading, setViewLoading] = useState<View | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
   const [projectModal, setProjectModal] = useState<Project | "new" | null>(null);
   const [projectForm, setProjectForm] = useState(emptyProject);
@@ -284,13 +285,10 @@ export function App() {
   useEffect(() => {
     api
       .me()
-      .then((result) => {
-        setUser(result.username);
-        return loadView("dashboard");
-      })
+      .then((result) => setUser(result.username))
       .catch(() => setUser(null))
-      .finally(() => setLoading(false));
-  }, [loadView]);
+      .finally(() => setAuthLoading(false));
+  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -302,7 +300,18 @@ export function App() {
 
   useEffect(() => {
     if (!user) return;
-    void loadView(view).catch(() => undefined);
+    let active = true;
+    setViewLoading(view);
+    void loadView(view)
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) {
+          setViewLoading((current) => (current === view ? null : current));
+        }
+      });
+    return () => {
+      active = false;
+    };
   }, [loadView, user, view]);
 
   useEffect(() => {
@@ -404,6 +413,7 @@ export function App() {
   const visibleBackups = useMemo(() => pageItems(backups, backupPage), [backupPage, backups]);
   const visibleAuditEntries = useMemo(() => pageItems(auditEntries, auditPage), [auditEntries, auditPage]);
   const r2Ready = Boolean(settings.r2?.enabled && settings.r2.accountId && settings.r2.bucket && settings.r2.hasAccessKeyId && settings.r2.hasSecretAccessKey);
+  const activeViewLoading = viewLoading === view;
 
   useEffect(() => {
     const routeEntries = projects.map((project) => [project.id, project.cloudflareRoutes ?? []] as const);
@@ -433,7 +443,6 @@ export function App() {
     try {
       const result = await api.login(login.username, login.password);
       setUser(result.username);
-      await loadView("dashboard");
       setToast({ message: "Signed in." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to sign in.", kind: "error" });
@@ -883,6 +892,7 @@ export function App() {
 
   async function refreshCurrentView() {
     setBusy("refresh-view");
+    setViewLoading(view);
     setToast({ message: `Refreshing ${view}...`, kind: "loading" });
     try {
       await loadView(view);
@@ -890,6 +900,7 @@ export function App() {
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to refresh view.", kind: "error" });
     } finally {
+      setViewLoading((current) => (current === view ? null : current));
       setBusy(null);
     }
   }
@@ -907,7 +918,7 @@ export function App() {
     }
   }
 
-  if (loading) {
+  if (authLoading) {
     return (
       <main className="login-shell">
         <LoadingInline label="Starting Yanto" />
@@ -973,6 +984,7 @@ export function App() {
               setToast({ message: "Signing out...", kind: "loading" });
               try {
                 await api.logout();
+                setViewLoading(null);
                 setUser(null);
                 setToast(null);
               } catch (error) {
@@ -996,7 +1008,9 @@ export function App() {
           </Button>
         </header>
 
-        {view === "dashboard" ? (
+        {view === "dashboard" ? activeViewLoading ? (
+          <DashboardSkeleton />
+        ) : (
           <section className="dashboard">
             <section className="stat-grid">
               <StatTile label="Projects" value={projects.length} detail={`${settings.hostProjectsRoot} root`} />
@@ -1046,7 +1060,9 @@ export function App() {
           </section>
         ) : null}
 
-        {view === "projects" ? (
+        {activeViewLoading && view !== "dashboard" && view !== "audit" ? <ViewSkeleton view={view} /> : null}
+
+        {view === "projects" && !activeViewLoading ? (
           <section className="panel">
             <div className="panel-head">
               <h2>Registered projects</h2>
@@ -1160,7 +1176,7 @@ export function App() {
           </section>
         ) : null}
 
-        {view === "deployments" ? (
+        {view === "deployments" && !activeViewLoading ? (
           <section className="panel">
             <div className="panel-head">
               <h2>Deployment history</h2>
@@ -1171,7 +1187,7 @@ export function App() {
           </section>
         ) : null}
 
-        {view === "backups" ? (
+        {view === "backups" && !activeViewLoading ? (
           <div className="backup-layout">
             <section className="panel">
               <div className="panel-head">
@@ -1219,14 +1235,14 @@ export function App() {
           <section className="panel">
             <div className="panel-head">
               <h2>Audit log</h2>
-              <span className="count">{auditEntries.length} events</span>
+              <span className="count">{activeViewLoading ? "Loading" : `${auditEntries.length} events`}</span>
             </div>
-            <AuditTable entries={visibleAuditEntries} />
-            <Pagination label="Audit events" page={auditPage} totalItems={auditEntries.length} onPageChange={setAuditPage} />
+            {activeViewLoading ? <LoadingSkeleton label="Loading audit events" rows={6} /> : <AuditTable entries={visibleAuditEntries} />}
+            {activeViewLoading ? null : <Pagination label="Audit events" page={auditPage} totalItems={auditEntries.length} onPageChange={setAuditPage} />}
           </section>
         ) : null}
 
-        {view === "containers" ? (
+        {view === "containers" && !activeViewLoading ? (
           <section className="panel">
             <div className="panel-head">
               <h2>Docker containers</h2>
@@ -1236,7 +1252,7 @@ export function App() {
           </section>
         ) : null}
 
-        {view === "nodes" ? (
+        {view === "nodes" && !activeViewLoading ? (
           <section className="panel">
             <div className="panel-head">
               <h2>Deployment nodes</h2>
@@ -1274,7 +1290,7 @@ export function App() {
           </section>
         ) : null}
 
-        {view === "settings" ? (
+        {view === "settings" && !activeViewLoading ? (
           <section className="settings-grid">
             <div className="settings-column">
               <section className="panel r2-settings-panel">
@@ -1794,6 +1810,44 @@ export function App() {
 
       {toast ? <Toast {...toast} onClose={() => setToast(null)} /> : null}
     </div>
+  );
+}
+
+function DashboardSkeleton() {
+  return (
+    <section className="dashboard">
+      <section className="stat-grid">
+        {Array.from({ length: 5 }).map((_, index) => (
+          <article className="stat-tile loading" key={index} aria-hidden="true">
+            <span className="skeleton-text tiny" />
+            <strong className="skeleton-text" />
+            <small className="skeleton-text short" />
+          </article>
+        ))}
+      </section>
+      <div className="dashboard-main-grid">
+        <div className="dashboard-left-column">
+          <section className="panel">
+            <LoadingSkeleton label="Loading host telemetry" rows={4} />
+          </section>
+          <section className="panel">
+            <LoadingSkeleton label="Loading recent deployments" rows={5} />
+          </section>
+        </div>
+        <section className="panel container-overview">
+          <LoadingSkeleton label="Loading containers" rows={7} />
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function ViewSkeleton({ view }: { view: View }) {
+  const label = view === "settings" ? "Loading settings" : `Loading ${view}`;
+  return (
+    <section className="panel">
+      <LoadingSkeleton label={label} rows={6} />
+    </section>
   );
 }
 

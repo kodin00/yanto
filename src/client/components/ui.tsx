@@ -246,3 +246,16 @@ export function LoadingInline({ label }: { label: string }) {
     </span>
   );
 }
+
+export function LoadingSkeleton({ label, rows = 4 }: { label: string; rows?: number }) {
+  return (
+    <div className="loading-skeleton" role="status" aria-live="polite">
+      <LoadingInline label={label} />
+      <div className="skeleton-lines" aria-hidden="true">
+        {Array.from({ length: rows }).map((_, index) => (
+          <span key={index} />
+        ))}
+      </div>
+    </div>
+  );
+}

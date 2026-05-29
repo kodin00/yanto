@@ -1849,6 +1849,41 @@ th {
   color: var(--muted);
 }
 
+.loading-skeleton {
+  display: grid;
+  gap: 14px;
+  padding: 12px 0;
+}
+
+.skeleton-lines {
+  display: grid;
+  gap: 10px;
+}
+
+.skeleton-lines span,
+.skeleton-text {
+  display: block;
+  height: 14px;
+  background: linear-gradient(90deg, var(--line-light), var(--panel-strong), var(--line-light));
+  background-size: 220% 100%;
+  border-radius: 2px;
+  animation: skeleton-pulse 1.2s ease-in-out infinite;
+}
+
+.skeleton-lines span:nth-child(2n),
+.skeleton-text.short {
+  width: 68%;
+}
+
+.skeleton-lines span:nth-child(3n),
+.skeleton-text.tiny {
+  width: 42%;
+}
+
+.stat-tile.loading strong {
+  width: 100%;
+}
+
 .spin {
   animation: spin 0.9s linear infinite;
 }
@@ -1856,6 +1891,12 @@ th {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes skeleton-pulse {
+  to {
+    background-position: -220% 0;
   }
 }
 
