@@ -1357,7 +1357,7 @@ export function App() {
                 </div>
               </dl>
             </section>
-            <section className="panel">
+            <section className="panel cleanup-settings-panel">
               <div className="panel-head">
                 <h2>Cleanup</h2>
                 <DatabaseZap size={19} />
