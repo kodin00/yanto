@@ -18,6 +18,7 @@ export type Project = {
   deployToken: string;
   sshPublicKey: string | null;
   containerCount?: number;
+  cloudflareRoutes?: CloudflareRoute[];
   createdAt: string;
   updatedAt: string;
 };

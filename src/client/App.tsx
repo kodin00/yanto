@@ -12,7 +12,6 @@ import {
   FileText,
   GitBranch,
   Cloud,
-  ExternalLink,
   HardDrive,
   KeyRound,
   List,
@@ -385,22 +384,9 @@ export function App() {
   const r2Ready = Boolean(settings.r2?.enabled && settings.r2.accountId && settings.r2.bucket && settings.r2.accessKeyId && settings.r2.hasSecretAccessKey);
 
   useEffect(() => {
-    if (!user || view !== "projects" || !settings.cf?.hasApiToken || !visibleProjects.length) return;
-    let cancelled = false;
-    void Promise.all(
-      visibleProjects.map((project) =>
-        api.projectCfRoutes(project.id)
-          .then((routes) => [project.id, routes] as const)
-          .catch(() => [project.id, []] as const)
-      )
-    ).then((entries) => {
-      if (cancelled) return;
-      setCfRoutesByProject((current) => ({ ...current, ...Object.fromEntries(entries) }));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [settings.cf?.hasApiToken, user, view, visibleProjects]);
+    const routeEntries = projects.map((project) => [project.id, project.cloudflareRoutes ?? []] as const);
+    setCfRoutesByProject((current) => ({ ...current, ...Object.fromEntries(routeEntries) }));
+  }, [projects]);
 
   useEffect(() => {
     setProjectPage((page) => Math.min(page, totalPages(projects)));
@@ -565,6 +551,7 @@ export function App() {
       setProjectEnv(emptyProjectEnvState);
       setProjectCompose(emptyProjectComposeState);
       setCfRouteForm({ hostname: "", serviceTarget: cloudflareServiceUrl(project, containersByProjectFolder.get(project.folderName) ?? []) });
+      setCfRoutes(project.cloudflareRoutes ?? []);
       setProjectModal(project);
       void api.projectCfRoutes(project.id).catch(() => [])
         .then((routes) => {
@@ -779,6 +766,7 @@ export function App() {
       const route = await api.publishCfRoute(projectId, payload);
       setCfRoutes((current) => [...current, route]);
       setCfRoutesByProject((current) => ({ ...current, [projectId]: [...(current[projectId] ?? []), route] }));
+      setProjects((current) => current.map((project) => (project.id === projectId ? { ...project, cloudflareRoutes: [...(project.cloudflareRoutes ?? []), route] } : project)));
       const project = projects.find((item) => item.id === projectId);
       setCfRouteForm({ hostname: "", serviceTarget: project ? cloudflareServiceUrl(project, containersByProjectFolder.get(project.folderName) ?? []) : "" });
       setToast({ message: `Route published: https://${route.hostname}` });
@@ -799,6 +787,7 @@ export function App() {
         ...current,
         [updated.projectId]: (current[updated.projectId] ?? []).map((r) => (r.id === updated.id ? updated : r))
       }));
+      setProjects((current) => current.map((project) => (project.id === updated.projectId ? { ...project, cloudflareRoutes: (project.cloudflareRoutes ?? []).map((r) => (r.id === updated.id ? updated : r)) } : project)));
       setToast({ message: route.enabled ? "Route disabled." : "Route enabled." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to update route.", kind: "error" });
@@ -816,6 +805,7 @@ export function App() {
       setCfRoutes((current) => current.filter((r) => r.id !== routeId));
       if (deletedRoute) {
         setCfRoutesByProject((current) => ({ ...current, [deletedRoute.projectId]: (current[deletedRoute.projectId] ?? []).filter((r) => r.id !== routeId) }));
+        setProjects((current) => current.map((project) => (project.id === deletedRoute.projectId ? { ...project, cloudflareRoutes: (project.cloudflareRoutes ?? []).filter((r) => r.id !== routeId) } : project)));
       }
       setToast({ message: "Route deleted." });
     } catch (error) {
@@ -1027,7 +1017,7 @@ export function App() {
             <div className="project-grid">
               {visibleProjects.map((project) => {
                 const projectContainers = containersByProjectFolder.get(project.folderName) ?? [];
-                const projectRoutes = cfRoutesByProject[project.id] ?? [];
+                const projectRoutes = cfRoutesByProject[project.id] ?? project.cloudflareRoutes ?? [];
                 const activeRoutes = projectRoutes.filter((route) => route.enabled);
                 const primaryRoute = activeRoutes[0] ?? projectRoutes[0];
                 const runningCount = projectContainers.filter((container) => container.state === "running").length;
@@ -1346,6 +1336,67 @@ export function App() {
                   Copy worker command
                 </Button>
               </section>
+
+              <section className="panel cleanup-settings-panel">
+                <div className="panel-head">
+                  <h2>Cleanup</h2>
+                  <DatabaseZap size={19} />
+                </div>
+                <p className="muted">Preview reclaimable Docker space first, then clean protected unused cache and resources.</p>
+                <div className="actions">
+                  <Button
+                    variant="secondary"
+                    disabled={busy === "cleanup-preview" || busy === "cleanup"}
+                    onClick={() => void previewCleanup()}
+                    icon={busy === "cleanup-preview" ? <RefreshCw size={16} className="spin" /> : <DatabaseZap size={16} />}
+                  >
+                    {busy === "cleanup-preview" ? "Checking" : "Preview cleanup"}
+                  </Button>
+                  <Button
+                    variant="danger"
+                    disabled={busy === "cleanup-preview" || busy === "cleanup"}
+                    onClick={() => {
+                      if (!cleanupPreviewed) {
+                        setToast({ message: "Run preview cleanup first, then clean cache.", kind: "error" });
+                        return;
+                      }
+                      setConfirm({
+                        title: "Run cleanup",
+                        body: "This removes unused Docker cache and unused Docker resources shown by the preview. Running containers, named volumes, and Yanto containers are protected.",
+                        label: "Clean cache",
+                        danger: true,
+                        loadingMessage: "Cleaning Docker cache...",
+                        successMessage: "Cleanup completed.",
+                        action: async () => {
+                          setBusy("cleanup");
+                          setToast({ message: "Cleaning Docker cache...", kind: "loading" });
+                          setCleanupLogTitle("Cleanup logs");
+                          setCleanupLogs("Cleaning unused Docker cache and resources...");
+                          try {
+                            const result = await api.cleanup();
+                            setCleanupPreviewed(false);
+                            setCleanupLogs(result.logs);
+                            await loadAll();
+                            setToast({ message: "Cleanup completed." });
+                          } finally {
+                            setBusy(null);
+                          }
+                        }
+                      });
+                    }}
+                    icon={busy === "cleanup" ? <RefreshCw size={16} className="spin" /> : <Trash2 size={16} />}
+                  >
+                    Clean cache
+                  </Button>
+                </div>
+                <div className="cleanup-result">
+                  <div className="cleanup-result-head">
+                    <strong>{cleanupLogTitle}</strong>
+                    <StatusBadge status={cleanupPreviewed ? "ready" : busy === "cleanup-preview" || busy === "cleanup" ? "running" : "idle"} />
+                  </div>
+                  <LogViewer logs={cleanupLogs || "No cleanup preview yet."} />
+                </div>
+              </section>
             </div>
 
             <div className="settings-column">
@@ -1358,12 +1409,8 @@ export function App() {
                   <div className="cf-help">
                     <div>
                       <strong>Where to find these values</strong>
-                      <p>Open your Cloudflare zone, then copy Account ID and Zone ID from the overview panel. Use the bottom-right "Get your API token" link to create a custom token.</p>
+                      <p>Open Cloudflare Dashboard, choose your account and zone, then copy Account ID and Zone ID from the zone overview. Create a custom API token from the API Tokens page and use the scoped permissions below.</p>
                     </div>
-                    <a href="https://dash.cloudflare.com/bfe5ce97784ae2c41b9abe7350f617f1/kodinus.com" target="_blank" rel="noopener noreferrer">
-                      Open kodinus.com
-                      <ExternalLink size={14} />
-                    </a>
                   </div>
                   <div className="cf-token-requirements">
                     <span>Token permissions</span>
@@ -1441,67 +1488,6 @@ export function App() {
                     </Button>
                   </div>
                 </form>
-              </section>
-
-              <section className="panel cleanup-settings-panel">
-                <div className="panel-head">
-                  <h2>Cleanup</h2>
-                  <DatabaseZap size={19} />
-                </div>
-                <p className="muted">Preview reclaimable Docker space first, then clean protected unused cache and resources.</p>
-                <div className="actions">
-                  <Button
-                    variant="secondary"
-                    disabled={busy === "cleanup-preview" || busy === "cleanup"}
-                    onClick={() => void previewCleanup()}
-                    icon={busy === "cleanup-preview" ? <RefreshCw size={16} className="spin" /> : <DatabaseZap size={16} />}
-                  >
-                    {busy === "cleanup-preview" ? "Checking" : "Preview cleanup"}
-                  </Button>
-                  <Button
-                    variant="danger"
-                    disabled={busy === "cleanup-preview" || busy === "cleanup"}
-                    onClick={() => {
-                      if (!cleanupPreviewed) {
-                        setToast({ message: "Run preview cleanup first, then clean cache.", kind: "error" });
-                        return;
-                      }
-                      setConfirm({
-                        title: "Run cleanup",
-                        body: "This removes unused Docker cache and unused Docker resources shown by the preview. Running containers, named volumes, and Yanto containers are protected.",
-                        label: "Clean cache",
-                        danger: true,
-                        loadingMessage: "Cleaning Docker cache...",
-                        successMessage: "Cleanup completed.",
-                        action: async () => {
-                          setBusy("cleanup");
-                          setToast({ message: "Cleaning Docker cache...", kind: "loading" });
-                          setCleanupLogTitle("Cleanup logs");
-                          setCleanupLogs("Cleaning unused Docker cache and resources...");
-                          try {
-                            const result = await api.cleanup();
-                            setCleanupPreviewed(false);
-                            setCleanupLogs(result.logs);
-                            await loadAll();
-                            setToast({ message: "Cleanup completed." });
-                          } finally {
-                            setBusy(null);
-                          }
-                        }
-                      });
-                    }}
-                    icon={busy === "cleanup" ? <RefreshCw size={16} className="spin" /> : <Trash2 size={16} />}
-                  >
-                    Clean cache
-                  </Button>
-                </div>
-                <div className="cleanup-result">
-                  <div className="cleanup-result-head">
-                    <strong>{cleanupLogTitle}</strong>
-                    <StatusBadge status={cleanupPreviewed ? "ready" : busy === "cleanup-preview" || busy === "cleanup" ? "running" : "idle"} />
-                  </div>
-                  <LogViewer logs={cleanupLogs || "No cleanup preview yet."} />
-                </div>
               </section>
 
               <section className="panel system-log-panel">

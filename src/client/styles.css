@@ -1480,7 +1480,7 @@ th {
 }
 
 .cf-help {
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
 }
 
@@ -1498,29 +1498,6 @@ th {
   max-width: 62ch;
   margin: 0;
   color: var(--muted);
-}
-
-.cf-help a {
-  min-height: 32px;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 10px;
-  color: var(--green-dark);
-  background: #fff;
-  border: 1px solid var(--line);
-  text-decoration: none;
-  font-family: var(--font-display);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.cf-help a:hover {
-  background: #edf7f1;
-  border-color: rgba(45, 111, 79, 0.34);
 }
 
 .cf-token-requirements ul {
