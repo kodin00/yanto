@@ -17,6 +17,7 @@ import {
   List,
   LogOut,
   MemoryStick,
+  Moon,
   Play,
   Plus,
   RefreshCw,
@@ -24,6 +25,7 @@ import {
   Settings,
   ShieldCheck,
   Square,
+  Sun,
   Undo2,
   Trash2
 } from "lucide-react";
@@ -56,6 +58,9 @@ type ProjectComposeState = { open: boolean; loading: boolean; available: boolean
 type RollbackModalState = { project: Project; deployments: Deployment[] };
 type ConfirmState = { title: string; body: string; label: string; danger?: boolean; loadingMessage?: string; successMessage?: string; action: () => Promise<void> };
 type CreatedProjectSecret = { projectName: string; deployUrl: string; webhookUrl: string; deployToken: string };
+type ThemeMode = "light" | "dark";
+
+const themeStorageKey = "yanto-theme";
 
 const emptyProject = {
   name: "",
@@ -115,6 +120,13 @@ const emptyProjectComposeState: ProjectComposeState = {
   message: ""
 };
 
+function getInitialTheme(): ThemeMode {
+  if (typeof window === "undefined") return "light";
+  const storedTheme = window.localStorage.getItem(themeStorageKey);
+  if (storedTheme === "light" || storedTheme === "dark") return storedTheme;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 function serializeEnvRows(rows: ProjectEnvVariable[]) {
   const content = normalizeEnvRows(rows)
     .map((row) => `${row.key}=${row.value ?? ""}`)
@@ -139,6 +151,7 @@ export function App() {
   const [user, setUser] = useState<string | null>(null);
   const [login, setLogin] = useState({ username: "admin", password: "" });
   const [view, setView] = useState<View>("dashboard");
+  const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
   const [projects, setProjects] = useState<Project[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
@@ -175,6 +188,12 @@ export function App() {
   const [deploymentPage, setDeploymentPage] = useState(1);
   const [backupPage, setBackupPage] = useState(1);
   const [auditPage, setAuditPage] = useState(1);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    window.localStorage.setItem(themeStorageKey, theme);
+  }, [theme]);
 
   const loadAll = useCallback(async () => {
     const [projectRows, deploymentRows, containerRows, nodeRows, backupRows, postgresRows, auditRows, systemRows, settingRows, logRows] = await Promise.all([
@@ -939,23 +958,32 @@ export function App() {
             </button>
           ))}
         </nav>
-        <button
-          className="logout"
-          type="button"
-          onClick={async () => {
-            setToast({ message: "Signing out...", kind: "loading" });
-            try {
-              await api.logout();
-              setUser(null);
-              setToast(null);
-            } catch (error) {
-              setToast({ message: error instanceof Error ? error.message : "Unable to sign out.", kind: "error" });
-            }
-          }}
-        >
-          <LogOut size={17} />
-          <span>Sign out</span>
-        </button>
+        <div className="sidebar-footer">
+          <button className="theme-toggle" type="button" role="switch" aria-checked={theme === "dark"} aria-label="Toggle dark mode" title="Toggle dark mode" onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}>
+            {theme === "dark" ? <Moon size={17} /> : <Sun size={17} />}
+            <span className="theme-toggle-text">Dark mode</span>
+            <span className={`toggle-switch theme-toggle-switch ${theme === "dark" ? "on" : ""}`} aria-hidden="true">
+              <span />
+            </span>
+          </button>
+          <button
+            className="logout"
+            type="button"
+            onClick={async () => {
+              setToast({ message: "Signing out...", kind: "loading" });
+              try {
+                await api.logout();
+                setUser(null);
+                setToast(null);
+              } catch (error) {
+                setToast({ message: error instanceof Error ? error.message : "Unable to sign out.", kind: "error" });
+              }
+            }}
+          >
+            <LogOut size={17} />
+            <span>Sign out</span>
+          </button>
+        </div>
       </aside>
 
       <main className="main">
