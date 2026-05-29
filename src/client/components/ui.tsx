@@ -20,9 +20,9 @@ export function Button({ children, onClick, type = "button", variant = "primary"
   );
 }
 
-export function IconButton({ label, onClick, children, variant = "ghost" }: { label: string; onClick: () => void; children: ReactNode; variant?: ButtonProps["variant"] }) {
+export function IconButton({ label, onClick, children, variant = "ghost", disabled }: { label: string; onClick: () => void; children: ReactNode; variant?: ButtonProps["variant"]; disabled?: boolean }) {
   return (
-    <button className={`icon-button ${variant}`} type="button" onClick={onClick} aria-label={label} title={label}>
+    <button className={`icon-button ${variant}`} type="button" onClick={onClick} aria-label={label} title={label} disabled={disabled}>
       {children}
     </button>
   );
@@ -220,7 +220,9 @@ export function Toast({ message, kind = "ok", onClose }: { message: string; kind
 }
 
 export function StatusBadge({ status }: { status: string }) {
-  return <span className={`status ${status.toLowerCase()}`}>{status}</span>;
+  const normalized = status.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
+  const label = status.replace(/[-_]+/g, " ");
+  return <span className={`status ${normalized}`}>{label}</span>;
 }
 
 export function LogViewer({ logs }: { logs: string }) {

@@ -12,6 +12,7 @@ import {
   FileText,
   GitBranch,
   Cloud,
+  ExternalLink,
   HardDrive,
   KeyRound,
   List,
@@ -54,6 +55,7 @@ type EnvEditMode = "pairs" | "text";
 type ProjectEnvState = { rows: ProjectEnvVariable[]; baseline: ProjectEnvVariable[]; draftKey: string; draftValue: string; content: string; mode: EnvEditMode; loading: boolean; available: boolean; opened: boolean };
 type ProjectComposeState = { open: boolean; loading: boolean; available: boolean; source: "saved" | "file" | "empty" | null; message: string };
 type RollbackModalState = { project: Project; deployments: Deployment[] };
+type ConfirmState = { title: string; body: string; label: string; danger?: boolean; loadingMessage?: string; successMessage?: string; action: () => Promise<void> };
 
 const emptyProject = {
   name: "",
@@ -164,7 +166,7 @@ export function App() {
   const [cfRoutesByProject, setCfRoutesByProject] = useState<Record<string, CloudflareRoute[]>>({});
   const [rollbackModal, setRollbackModal] = useState<RollbackModalState | null>(null);
   const [logModal, setLogModal] = useState<LogModalState | null>(null);
-  const [confirm, setConfirm] = useState<{ title: string; body: string; label: string; danger?: boolean; action: () => Promise<void> } | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [sshPrivateKey, setSshPrivateKey] = useState("");
   const [projectPage, setProjectPage] = useState(1);
@@ -372,7 +374,6 @@ export function App() {
     }
     return map;
   }, [containers]);
-  const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const nodeOptions = useMemo(() => (nodes.length ? nodes : [{ id: "node_master_local", name: "Master", role: "master", status: "online" } as DeploymentNode]).map((node) => ({
     label: `${node.name} (${node.role})`,
     value: node.id
@@ -420,6 +421,7 @@ export function App() {
   async function submitLogin(event: FormEvent) {
     event.preventDefault();
     setBusy("login");
+    setToast({ message: "Signing in...", kind: "loading" });
     try {
       const result = await api.login(login.username, login.password);
       setUser(result.username);
@@ -457,6 +459,7 @@ export function App() {
     event?.preventDefault();
     if (!projectModal) return;
     setBusy("project");
+    setToast({ message: after === "deploy" ? "Saving project and starting deployment..." : after === "restart" ? "Saving project and restarting..." : "Saving project...", kind: "loading" });
     try {
       let savedProject: Project;
       if (projectModal === "new") {
@@ -505,6 +508,7 @@ export function App() {
 
   async function deploy(project: Project) {
     setBusy(`deploy:${project.id}`);
+    setToast({ message: `Starting deployment for ${project.name}...`, kind: "loading" });
     try {
       const result = await api.deployProject(project.id);
       setToast({ message: result.reused ? "Deployment is already running." : "Deployment started." });
@@ -598,6 +602,7 @@ export function App() {
     }
 
     setProjectCompose({ ...emptyProjectComposeState, loading: true });
+    setToast({ message: "Loading compose file...", kind: "loading" });
     try {
       const compose = await api.projectComposeContent(projectModal.id);
       setProjectForm((current) => ({ ...current, composeContent: compose.content }));
@@ -609,6 +614,7 @@ export function App() {
         message: compose.exists ? `Loaded ${compose.composeFile}` : `${compose.composeFile} not found`
       });
       setProjectEditorModal("compose");
+      setToast(null);
     } catch (error) {
       setProjectCompose({ open: false, loading: false, available: false, source: null, message: "Compose could not be loaded" });
       setToast({ message: error instanceof Error ? error.message : "Unable to load compose file.", kind: "error" });
@@ -628,11 +634,13 @@ export function App() {
     }
 
     setProjectEnv({ ...emptyProjectEnvState, opened: true, loading: true });
+    setToast({ message: "Loading environment variables...", kind: "loading" });
     try {
       const [rows, envContent] = await Promise.all([api.projectEnv(projectModal.id), api.projectEnvContent(projectModal.id)]);
       const normalizedRows = normalizeEnvRows(rows);
       setProjectEnv({ rows: normalizedRows, baseline: normalizedRows, draftKey: "", draftValue: "", content: envContent.content, mode: "pairs", loading: false, available: true, opened: true });
       setProjectEditorModal("env");
+      setToast(null);
     } catch (error) {
       setProjectEnv({ ...emptyProjectEnvState, loading: false, available: false, opened: true });
       setToast({ message: error instanceof Error ? error.message : "Unable to load environment.", kind: "error" });
@@ -650,6 +658,7 @@ export function App() {
   }
 
   async function copyWorkerInstallCommand() {
+    setToast({ message: "Creating worker install command...", kind: "loading" });
     try {
       const result = await api.workerJoinToken();
       await copyText(result.command);
@@ -661,6 +670,7 @@ export function App() {
   async function dumpPostgresTarget(containerId?: string) {
     const busyKey = containerId ? `backup:${containerId}` : "backup:yanto";
     setBusy(busyKey);
+    setToast({ message: "Creating Postgres backup...", kind: "loading" });
     try {
       await api.createBackup(containerId);
       await loadAll();
@@ -708,6 +718,7 @@ export function App() {
   async function saveR2Settings(event: FormEvent) {
     event.preventDefault();
     setBusy("r2-settings");
+    setToast({ message: "Saving R2 settings...", kind: "loading" });
     try {
       const result = await api.saveR2Settings(r2Form);
       setR2Form({
@@ -731,6 +742,7 @@ export function App() {
   async function saveCfSettings(event: FormEvent) {
     event.preventDefault();
     setBusy("cf-settings");
+    setToast({ message: "Saving Cloudflare settings...", kind: "loading" });
     try {
       const result = await api.saveCloudflareSettings(cfForm);
       setCfForm({ accountId: result.cf.accountId, zoneId: result.cf.zoneId, apiToken: "" });
@@ -761,6 +773,7 @@ export function App() {
 
   async function publishCfRoute(projectId: string) {
     setBusy("cf-route-publish");
+    setToast({ message: "Publishing Cloudflare route...", kind: "loading" });
     try {
       const payload: CloudflareRoutePayload = { hostname: cfRouteForm.hostname, serviceTarget: cfRouteForm.serviceTarget };
       const route = await api.publishCfRoute(projectId, payload);
@@ -777,6 +790,8 @@ export function App() {
   }
 
   async function toggleCfRoute(route: CloudflareRoute) {
+    setBusy(`cf-route-toggle:${route.id}`);
+    setToast({ message: route.enabled ? "Disabling Cloudflare route..." : "Enabling Cloudflare route...", kind: "loading" });
     try {
       const updated = route.enabled ? await api.disableCfRoute(route.id) : await api.enableCfRoute(route.id);
       setCfRoutes((current) => current.map((r) => (r.id === updated.id ? updated : r)));
@@ -787,10 +802,14 @@ export function App() {
       setToast({ message: route.enabled ? "Route disabled." : "Route enabled." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to update route.", kind: "error" });
+    } finally {
+      setBusy(null);
     }
   }
 
   async function removeCfRoute(routeId: string) {
+    setBusy(`cf-route-delete:${routeId}`);
+    setToast({ message: "Deleting Cloudflare route...", kind: "loading" });
     try {
       await api.deleteCfRoute(routeId);
       const deletedRoute = cfRoutes.find((route) => route.id === routeId);
@@ -801,6 +820,8 @@ export function App() {
       setToast({ message: "Route deleted." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to delete route.", kind: "error" });
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -826,6 +847,7 @@ export function App() {
   async function saveSshPrivateKey(event: FormEvent) {
     event.preventDefault();
     setBusy("ssh-key");
+    setToast({ message: "Saving SSH key...", kind: "loading" });
     try {
       await api.saveSshKey(sshPrivateKey);
       setSshPrivateKey("");
@@ -833,6 +855,32 @@ export function App() {
       setToast({ message: "SSH key saved." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to save SSH key.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function refreshCurrentView() {
+    setBusy("refresh-view");
+    setToast({ message: `Refreshing ${view}...`, kind: "loading" });
+    try {
+      await loadView(view);
+      setToast({ message: "View refreshed." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to refresh view.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function refreshSystemLogs() {
+    setBusy("system-logs");
+    setToast({ message: "Refreshing system log...", kind: "loading" });
+    try {
+      setSystemLogs(await api.systemLogs());
+      setToast({ message: "System log refreshed." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to refresh system log.", kind: "error" });
     } finally {
       setBusy(null);
     }
@@ -893,8 +941,14 @@ export function App() {
           className="logout"
           type="button"
           onClick={async () => {
-            await api.logout();
-            setUser(null);
+            setToast({ message: "Signing out...", kind: "loading" });
+            try {
+              await api.logout();
+              setUser(null);
+              setToast(null);
+            } catch (error) {
+              setToast({ message: error instanceof Error ? error.message : "Unable to sign out.", kind: "error" });
+            }
           }}
         >
           <LogOut size={17} />
@@ -907,7 +961,7 @@ export function App() {
           <div>
             <h1>{view[0].toUpperCase() + view.slice(1)}</h1>
           </div>
-          <Button variant="secondary" onClick={() => void loadView(view)} icon={<RefreshCw size={16} />}>
+          <Button variant="secondary" disabled={busy === "refresh-view"} onClick={() => void refreshCurrentView()} icon={<RefreshCw size={16} className={busy === "refresh-view" ? "spin" : ""} />}>
             Refresh
           </Button>
         </header>
@@ -997,11 +1051,9 @@ export function App() {
                         <h3>{project.name}</h3>
                         <p>{project.gitUrl || "Compose file project"}</p>
                       </div>
-                      <StatusBadge status={deployments.find((deployment) => deployment.projectId === project.id)?.status ?? "ready"} />
+                      <StatusBadge status={latestDeploymentByProject.get(project.id)?.status ?? "ready"} />
                     </div>
                     <div className="project-card-meta">
-                      <span>{project.gitUrl ? project.branch : project.composeFile}</span>
-                      <span>{nodeById.get(project.targetNodeId)?.name ?? project.targetNodeId}</span>
                       <span>{runningCount}/{projectContainers.length || project.containerCount || 0} running</span>
                       {primaryRoute ? <span className={primaryRoute.enabled ? "route-live" : ""}>{primaryRoute.enabled ? "Tunnel" : "Tunnel off"}: {primaryRoute.hostname}</span> : null}
                     </div>
@@ -1040,6 +1092,8 @@ export function App() {
                             body: `Stop containers for ${project.name}?`,
                             label: "Stop",
                             danger: true,
+                            loadingMessage: `Stopping ${project.name}...`,
+                            successMessage: "Project stopped.",
                             action: async () => {
                               await api.stopProject(project.id);
                               await loadAll();
@@ -1058,6 +1112,8 @@ export function App() {
                             body: "This removes the project record and deployment logs. The project folder is left untouched.",
                             label: "Remove",
                             danger: true,
+                            loadingMessage: `Removing ${project.name}...`,
+                            successMessage: "Project removed.",
                             action: async () => {
                               await api.deleteProject(project.id);
                               await loadAll();
@@ -1118,6 +1174,8 @@ export function App() {
                     body: `Remove ${backup.filename || backup.id}? The dump file will be deleted from disk.`,
                     label: "Remove",
                     danger: true,
+                    loadingMessage: "Removing backup...",
+                    successMessage: "Backup removed.",
                     action: async () => {
                       await api.deleteBackup(backup.id);
                       await loadAll();
@@ -1297,6 +1355,25 @@ export function App() {
                   <ShieldCheck size={19} />
                 </div>
                 <form className="form-grid compact-form" onSubmit={saveCfSettings} autoComplete="off">
+                  <div className="cf-help">
+                    <div>
+                      <strong>Where to find these values</strong>
+                      <p>Open your Cloudflare zone, then copy Account ID and Zone ID from the overview panel. Use the bottom-right "Get your API token" link to create a custom token.</p>
+                    </div>
+                    <a href="https://dash.cloudflare.com/bfe5ce97784ae2c41b9abe7350f617f1/kodinus.com" target="_blank" rel="noopener noreferrer">
+                      Open kodinus.com
+                      <ExternalLink size={14} />
+                    </a>
+                  </div>
+                  <div className="cf-token-requirements">
+                    <span>Token permissions</span>
+                    <ul>
+                      <li>Account / Cloudflare Tunnel / Edit</li>
+                      <li>Account / Account Settings / Read</li>
+                      <li>Zone / Zone / Read</li>
+                      <li>Zone / DNS / Edit</li>
+                    </ul>
+                  </div>
                   <div className="settings-form-pair">
                     <TextField label="Account ID" value={cfForm.accountId} onChange={(accountId) => updateCfForm({ accountId })} />
                     <TextField label="Zone ID" value={cfForm.zoneId} onChange={(zoneId) => updateCfForm({ zoneId })} />
@@ -1394,6 +1471,8 @@ export function App() {
                         body: "This removes unused Docker cache and unused Docker resources shown by the preview. Running containers, named volumes, and Yanto containers are protected.",
                         label: "Clean cache",
                         danger: true,
+                        loadingMessage: "Cleaning Docker cache...",
+                        successMessage: "Cleanup completed.",
                         action: async () => {
                           setBusy("cleanup");
                           setToast({ message: "Cleaning Docker cache...", kind: "loading" });
@@ -1428,7 +1507,7 @@ export function App() {
               <section className="panel system-log-panel">
                 <div className="panel-head">
                   <h2>System log</h2>
-                  <Button variant="secondary" onClick={() => void api.systemLogs().then(setSystemLogs)} icon={<RefreshCw size={16} />}>
+                  <Button variant="secondary" disabled={busy === "system-logs"} onClick={() => void refreshSystemLogs()} icon={<RefreshCw size={16} className={busy === "system-logs" ? "spin" : ""} />}>
                     Refresh
                   </Button>
                 </div>
@@ -1516,10 +1595,10 @@ export function App() {
                         </div>
                         <div className="cf-route-actions">
                           <IconButton label="Copy URL" onClick={() => void copyText(`https://${route.hostname}`)}><Copy size={14} /></IconButton>
-                          <Button variant="ghost" onClick={() => void toggleCfRoute(route)}>
+                          <Button variant="ghost" disabled={busy === `cf-route-toggle:${route.id}`} onClick={() => void toggleCfRoute(route)}>
                             {route.enabled ? "Disable" : "Enable"}
                           </Button>
-                          <IconButton label="Delete route" onClick={() => void removeCfRoute(route.id)}><Trash2 size={14} /></IconButton>
+                          <IconButton label="Delete route" disabled={busy === `cf-route-delete:${route.id}`} onClick={() => void removeCfRoute(route.id)}><Trash2 size={14} /></IconButton>
                         </div>
                       </div>
                     ))}
@@ -1588,6 +1667,7 @@ export function App() {
                 key={deployment.id}
                 onClick={async () => {
                   setBusy(`rollback:${rollbackModal.project.id}`);
+                  setToast({ message: `Starting rollback for ${rollbackModal.project.name}...`, kind: "loading" });
                   try {
                     const result = await api.rollbackProject(rollbackModal.project.id, deployment.id);
                     setRollbackModal(null);
@@ -1638,10 +1718,13 @@ export function App() {
           onClose={() => setConfirm(null)}
           onConfirm={() => {
             const action = confirm.action;
+            const loadingMessage = confirm.loadingMessage ?? `${confirm.label} in progress...`;
+            const successMessage = confirm.successMessage ?? "Action completed.";
             setConfirm(null);
+            setToast({ message: loadingMessage, kind: "loading" });
             action()
               .then(() => {
-                setToast({ message: "Action completed." });
+                setToast({ message: successMessage });
               })
               .catch((error) => {
                 setToast({ message: error instanceof Error ? error.message : "Action failed.", kind: "error" });
