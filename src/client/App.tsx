@@ -20,7 +20,6 @@ import {
   Play,
   Plus,
   RefreshCw,
-  RotateCw,
   Server,
   Settings,
   ShieldCheck,
@@ -161,6 +160,8 @@ export function App() {
   const [projectForm, setProjectForm] = useState(emptyProject);
   const [projectEnv, setProjectEnv] = useState<ProjectEnvState>(emptyProjectEnvState);
   const [projectCompose, setProjectCompose] = useState<ProjectComposeState>(emptyProjectComposeState);
+  const [projectEditorModal, setProjectEditorModal] = useState<"compose" | "env" | null>(null);
+  const [cfRoutesByProject, setCfRoutesByProject] = useState<Record<string, CloudflareRoute[]>>({});
   const [rollbackModal, setRollbackModal] = useState<RollbackModalState | null>(null);
   const [logModal, setLogModal] = useState<LogModalState | null>(null);
   const [confirm, setConfirm] = useState<{ title: string; body: string; label: string; danger?: boolean; action: () => Promise<void> } | null>(null);
@@ -303,6 +304,16 @@ export function App() {
   }, [cfFormDirty, settings.cf]);
 
   useEffect(() => {
+    if (view !== "settings") return;
+    window.requestAnimationFrame(() => {
+      const activeElement = document.activeElement;
+      if (activeElement instanceof HTMLElement && activeElement.closest(".settings-grid")) {
+        activeElement.blur();
+      }
+    });
+  }, [view]);
+
+  useEffect(() => {
     if (!logModal?.streamPath) return;
     const streamPath = logModal.streamPath;
     const source = new EventSource(streamPath);
@@ -371,6 +382,24 @@ export function App() {
   const visibleBackups = useMemo(() => pageItems(backups, backupPage), [backupPage, backups]);
   const visibleAuditEntries = useMemo(() => pageItems(auditEntries, auditPage), [auditEntries, auditPage]);
   const r2Ready = Boolean(settings.r2?.enabled && settings.r2.accountId && settings.r2.bucket && settings.r2.accessKeyId && settings.r2.hasSecretAccessKey);
+
+  useEffect(() => {
+    if (!user || view !== "projects" || !settings.cf?.hasApiToken || !visibleProjects.length) return;
+    let cancelled = false;
+    void Promise.all(
+      visibleProjects.map((project) =>
+        api.projectCfRoutes(project.id)
+          .then((routes) => [project.id, routes] as const)
+          .catch(() => [project.id, []] as const)
+      )
+    ).then((entries) => {
+      if (cancelled) return;
+      setCfRoutesByProject((current) => ({ ...current, ...Object.fromEntries(entries) }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [settings.cf?.hasApiToken, user, view, visibleProjects]);
 
   useEffect(() => {
     setProjectPage((page) => Math.min(page, totalPages(projects)));
@@ -451,6 +480,7 @@ export function App() {
         await api.deployProject(savedProject.id);
       }
       setProjectModal(null);
+      setProjectEditorModal(null);
       await loadAll();
       setToast({
         message:
@@ -514,6 +544,7 @@ export function App() {
   }
 
   function openProject(project?: Project) {
+    setProjectEditorModal(null);
     if (project) {
       setProjectForm({
         name: project.name,
@@ -534,6 +565,7 @@ export function App() {
       void api.projectCfRoutes(project.id).catch(() => [])
         .then((routes) => {
           setCfRoutes(routes);
+          setCfRoutesByProject((current) => ({ ...current, [project.id]: routes }));
         })
         .catch((error) => {
           setToast({ message: error instanceof Error ? error.message : "Unable to load Cloudflare routes.", kind: "error" });
@@ -549,13 +581,19 @@ export function App() {
   }
 
   async function openComposeEditor() {
-    if (!projectModal || projectCompose.open || projectCompose.loading) return;
+    if (!projectModal || projectCompose.loading) return;
+    if (projectCompose.open) {
+      setProjectEditorModal("compose");
+      return;
+    }
     if (projectModal === "new") {
       setProjectCompose({ open: true, loading: false, available: true, source: "empty", message: "Custom compose" });
+      setProjectEditorModal("compose");
       return;
     }
     if (projectForm.composeContent.trim()) {
       setProjectCompose({ open: true, loading: false, available: true, source: "saved", message: "Saved override" });
+      setProjectEditorModal("compose");
       return;
     }
 
@@ -570,6 +608,7 @@ export function App() {
         source: compose.exists ? "file" : "empty",
         message: compose.exists ? `Loaded ${compose.composeFile}` : `${compose.composeFile} not found`
       });
+      setProjectEditorModal("compose");
     } catch (error) {
       setProjectCompose({ open: false, loading: false, available: false, source: null, message: "Compose could not be loaded" });
       setToast({ message: error instanceof Error ? error.message : "Unable to load compose file.", kind: "error" });
@@ -577,9 +616,14 @@ export function App() {
   }
 
   async function openEnvEditor() {
-    if (!projectModal || projectEnv.opened || projectEnv.loading) return;
+    if (!projectModal || projectEnv.loading) return;
+    if (projectEnv.opened) {
+      setProjectEditorModal("env");
+      return;
+    }
     if (projectModal === "new") {
       setProjectEnv({ ...emptyProjectEnvState, opened: true });
+      setProjectEditorModal("env");
       return;
     }
 
@@ -588,6 +632,7 @@ export function App() {
       const [rows, envContent] = await Promise.all([api.projectEnv(projectModal.id), api.projectEnvContent(projectModal.id)]);
       const normalizedRows = normalizeEnvRows(rows);
       setProjectEnv({ rows: normalizedRows, baseline: normalizedRows, draftKey: "", draftValue: "", content: envContent.content, mode: "pairs", loading: false, available: true, opened: true });
+      setProjectEditorModal("env");
     } catch (error) {
       setProjectEnv({ ...emptyProjectEnvState, loading: false, available: false, opened: true });
       setToast({ message: error instanceof Error ? error.message : "Unable to load environment.", kind: "error" });
@@ -720,6 +765,7 @@ export function App() {
       const payload: CloudflareRoutePayload = { hostname: cfRouteForm.hostname, serviceTarget: cfRouteForm.serviceTarget };
       const route = await api.publishCfRoute(projectId, payload);
       setCfRoutes((current) => [...current, route]);
+      setCfRoutesByProject((current) => ({ ...current, [projectId]: [...(current[projectId] ?? []), route] }));
       const project = projects.find((item) => item.id === projectId);
       setCfRouteForm({ hostname: "", serviceTarget: project ? cloudflareServiceUrl(project, containersByProjectFolder.get(project.folderName) ?? []) : "" });
       setToast({ message: `Route published: https://${route.hostname}` });
@@ -734,6 +780,10 @@ export function App() {
     try {
       const updated = route.enabled ? await api.disableCfRoute(route.id) : await api.enableCfRoute(route.id);
       setCfRoutes((current) => current.map((r) => (r.id === updated.id ? updated : r)));
+      setCfRoutesByProject((current) => ({
+        ...current,
+        [updated.projectId]: (current[updated.projectId] ?? []).map((r) => (r.id === updated.id ? updated : r))
+      }));
       setToast({ message: route.enabled ? "Route disabled." : "Route enabled." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to update route.", kind: "error" });
@@ -743,7 +793,11 @@ export function App() {
   async function removeCfRoute(routeId: string) {
     try {
       await api.deleteCfRoute(routeId);
+      const deletedRoute = cfRoutes.find((route) => route.id === routeId);
       setCfRoutes((current) => current.filter((r) => r.id !== routeId));
+      if (deletedRoute) {
+        setCfRoutesByProject((current) => ({ ...current, [deletedRoute.projectId]: (current[deletedRoute.projectId] ?? []).filter((r) => r.id !== routeId) }));
+      }
       setToast({ message: "Route deleted." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to delete route.", kind: "error" });
@@ -919,6 +973,10 @@ export function App() {
             <div className="project-grid">
               {visibleProjects.map((project) => {
                 const projectContainers = containersByProjectFolder.get(project.folderName) ?? [];
+                const projectRoutes = cfRoutesByProject[project.id] ?? [];
+                const activeRoutes = projectRoutes.filter((route) => route.enabled);
+                const primaryRoute = activeRoutes[0] ?? projectRoutes[0];
+                const runningCount = projectContainers.filter((container) => container.state === "running").length;
                 return (
                 <article
                   className="project-card"
@@ -941,71 +999,31 @@ export function App() {
                       </div>
                       <StatusBadge status={deployments.find((deployment) => deployment.projectId === project.id)?.status ?? "ready"} />
                     </div>
-                    <dl>
-                      <div>
-                        <dt>Branch</dt>
-                        <dd>{project.gitUrl ? project.branch : "-"}</dd>
-                      </div>
-                      <div>
-                        <dt>Folder</dt>
-                        <dd>{project.localPath}</dd>
-                      </div>
-                      <div>
-                        <dt>Compose</dt>
-                        <dd>{project.composeFile}</dd>
-                      </div>
-                      <div>
-                        <dt>Node</dt>
-                        <dd>{nodeById.get(project.targetNodeId)?.name ?? project.targetNodeId}</dd>
-                      </div>
-                      <div>
-                        <dt>Auto start</dt>
-                        <dd>{project.autoStart ? "On restart" : "Off"}</dd>
-                      </div>
-                      <div>
-                        <dt>Manual API</dt>
-                        <dd>{project.manualDeployEnabled ? "On" : "Off"}</dd>
-                      </div>
-                      <div>
-                        <dt>GitHub hook</dt>
-                        <dd>{project.githubWebhookEnabled ? "On" : "Off"}</dd>
-                      </div>
-                    </dl>
+                    <div className="project-card-meta">
+                      <span>{project.gitUrl ? project.branch : project.composeFile}</span>
+                      <span>{nodeById.get(project.targetNodeId)?.name ?? project.targetNodeId}</span>
+                      <span>{runningCount}/{projectContainers.length || project.containerCount || 0} running</span>
+                      {primaryRoute ? <span className={primaryRoute.enabled ? "route-live" : ""}>{primaryRoute.enabled ? "Tunnel" : "Tunnel off"}: {primaryRoute.hostname}</span> : null}
+                    </div>
+                    {primaryRoute ? (
+                      <a className="project-domain" href={`https://${primaryRoute.hostname}`} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()}>
+                        https://{primaryRoute.hostname}
+                      </a>
+                    ) : settings.cf?.hasApiToken ? (
+                      <span className="project-domain muted">No tunnel domain</span>
+                    ) : null}
                   </div>
-                  <div className="project-card-side">
-                    <div className="endpoint-box" onClick={(event) => event.stopPropagation()}>
-                      <span>{endpoint(project, settings.appBaseUrl)}</span>
-                      <button type="button" onClick={() => void copyText(endpoint(project, settings.appBaseUrl))} title="Copy endpoint" aria-label="Copy endpoint">
-                        <Copy size={15} />
-                      </button>
-                    </div>
-                    <div className="endpoint-box" onClick={(event) => event.stopPropagation()}>
-                      <span>{githubWebhookEndpoint(project, settings.appBaseUrl)}</span>
-                      <button type="button" onClick={() => void copyText(githubWebhookEndpoint(project, settings.appBaseUrl))} title="Copy GitHub webhook URL" aria-label="Copy GitHub webhook URL">
-                        <Copy size={15} />
-                      </button>
-                    </div>
-                    <div className="token-box" onClick={(event) => event.stopPropagation()}>
-                      <span>Secret {project.deployToken}</span>
-                      <button type="button" onClick={() => void copyText(project.deployToken)} title="Copy secret" aria-label="Copy secret">
-                        <Copy size={15} />
-                      </button>
-                    </div>
-                    <div className="project-container-list">
-                      <span>Containers</span>
-                      {projectContainers.length ? (
-                        <div>
-                          {projectContainers.slice(0, 4).map((container) => (
-                            <span className="project-container-row" key={container.id}>
-                              <strong>{container.name}</strong>
-                              <StatusBadge status={container.state} />
-                            </span>
-                          ))}
-                          {projectContainers.length > 4 ? <small>+{projectContainers.length - 4} more</small> : null}
-                        </div>
-                      ) : (
-                        <small>No containers</small>
-                      )}
+                  <div className="project-card-side" onClick={(event) => event.stopPropagation()}>
+                    <div className="project-copy-actions">
+                      <Button variant="ghost" onClick={() => void copyText(endpoint(project, settings.appBaseUrl))} icon={<Copy size={14} />}>
+                        Deploy URL
+                      </Button>
+                      <Button variant="ghost" onClick={() => void copyText(githubWebhookEndpoint(project, settings.appBaseUrl))} icon={<Copy size={14} />}>
+                        Webhook
+                      </Button>
+                      <Button variant="ghost" onClick={() => void copyText(project.deployToken)} icon={<Copy size={14} />}>
+                        Token
+                      </Button>
                     </div>
                     <div className="actions" onClick={(event) => event.stopPropagation()}>
                       <Button variant="secondary" onClick={() => openRollback(project)} icon={<Undo2 size={15} />}>
@@ -1213,7 +1231,7 @@ export function App() {
                 <h2>Cloudflare R2</h2>
                 <Cloud size={19} />
               </div>
-              <form className="form-grid compact-form" onSubmit={saveR2Settings}>
+              <form className="form-grid compact-form" onSubmit={saveR2Settings} autoComplete="off">
                 <ToggleField
                   label="Upload enabled"
                   value={r2Form.enabled}
@@ -1221,20 +1239,21 @@ export function App() {
                   description={settings.r2?.hasSecretAccessKey ? "Secret key saved" : "Add an R2 secret key before uploading"}
                 />
                 <div className="settings-form-pair">
-                  <TextField label="Account ID" value={r2Form.accountId} onChange={(accountId) => updateR2Form({ accountId })} />
-                  <TextField label="Bucket" value={r2Form.bucket} onChange={(bucket) => updateR2Form({ bucket })} />
+                  <TextField label="Account ID" value={r2Form.accountId} onChange={(accountId) => updateR2Form({ accountId })} autoComplete="off" />
+                  <TextField label="Bucket" value={r2Form.bucket} onChange={(bucket) => updateR2Form({ bucket })} autoComplete="off" />
                 </div>
                 <div className="settings-form-pair">
-                  <TextField label="Access key ID" value={r2Form.accessKeyId} onChange={(accessKeyId) => updateR2Form({ accessKeyId })} />
+                  <TextField label="Access key ID" value={r2Form.accessKeyId} onChange={(accessKeyId) => updateR2Form({ accessKeyId })} autoComplete="off" />
                   <TextField
                     label="Secret access key"
                     type="password"
                     value={r2Form.secretAccessKey}
                     onChange={(secretAccessKey) => updateR2Form({ secretAccessKey })}
                     placeholder={settings.r2?.hasSecretAccessKey ? "Saved; leave blank to keep" : ""}
+                    autoComplete="new-password"
                   />
                 </div>
-                <TextField label="Object prefix" value={r2Form.prefix} onChange={(prefix) => updateR2Form({ prefix })} />
+                <TextField label="Object prefix" value={r2Form.prefix} onChange={(prefix) => updateR2Form({ prefix })} autoComplete="off" />
                 <div className="actions">
                   <Button type="submit" disabled={busy === "r2-settings"} icon={<Cloud size={16} />}>
                     Save R2
@@ -1247,7 +1266,7 @@ export function App() {
                 <h2>Cloudflare Tunnel</h2>
                 <ShieldCheck size={19} />
               </div>
-              <form className="form-grid compact-form" onSubmit={saveCfSettings}>
+              <form className="form-grid compact-form" onSubmit={saveCfSettings} autoComplete="off">
                 <div className="settings-form-pair">
                   <TextField label="Account ID" value={cfForm.accountId} onChange={(accountId) => updateCfForm({ accountId })} />
                   <TextField label="Zone ID" value={cfForm.zoneId} onChange={(zoneId) => updateCfForm({ zoneId })} />
@@ -1258,6 +1277,7 @@ export function App() {
                   value={cfForm.apiToken}
                   onChange={(apiToken) => updateCfForm({ apiToken })}
                   placeholder={settings.cf?.hasApiToken ? "Saved; leave blank to keep" : ""}
+                  autoComplete="new-password"
                 />
                 <div className={`credential-status ${settings.cf?.hasApiToken ? "saved" : ""}`}>
                   <ShieldCheck size={15} />
@@ -1409,7 +1429,10 @@ export function App() {
       </main>
 
       {projectModal ? (
-        <Modal title={projectModal === "new" ? "Add project" : "Edit project"} size="wide" onClose={() => setProjectModal(null)}>
+        <Modal title={projectModal === "new" ? "Add project" : "Edit project"} size="wide" closeOnEscape={!projectEditorModal} onClose={() => {
+          setProjectModal(null);
+          setProjectEditorModal(null);
+        }}>
           <form className="project-edit-form" onSubmit={saveProject}>
             <div className="project-edit-layout">
               <section className="project-edit-section">
@@ -1442,102 +1465,67 @@ export function App() {
                 />
               </section>
 
-              <section className="project-edit-section compose-section">
-                <div className="section-kicker">Compose</div>
-                {projectCompose.open ? (
-                  <>
-                    <div className="editor-status-line">
-                      <StatusBadge status={projectCompose.source ?? "open"} />
-                      <span>{projectCompose.message}</span>
-                    </div>
-                    <TextAreaField
-                      label="Compose editor"
-                      value={projectForm.composeContent}
-                      onChange={(composeContent) => setProjectForm((current) => ({ ...current, composeContent }))}
-                      placeholder={"Optional. Paste docker-compose.yml content here for compose-only projects or to override the file during deploy."}
-                    />
-                  </>
-                ) : (
-                  <div className="lazy-editor-card">
-                    {projectCompose.loading ? <LoadingInline label="Loading compose" /> : <p className="muted">{projectModal !== "new" && projectForm.composeContent.trim() ? "Saved override available." : "Compose editor is closed."}</p>}
-                    {projectCompose.available ? null : <p className="muted">{projectCompose.message}</p>}
-                    <Button variant="secondary" disabled={projectCompose.loading} onClick={() => void openComposeEditor()} icon={projectCompose.loading ? <RefreshCw size={15} className="spin" /> : <FileText size={15} />}>
-                      {projectCompose.loading ? "Opening" : "Open compose editor"}
-                    </Button>
-                  </div>
-                )}
-              </section>
-
-              <section className="project-edit-section env-section">
-                <div className="section-kicker">Environment</div>
-                {!projectEnv.opened ? (
-                  <div className="lazy-editor-card">
-                    <p className="muted">Environment editor is closed.</p>
-                    <Button variant="secondary" onClick={() => void openEnvEditor()} icon={<List size={15} />}>
-                      Open env editor
-                    </Button>
-                  </div>
-                ) : projectEnv.loading ? (
-                  <LoadingInline label="Loading environment" />
-                ) : projectEnv.available ? (
-                  <EnvEditor modal={projectEnv} onChange={setProjectEnv} />
-                ) : (
-                  <p className="muted">Environment could not be loaded. Project fields can still be saved.</p>
-                )}
+              <section className="project-edit-section project-edit-tools">
+                <div className="section-kicker">Editors</div>
+                <button className="editor-launch-row" type="button" onClick={() => void openComposeEditor()} disabled={projectCompose.loading}>
+                  <FileText size={16} />
+                  <span>
+                    <strong>Compose</strong>
+                    <small>{projectCompose.loading ? "Opening..." : projectForm.composeContent.trim() ? "Override configured" : projectCompose.message || "Default compose file"}</small>
+                  </span>
+                  <StatusBadge status={projectForm.composeContent.trim() ? "custom" : "default"} />
+                </button>
+                <button className="editor-launch-row" type="button" onClick={() => void openEnvEditor()} disabled={projectEnv.loading}>
+                  <List size={16} />
+                  <span>
+                    <strong>Environment</strong>
+                    <small>{projectEnv.loading ? "Opening..." : projectEnv.opened ? `${projectEnvPayload().length} variables` : "Open only when needed"}</small>
+                  </span>
+                  <StatusBadge status={projectEnv.opened ? "open" : "closed"} />
+                </button>
               </section>
 
               {projectModal !== "new" && settings.cf?.hasApiToken ? (
                 <section className="project-edit-section cf-routes-section">
-                  <div className="section-kicker">Cloudflare Tunnel</div>
-                  {cfRoutes.length > 0 ? (
-                    <div className="cf-route-list">
-                      {cfRoutes.map((route) => (
-                        <div key={route.id} className="cf-route-row">
-                          <div className="cf-route-info">
-                            <span className="cf-route-hostname">
-                              <a href={`https://${route.hostname}`} target="_blank" rel="noopener noreferrer">
-                                https://{route.hostname}
-                              </a>
-                              <IconButton label="Copy URL" onClick={() => void copyText(`https://${route.hostname}`)}><Copy size={14} /></IconButton>
-                            </span>
-                            <span className="cf-route-service">{route.serviceTarget}</span>
-                            <StatusBadge status={route.enabled ? "enabled" : "disabled"} />
-                          </div>
-                          <div className="cf-route-actions">
-                            <Button variant="ghost" onClick={() => void toggleCfRoute(route)}>
-                              {route.enabled ? "Disable" : "Enable"}
-                            </Button>
-                            <Button variant="ghost" onClick={() => void removeCfRoute(route.id)} icon={<Trash2 size={14} />}>
-                              Delete
-                            </Button>
-                          </div>
+                  <div className="cf-route-head">
+                    <div>
+                      <div className="section-kicker">Cloudflare Tunnel</div>
+                      <p className="muted">{cfRouteForm.serviceTarget || "Start the project containers to detect a target service."}</p>
+                    </div>
+                    <StatusBadge status={cfRoutes.some((route) => route.enabled) ? "connected" : "idle"} />
+                  </div>
+                  <div className="cf-route-list compact">
+                    {cfRoutes.map((route) => (
+                      <div key={route.id} className="cf-route-row">
+                        <div className="cf-route-info">
+                          <a className="cf-route-hostname" href={`https://${route.hostname}`} target="_blank" rel="noopener noreferrer">
+                            https://{route.hostname}
+                          </a>
+                          <StatusBadge status={route.enabled ? "enabled" : "disabled"} />
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="muted">No public hostnames configured for this project.</p>
-                  )}
-                  <div className="cf-route-add-form">
-                    <div className="project-edit-pair">
+                        <div className="cf-route-actions">
+                          <IconButton label="Copy URL" onClick={() => void copyText(`https://${route.hostname}`)}><Copy size={14} /></IconButton>
+                          <Button variant="ghost" onClick={() => void toggleCfRoute(route)}>
+                            {route.enabled ? "Disable" : "Enable"}
+                          </Button>
+                          <IconButton label="Delete route" onClick={() => void removeCfRoute(route.id)}><Trash2 size={14} /></IconButton>
+                        </div>
+                      </div>
+                    ))}
+                    {!cfRoutes.length ? <p className="muted">No public hostnames configured.</p> : null}
+                  </div>
+                  <div className="cf-route-add-form compact">
+                    <div className="cf-route-add-row">
                       <TextField label="Hostname" value={cfRouteForm.hostname} onChange={(hostname) => setCfRouteForm((current) => ({ ...current, hostname }))} placeholder="app.example.com" />
-                      <TextField label="Service URL" value={cfRouteForm.serviceTarget} onChange={(serviceTarget) => setCfRouteForm((current) => ({ ...current, serviceTarget }))} placeholder="http://app-container:3000" />
+                      <Button disabled={busy === "cf-route-publish" || !cfRouteForm.hostname || !cfRouteForm.serviceTarget} variant="secondary" onClick={() => void publishCfRoute(projectModal.id)} icon={<Plus size={15} />}>
+                        Publish
+                      </Button>
                     </div>
-                    <Button disabled={busy === "cf-route-publish" || !cfRouteForm.hostname || !cfRouteForm.serviceTarget} variant="secondary" onClick={() => void publishCfRoute(projectModal.id)} icon={<Plus size={15} />}>
-                      Publish route
-                    </Button>
                   </div>
                 </section>
               ) : null}
             </div>
             <div className="actions project-edit-actions">
-              <Button variant="secondary" onClick={() => setProjectModal(null)}>
-                Cancel
-              </Button>
-              {projectModal !== "new" ? (
-                <Button type="button" variant="secondary" disabled={busy === "project" || projectEnv.loading} onClick={() => void persistProjectDetails(undefined, "restart")} icon={<RotateCw size={15} />}>
-                  Save & Restart
-                </Button>
-              ) : null}
               <Button type="button" variant="secondary" disabled={busy === "project" || projectEnv.loading || !projectForm.manualDeployEnabled} onClick={() => void persistProjectDetails(undefined, "deploy")} icon={<Play size={15} />}>
                 Save & Deploy
               </Button>
@@ -1546,6 +1534,37 @@ export function App() {
               </Button>
             </div>
           </form>
+        </Modal>
+      ) : null}
+
+      {projectModal && projectEditorModal === "compose" ? (
+        <Modal title="Compose editor" size="wide" onClose={() => setProjectEditorModal(null)}>
+          <div className="editor-modal-body compose-section">
+            <div className="editor-status-line">
+              <StatusBadge status={projectCompose.source ?? "open"} />
+              <span>{projectCompose.message || "Compose override"}</span>
+            </div>
+            <TextAreaField
+              label="Compose content"
+              value={projectForm.composeContent}
+              onChange={(composeContent) => setProjectForm((current) => ({ ...current, composeContent }))}
+              placeholder={"Optional. Paste docker-compose.yml content here for compose-only projects or to override the file during deploy."}
+            />
+          </div>
+        </Modal>
+      ) : null}
+
+      {projectModal && projectEditorModal === "env" ? (
+        <Modal title="Environment editor" size="wide" onClose={() => setProjectEditorModal(null)}>
+          <div className="editor-modal-body env-section">
+            {projectEnv.loading ? (
+              <LoadingInline label="Loading environment" />
+            ) : projectEnv.available ? (
+              <EnvEditor modal={projectEnv} onChange={setProjectEnv} />
+            ) : (
+              <p className="muted">Environment could not be loaded. Project fields can still be saved.</p>
+            )}
+          </div>
         </Modal>
       ) : null}
 

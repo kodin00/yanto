@@ -34,7 +34,8 @@ export function TextField({
   onChange,
   placeholder,
   type = "text",
-  required
+  required,
+  autoComplete
 }: {
   label: string;
   value: string;
@@ -42,11 +43,12 @@ export function TextField({
   placeholder?: string;
   type?: "text" | "password";
   required?: boolean;
+  autoComplete?: string;
 }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} type={type} required={required} />
+      <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} type={type} required={required} autoComplete={autoComplete} />
     </label>
   );
 }
@@ -139,16 +141,17 @@ export function CustomSelect<T extends string>({
   );
 }
 
-export function Modal({ title, children, onClose, size = "default" }: { title: string; children: ReactNode; onClose: () => void; size?: "default" | "wide" }) {
+export function Modal({ title, children, onClose, size = "default", closeOnEscape = true }: { title: string; children: ReactNode; onClose: () => void; size?: "default" | "wide"; closeOnEscape?: boolean }) {
   useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
+    if (!closeOnEscape) return;
+    const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         onClose();
       }
     };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [closeOnEscape, onClose]);
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
