@@ -10,14 +10,18 @@ type SessionPayload = {
   username: string;
 };
 
+let resolvedPasswordHash: Promise<string> | null = null;
+
 export async function verifyAdminPassword(username: string, password: string) {
   if (username !== config.adminUsername) {
     return false;
   }
-  if (config.adminPassword.startsWith("$2")) {
-    return bcrypt.compare(password, config.adminPassword);
+  if (resolvedPasswordHash === null) {
+    resolvedPasswordHash = config.adminPassword.startsWith("$2")
+      ? Promise.resolve(config.adminPassword)
+      : bcrypt.hash(config.adminPassword, 12);
   }
-  return password === config.adminPassword;
+  return bcrypt.compare(password, await resolvedPasswordHash);
 }
 
 export function setSessionCookie(res: Response) {

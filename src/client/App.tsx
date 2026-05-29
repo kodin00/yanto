@@ -28,7 +28,7 @@ import {
   Trash2
 } from "lucide-react";
 import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import type { CloudflarePublicSettings, CloudflareRoute, ContainerInfo, Deployment, DeploymentNode, Project, SystemUsage } from "../shared/types";
+import type { CloudflarePublicSettings, CloudflareRoute, ContainerInfo, Deployment, DeploymentNode, Project, ProjectWithDeployToken, R2PublicSettings, SystemUsage } from "../shared/types";
 import {
   bytes,
   cloudflareServiceUrl,
@@ -55,6 +55,7 @@ type ProjectEnvState = { rows: ProjectEnvVariable[]; baseline: ProjectEnvVariabl
 type ProjectComposeState = { open: boolean; loading: boolean; available: boolean; source: "saved" | "file" | "empty" | null; message: string };
 type RollbackModalState = { project: Project; deployments: Deployment[] };
 type ConfirmState = { title: string; body: string; label: string; danger?: boolean; loadingMessage?: string; successMessage?: string; action: () => Promise<void> };
+type CreatedProjectSecret = { projectName: string; deployUrl: string; webhookUrl: string; deployToken: string };
 
 const emptyProject = {
   name: "",
@@ -78,11 +79,12 @@ const emptySshKeySettings = {
   publicKey: null as string | null
 };
 
-const emptyR2Settings = {
+const emptyR2Settings: R2PublicSettings = {
   enabled: false,
   accountId: "",
   bucket: "",
-  accessKeyId: "",
+  maskedAccessKeyId: "",
+  hasAccessKeyId: false,
   hasSecretAccessKey: false,
   prefix: "postgres-dumps"
 };
@@ -166,6 +168,7 @@ export function App() {
   const [rollbackModal, setRollbackModal] = useState<RollbackModalState | null>(null);
   const [logModal, setLogModal] = useState<LogModalState | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const [createdProjectSecret, setCreatedProjectSecret] = useState<CreatedProjectSecret | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [sshPrivateKey, setSshPrivateKey] = useState("");
   const [projectPage, setProjectPage] = useState(1);
@@ -289,7 +292,7 @@ export function App() {
       enabled: settings.r2?.enabled ?? false,
       accountId: settings.r2?.accountId ?? "",
       bucket: settings.r2?.bucket ?? "",
-      accessKeyId: settings.r2?.accessKeyId ?? "",
+      accessKeyId: "",
       secretAccessKey: "",
       prefix: settings.r2?.prefix ?? "postgres-dumps"
     });
@@ -381,7 +384,7 @@ export function App() {
   const visibleDeployments = useMemo(() => pageItems(deployments, deploymentPage), [deploymentPage, deployments]);
   const visibleBackups = useMemo(() => pageItems(backups, backupPage), [backupPage, backups]);
   const visibleAuditEntries = useMemo(() => pageItems(auditEntries, auditPage), [auditEntries, auditPage]);
-  const r2Ready = Boolean(settings.r2?.enabled && settings.r2.accountId && settings.r2.bucket && settings.r2.accessKeyId && settings.r2.hasSecretAccessKey);
+  const r2Ready = Boolean(settings.r2?.enabled && settings.r2.accountId && settings.r2.bucket && settings.r2.hasAccessKeyId && settings.r2.hasSecretAccessKey);
 
   useEffect(() => {
     const routeEntries = projects.map((project) => [project.id, project.cloudflareRoutes ?? []] as const);
@@ -447,7 +450,8 @@ export function App() {
     setBusy("project");
     setToast({ message: after === "deploy" ? "Saving project and starting deployment..." : after === "restart" ? "Saving project and restarting..." : "Saving project...", kind: "loading" });
     try {
-      let savedProject: Project;
+      const creatingProject = projectModal === "new";
+      let savedProject: Project | ProjectWithDeployToken;
       if (projectModal === "new") {
         savedProject = await api.createProject(projectForm);
       } else {
@@ -471,14 +475,22 @@ export function App() {
       setProjectModal(null);
       setProjectEditorModal(null);
       await loadAll();
+      if (creatingProject && "deployToken" in savedProject) {
+        setCreatedProjectSecret({
+          projectName: savedProject.name,
+          deployUrl: endpoint(savedProject, settings.appBaseUrl),
+          webhookUrl: githubWebhookEndpoint(savedProject, settings.appBaseUrl),
+          deployToken: savedProject.deployToken
+        });
+      }
       setToast({
         message:
           after === "restart"
             ? "Project saved and restart started."
             : after === "deploy"
               ? "Project saved and deployment started."
-              : projectModal === "new"
-                ? "Project registered."
+              : creatingProject
+                ? "Project registered. Save the one-time deploy token."
                 : "Project updated."
       });
     } catch (error) {
@@ -712,7 +724,7 @@ export function App() {
         enabled: result.r2.enabled,
         accountId: result.r2.accountId,
         bucket: result.r2.bucket,
-        accessKeyId: result.r2.accessKeyId,
+        accessKeyId: "",
         secretAccessKey: "",
         prefix: result.r2.prefix
       });
@@ -1063,9 +1075,6 @@ export function App() {
                       <Button variant="ghost" onClick={() => void copyText(githubWebhookEndpoint(project, settings.appBaseUrl))} icon={<Copy size={14} />}>
                         Webhook
                       </Button>
-                      <Button variant="ghost" onClick={() => void copyText(project.deployToken)} icon={<Copy size={14} />}>
-                        Token
-                      </Button>
                     </div>
                     <div className="actions" onClick={(event) => event.stopPropagation()}>
                       <Button variant="secondary" onClick={() => openRollback(project)} icon={<Undo2 size={15} />}>
@@ -1257,7 +1266,13 @@ export function App() {
                     <TextField label="Bucket" value={r2Form.bucket} onChange={(bucket) => updateR2Form({ bucket })} autoComplete="off" />
                   </div>
                   <div className="settings-form-pair">
-                    <TextField label="Access key ID" value={r2Form.accessKeyId} onChange={(accessKeyId) => updateR2Form({ accessKeyId })} autoComplete="off" />
+                    <TextField
+                      label="Access key ID"
+                      value={r2Form.accessKeyId}
+                      onChange={(accessKeyId) => updateR2Form({ accessKeyId })}
+                      placeholder={settings.r2?.maskedAccessKeyId ? `${settings.r2.maskedAccessKeyId}; leave blank to keep` : ""}
+                      autoComplete="off"
+                    />
                     <TextField
                       label="Secret access key"
                       type="password"
@@ -1692,6 +1707,36 @@ export function App() {
             </div>
           ) : null}
           <LogViewer logs={logModal.logs} />
+        </Modal>
+      ) : null}
+
+      {createdProjectSecret ? (
+        <Modal title={`${createdProjectSecret.projectName} deploy token`} onClose={() => setCreatedProjectSecret(null)}>
+          <div className="form-grid compact-form">
+            <label className="field">
+              <span>Deploy URL</span>
+              <input value={createdProjectSecret.deployUrl} readOnly onFocus={(event) => event.currentTarget.select()} />
+            </label>
+            <label className="field">
+              <span>GitHub webhook URL</span>
+              <input value={createdProjectSecret.webhookUrl} readOnly onFocus={(event) => event.currentTarget.select()} />
+            </label>
+            <label className="field">
+              <span>Deploy token</span>
+              <input value={createdProjectSecret.deployToken} readOnly onFocus={(event) => event.currentTarget.select()} />
+            </label>
+            <div className="actions">
+              <Button variant="secondary" onClick={() => void copyText(createdProjectSecret.deployUrl)} icon={<Copy size={15} />}>
+                Deploy URL
+              </Button>
+              <Button variant="secondary" onClick={() => void copyText(createdProjectSecret.webhookUrl)} icon={<Copy size={15} />}>
+                Webhook URL
+              </Button>
+              <Button onClick={() => void copyText(createdProjectSecret.deployToken)} icon={<Copy size={15} />}>
+                Token
+              </Button>
+            </div>
+          </div>
         </Modal>
       ) : null}
 

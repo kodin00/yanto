@@ -1,4 +1,4 @@
-import type { AuditLog, Backup, CloudflarePublicSettings, CloudflareRoute, CloudflareTunnel, CloudflareTunnelStatus, ContainerInfo, Deployment, DeploymentNode, PostgresBackupTarget, Project, R2PublicSettings, SystemUsage } from "../../shared/types";
+import type { AuditLog, Backup, CloudflarePublicSettings, CloudflareRoute, CloudflareTunnel, CloudflareTunnelStatus, ContainerInfo, Deployment, DeploymentNode, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, SystemUsage } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -19,7 +19,10 @@ export type ProjectComposeContent = {
   exists: boolean;
 };
 
-export type R2SettingsPayload = Omit<R2PublicSettings, "hasSecretAccessKey"> & { secretAccessKey?: string };
+export type R2SettingsPayload = Omit<R2PublicSettings, "maskedAccessKeyId" | "hasAccessKeyId" | "hasSecretAccessKey"> & {
+  accessKeyId?: string;
+  secretAccessKey?: string;
+};
 
 export type CloudflareSettingsPayload = {
   accountId?: string;
@@ -33,11 +36,18 @@ export type CloudflareRoutePayload = {
   nodeId?: string;
 };
 
+function getCsrfToken(): string {
+  const match = document.cookie.match(/(?:^|;\s*)yanto_csrf=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const csrfToken = getCsrfToken();
   const response = await fetch(path, {
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
+      ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
       ...options.headers
     },
     ...options
@@ -92,7 +102,7 @@ export const api = {
       composeContent?: string | null;
     }
   ) =>
-    request<Project>("/api/projects", {
+    request<ProjectWithDeployToken>("/api/projects", {
       method: "POST",
       body: JSON.stringify(payload)
     }),
@@ -142,12 +152,14 @@ export const api = {
       body: JSON.stringify(containerId ? { containerId } : {})
     }),
   restorePostgresTarget: async (containerId: string, file: File) => {
+    const csrfToken = getCsrfToken();
     const response = await fetch(`/api/backups/postgres-targets/${containerId}/restore`, {
       method: "POST",
       credentials: "include",
       headers: {
         "Content-Type": file.type || "application/octet-stream",
-        "X-Filename": encodeURIComponent(file.name)
+        "X-Filename": encodeURIComponent(file.name),
+        ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {})
       },
       body: file
     });

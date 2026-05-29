@@ -8,6 +8,7 @@ import { config } from "../config.js";
 import { createId } from "./tokens.js";
 import { runCommand } from "./commands.js";
 import { getProject } from "./projects.js";
+import { encrypt, decrypt, isEncrypted } from "./crypto.js";
 
 // --- Cloudflare Settings (app_settings key: "cloudflare.tunnel") ---
 
@@ -56,6 +57,11 @@ async function cloudflaredNetworkNames(nodeId: string) {
   } catch {
     return new Set<string>();
   }
+}
+
+function decryptTunnelRow(row: CloudflareTunnelRow): CloudflareTunnelRow {
+  if (!row.tunnelToken || !isEncrypted(row.tunnelToken)) return row;
+  return { ...row, tunnelToken: decrypt(row.tunnelToken) };
 }
 
 function parseCloudflareSettings(value: string | undefined): CloudflareSettings {
@@ -179,11 +185,12 @@ export async function validateCloudflareSettings(input: Partial<CloudflareSettin
 
 export async function getTunnelForNode(nodeId: string): Promise<CloudflareTunnelRow | undefined> {
   const [row] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.nodeId, nodeId)).limit(1);
-  return row;
+  return row ? decryptTunnelRow(row) : undefined;
 }
 
 export async function listTunnels(): Promise<CloudflareTunnelRow[]> {
-  return db.select().from(cloudflareTunnels);
+  const rows = await db.select().from(cloudflareTunnels);
+  return rows.map(decryptTunnelRow);
 }
 
 export async function listTunnelsWithEnabledRoutes(): Promise<CloudflareTunnelRow[]> {
@@ -242,12 +249,12 @@ export async function ensureTunnelForNode(nodeId: string): Promise<CloudflareTun
         cfAccountId: settings.accountId,
         cfTunnelId: result.id,
         tunnelName: result.name,
-        tunnelToken: token,
+        tunnelToken: encrypt(token),
         status: "active"
       })
       .returning();
 
-    return row;
+    return decryptTunnelRow(row);
   } catch (error) {
     // Unique constraint violation — another concurrent call created the tunnel
     const concurrent = await getTunnelForNode(nodeId);
@@ -354,7 +361,7 @@ export async function disableProjectRoute(routeId: string): Promise<CloudflareRo
   await db.update(cloudflareRoutes).set({ enabled: false, updatedAt: new Date() }).where(eq(cloudflareRoutes.id, routeId));
 
   const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, route.tunnelId)).limit(1);
-  if (tunnel) await putTunnelConfig(tunnel);
+  if (tunnel) await putTunnelConfig(decryptTunnelRow(tunnel));
 
   const [updated] = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.id, routeId)).limit(1);
   return updated;
@@ -369,9 +376,10 @@ export async function enableProjectRoute(routeId: string): Promise<CloudflareRou
   const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, route.tunnelId)).limit(1);
   const project = await getProject(route.projectId);
   if (tunnel) {
-    await putTunnelConfig(tunnel);
-    await ensureCloudflaredRunning(tunnel);
-    if (project) await connectCloudflaredToProjectNetwork(tunnel, project);
+    const decrypted = decryptTunnelRow(tunnel);
+    await putTunnelConfig(decrypted);
+    await ensureCloudflaredRunning(decrypted);
+    if (project) await connectCloudflaredToProjectNetwork(decrypted, project);
   }
 
   const [updated] = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.id, routeId)).limit(1);
@@ -385,7 +393,7 @@ export async function deleteProjectRoute(routeId: string): Promise<void> {
   await db.delete(cloudflareRoutes).where(eq(cloudflareRoutes.id, routeId));
 
   const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, route.tunnelId)).limit(1);
-  if (tunnel) await putTunnelConfig(tunnel);
+  if (tunnel) await putTunnelConfig(decryptTunnelRow(tunnel));
 }
 
 // --- Runtime (cloudflared Docker container) ---
@@ -437,7 +445,7 @@ export async function restartCloudflared(nodeId: string): Promise<void> {
   } catch {
     // container may not be running
   }
-  await startCloudflared(tunnel);
+  await startCloudflared(decryptTunnelRow(tunnel));
 }
 
 export async function getCloudflaredStatus(nodeId: string): Promise<{ running: boolean; containerId?: string; status?: string }> {

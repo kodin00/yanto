@@ -7,6 +7,12 @@ import { ensureProjectsRoot, normalizeComposeFile, normalizeEnvFile, projectPath
 import { config } from "../config.js";
 import { assertDeployableNode } from "./nodes.js";
 
+export function publicProject<T extends { deployToken: string }>(project: T): Omit<T, "deployToken"> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructured to exclude from output
+  const { deployToken, ...rest } = project;
+  return rest;
+}
+
 export type CreateProjectInput = {
   name: string;
   gitUrl?: string;

@@ -52,13 +52,20 @@ export async function getStoredR2Settings() {
   return parseR2Settings(row?.value);
 }
 
+function maskCredential(value: string): string {
+  if (!value) return "";
+  const tail = value.slice(-4);
+  return `****${tail}`;
+}
+
 export async function publicR2Settings() {
   const settings = await getStoredR2Settings();
   return {
     enabled: settings.enabled,
     accountId: settings.accountId,
     bucket: settings.bucket,
-    accessKeyId: settings.accessKeyId,
+    maskedAccessKeyId: settings.accessKeyId ? maskCredential(settings.accessKeyId) : "",
+    hasAccessKeyId: Boolean(settings.accessKeyId),
     hasSecretAccessKey: Boolean(settings.secretAccessKey),
     prefix: settings.prefix
   };
@@ -66,11 +73,12 @@ export async function publicR2Settings() {
 
 export async function saveR2Settings(input: R2SettingsInput) {
   const current = await getStoredR2Settings();
+  const nextAccessKeyId = normalizeString(input.accessKeyId);
   const next: StoredR2Settings = {
     enabled: Boolean(input.enabled),
     accountId: normalizeString(input.accountId),
     bucket: normalizeString(input.bucket),
-    accessKeyId: normalizeString(input.accessKeyId),
+    accessKeyId: nextAccessKeyId && nextAccessKeyId !== maskCredential(current.accessKeyId) ? nextAccessKeyId : current.accessKeyId,
     secretAccessKey: normalizeString(input.secretAccessKey) || current.secretAccessKey,
     prefix: normalizeString(input.prefix) || emptyR2Settings.prefix
   };

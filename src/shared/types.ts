@@ -15,12 +15,15 @@ export type Project = {
   manualDeployEnabled: boolean;
   githubWebhookEnabled: boolean;
   targetNodeId: string;
-  deployToken: string;
   sshPublicKey: string | null;
   containerCount?: number;
   cloudflareRoutes?: CloudflareRoute[];
   createdAt: string;
   updatedAt: string;
+};
+
+export type ProjectWithDeployToken = Project & {
+  deployToken: string;
 };
 
 export type Deployment = {
@@ -105,7 +108,8 @@ export type R2PublicSettings = {
   enabled: boolean;
   accountId: string;
   bucket: string;
-  accessKeyId: string;
+  maskedAccessKeyId: string;
+  hasAccessKeyId: boolean;
   hasSecretAccessKey: boolean;
   prefix: string;
 };

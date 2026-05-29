@@ -53,8 +53,8 @@ export const cloudflareSettingsInput = z.object({
 });
 
 export const cloudflareRouteInput = z.object({
-  hostname: z.string().min(1),
-  serviceTarget: z.string().min(1),
+  hostname: z.string().min(1).regex(/^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/, "Invalid hostname format"),
+  serviceTarget: z.string().min(1).regex(/^(https?|tcp|ssh):\/\/[a-zA-Z0-9._-]+:\d+$/, "Invalid service target (expected scheme://hostname:port)"),
   nodeId: z.string().min(1).optional()
 });
 

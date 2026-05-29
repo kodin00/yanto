@@ -32,7 +32,7 @@ export const config = {
   deploymentLogMaxChars: Number(process.env.DEPLOYMENT_LOG_MAX_CHARS ?? 500_000),
   cookieSecure:
     process.env.COOKIE_SECURE === undefined
-      ? (process.env.APP_BASE_URL ?? "").startsWith("https://")
+      ? (process.env.NODE_ENV ?? "development") === "production" || (process.env.APP_BASE_URL ?? "").startsWith("https://")
       : process.env.COOKIE_SECURE === "true"
 };
 
@@ -43,7 +43,7 @@ export function warnOnUnsafeDefaults() {
   if (config.nodeEnv === "production" && config.jwtSecret === requiredSecretFallback) {
     console.warn("JWT_SECRET is using the default value. Set a strong secret before exposing this app.");
   }
-  if (config.nodeEnv === "production" && config.adminPassword === "change-this-admin-password") {
+  if (config.nodeEnv === "production" && config.adminPassword === "admin") {
     console.warn("ADMIN_PASSWORD is using the default value. Set a strong admin password.");
   }
 }

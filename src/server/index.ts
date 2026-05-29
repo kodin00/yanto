@@ -1,5 +1,8 @@
 import cookieParser from "cookie-parser";
+import crypto from "node:crypto";
 import express from "express";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import fs from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -43,7 +46,7 @@ import {
 import { ensureLocalMasterNode, listNodes, markNodeSeen, nextWorkerDeployment, nodeForWorkerToken, registerWorker } from "./services/nodes.js";
 import { previewEnvContent, previewProjectEnv, readProjectEnv, readProjectEnvVariables, writeProjectEnv, writeProjectEnvVariables } from "./services/project-env.js";
 import { restartProjectCompose, stopProjectCompose } from "./services/project-runtime.js";
-import { createProject, deleteProject, getProject, listProjectsWithContainerCounts, updateProject } from "./services/projects.js";
+import { createProject, deleteProject, getProject, listProjectsWithContainerCounts, publicProject, updateProject } from "./services/projects.js";
 import { managedSshKeyStatus, saveManagedSshPrivateKey } from "./services/ssh.js";
 import { healthStatus, systemUsage } from "./services/system.js";
 import { readProjectCompose } from "./services/compose.js";
@@ -80,6 +83,57 @@ function captureRawBody(req: express.Request, _res: express.Response, buffer: Bu
 app.use(express.json({ limit: "1mb", verify: captureRawBody }));
 app.use(express.urlencoded({ extended: false, limit: "1mb", verify: captureRawBody }));
 app.use(cookieParser());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:"],
+      connectSrc: ["'self'"]
+    }
+  }
+}));
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { message: "Too many login attempts. Try again later." }
+});
+
+const CSRF_COOKIE = "yanto_csrf";
+const CSRF_SKIP_PATHS = ["/api/auth/login", "/api/workers/", "/deploy", "/api/webhooks/", "/webhooks/"];
+
+function csrfProtection(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") {
+    if (!req.cookies[CSRF_COOKIE]) {
+      res.cookie(CSRF_COOKIE, crypto.randomBytes(24).toString("base64url"), {
+        httpOnly: false,
+        sameSite: "lax",
+        secure: config.cookieSecure
+      });
+    }
+    next();
+    return;
+  }
+
+  if (CSRF_SKIP_PATHS.some((p) => req.path.startsWith(p))) {
+    next();
+    return;
+  }
+
+  const cookieToken = req.cookies[CSRF_COOKIE];
+  const headerToken = req.header("x-csrf-token");
+  if (!cookieToken || !headerToken || cookieToken !== headerToken) {
+    res.status(403).json({ message: "Invalid CSRF token." });
+    return;
+  }
+  next();
+}
+
+app.use(csrfProtection);
 
 function actor(req: express.Request) {
   return currentUser(req)?.username ?? "admin";
@@ -140,6 +194,7 @@ async function saveRequestBodyToTempFile(req: express.Request) {
 
 app.post(
   "/api/auth/login",
+  loginLimiter,
   asyncRoute(async (req, res) => {
     const body = z.object({ username: z.string(), password: z.string() }).parse(req.body);
     const ok = await verifyAdminPassword(body.username, body.password);
@@ -273,7 +328,8 @@ app.get(
   "/api/projects",
   requireAuth,
   asyncRoute(async (_req, res) => {
-    res.json(await listProjectsWithContainerCounts());
+    const rows = await listProjectsWithContainerCounts();
+    res.json(rows.map(publicProject));
   })
 );
 
@@ -299,7 +355,7 @@ app.patch(
       return;
     }
     await recordAuditLog({ actor: actor(req), action: "project.update", entityType: "project", entityId: project.id, projectId: project.id });
-    res.json(project);
+    res.json(publicProject(project));
   })
 );
 
@@ -1111,7 +1167,9 @@ app.use((error: unknown, _req: express.Request, res: express.Response, next: exp
   void next;
   const message = error instanceof Error ? error.message : "Unexpected server error.";
   logger.error("request failed", { error: message });
-  res.status(400).json({ message });
+  const status = error instanceof z.ZodError ? 400 : 500;
+  const publicMessage = config.nodeEnv === "production" && status >= 500 ? "Internal server error." : message;
+  res.status(status).json({ message: publicMessage });
 });
 
 const __filename = fileURLToPath(import.meta.url);
