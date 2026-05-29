@@ -323,30 +323,7 @@ a.button {
 
 .settings-grid {
   grid-template-columns: minmax(360px, 0.95fr) minmax(420px, 1fr);
-  grid-template-areas:
-    "r2 cf"
-    "r2 ssh"
-    "runtime ssh"
-    "webhook cleanup"
-    "worker cleanup"
-    "system system";
-  align-items: stretch;
-}
-
-.webhook-settings {
-  grid-area: webhook;
-}
-
-.webhook-settings + .webhook-settings {
-  grid-area: worker;
-}
-
-.system-log-panel {
-  grid-area: system;
-}
-
-.ssh-settings-panel {
-  grid-area: ssh;
+  align-items: start;
 }
 
 .compact-settings-panel,
@@ -356,27 +333,11 @@ a.button {
   padding: 18px;
 }
 
-.r2-settings-panel {
-  grid-area: r2;
-  min-height: 420px;
-}
-
-.cf-tunnel-settings-panel {
-  grid-area: cf;
-  min-height: 220px;
-}
-
-.runtime-settings-panel {
-  grid-area: runtime;
-  min-height: 190px;
-}
-
-.cleanup-settings-panel {
-  grid-area: cleanup;
-}
-
-.ssh-settings-panel {
-  min-height: 360px;
+.settings-column {
+  min-width: 0;
+  display: grid;
+  gap: 16px;
+  align-content: start;
 }
 
 .settings-code-list {
@@ -1825,18 +1786,6 @@ th {
   .dashboard-main-grid,
   .settings-grid {
     grid-template-columns: 1fr;
-  }
-
-  .settings-grid {
-    grid-template-areas:
-      "r2"
-      "cf"
-      "ssh"
-      "runtime"
-      "webhook"
-      "worker"
-      "cleanup"
-      "system";
   }
 
   .ops-hero {

@@ -1191,239 +1191,250 @@ export function App() {
 
         {view === "settings" ? (
           <section className="settings-grid">
-            <section className="panel webhook-settings compact-settings-panel">
-              <div className="panel-head">
-                <h2>Deployment webhook</h2>
-                <GitBranch size={19} />
-              </div>
-              <div className="settings-code-list">
-                <div>
-                  <dt>Endpoint</dt>
-                  <div className="endpoint-box">
-                    <span>{`${settings.appBaseUrl.replace(/\/$/, "")}/deploy?id=<project-id>`}</span>
-                    <button type="button" onClick={() => void copyText(`${settings.appBaseUrl.replace(/\/$/, "")}/deploy?id=<project-id>`)} title="Copy endpoint" aria-label="Copy endpoint">
-                      <Copy size={15} />
-                    </button>
+            <div className="settings-column">
+              <section className="panel r2-settings-panel">
+                <div className="panel-head">
+                  <h2>Cloudflare R2</h2>
+                  <Cloud size={19} />
+                </div>
+                <form className="form-grid compact-form" onSubmit={saveR2Settings} autoComplete="off">
+                  <ToggleField
+                    label="Upload enabled"
+                    value={r2Form.enabled}
+                    onChange={(enabled) => updateR2Form({ enabled })}
+                    description={settings.r2?.hasSecretAccessKey ? "Secret key saved" : "Add an R2 secret key before uploading"}
+                  />
+                  <div className="settings-form-pair">
+                    <TextField label="Account ID" value={r2Form.accountId} onChange={(accountId) => updateR2Form({ accountId })} autoComplete="off" />
+                    <TextField label="Bucket" value={r2Form.bucket} onChange={(bucket) => updateR2Form({ bucket })} autoComplete="off" />
+                  </div>
+                  <div className="settings-form-pair">
+                    <TextField label="Access key ID" value={r2Form.accessKeyId} onChange={(accessKeyId) => updateR2Form({ accessKeyId })} autoComplete="off" />
+                    <TextField
+                      label="Secret access key"
+                      type="password"
+                      value={r2Form.secretAccessKey}
+                      onChange={(secretAccessKey) => updateR2Form({ secretAccessKey })}
+                      placeholder={settings.r2?.hasSecretAccessKey ? "Saved; leave blank to keep" : ""}
+                      autoComplete="new-password"
+                    />
+                  </div>
+                  <TextField label="Object prefix" value={r2Form.prefix} onChange={(prefix) => updateR2Form({ prefix })} autoComplete="off" />
+                  <div className="actions">
+                    <Button type="submit" disabled={busy === "r2-settings"} icon={<Cloud size={16} />}>
+                      Save R2
+                    </Button>
+                  </div>
+                </form>
+              </section>
+
+              <section className="panel runtime-settings-panel">
+                <div className="panel-head">
+                  <h2>Runtime</h2>
+                </div>
+                <dl className="settings-list">
+                  <div>
+                    <dt>Container projects root</dt>
+                    <dd>{settings.projectsRoot}</dd>
+                  </div>
+                  <div>
+                    <dt>Host projects root</dt>
+                    <dd>{settings.hostProjectsRoot}</dd>
+                  </div>
+                  <div>
+                    <dt>SSH keys</dt>
+                    <dd>{settings.sshKeysDir}</dd>
+                  </div>
+                  <div>
+                    <dt>Base URL</dt>
+                    <dd>{settings.appBaseUrl}</dd>
+                  </div>
+                </dl>
+              </section>
+
+              <section className="panel webhook-settings compact-settings-panel">
+                <div className="panel-head">
+                  <h2>Deployment webhook</h2>
+                  <GitBranch size={19} />
+                </div>
+                <div className="settings-code-list">
+                  <div>
+                    <dt>Endpoint</dt>
+                    <div className="endpoint-box">
+                      <span>{`${settings.appBaseUrl.replace(/\/$/, "")}/deploy?id=<project-id>`}</span>
+                      <button type="button" onClick={() => void copyText(`${settings.appBaseUrl.replace(/\/$/, "")}/deploy?id=<project-id>`)} title="Copy endpoint" aria-label="Copy endpoint">
+                        <Copy size={15} />
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <dt>Auth header</dt>
+                    <div className="token-box">
+                      <span>Authorization: Bearer &lt;project-deploy-token&gt;</span>
+                      <button type="button" onClick={() => void copyText("Authorization: Bearer <project-deploy-token>")} title="Copy auth header" aria-label="Copy auth header">
+                        <Copy size={15} />
+                      </button>
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <dt>Auth header</dt>
-                  <div className="token-box">
-                    <span>Authorization: Bearer &lt;project-deploy-token&gt;</span>
-                    <button type="button" onClick={() => void copyText("Authorization: Bearer <project-deploy-token>")} title="Copy auth header" aria-label="Copy auth header">
-                      <Copy size={15} />
-                    </button>
+              </section>
+
+              <section className="panel webhook-settings compact-settings-panel">
+                <div className="panel-head">
+                  <h2>Worker install</h2>
+                  <Server size={19} />
+                </div>
+                <Button variant="secondary" onClick={() => void copyWorkerInstallCommand()} icon={<Copy size={16} />}>
+                  Copy worker command
+                </Button>
+              </section>
+            </div>
+
+            <div className="settings-column">
+              <section className="panel cf-tunnel-settings-panel">
+                <div className="panel-head">
+                  <h2>Cloudflare Tunnel</h2>
+                  <ShieldCheck size={19} />
+                </div>
+                <form className="form-grid compact-form" onSubmit={saveCfSettings} autoComplete="off">
+                  <div className="settings-form-pair">
+                    <TextField label="Account ID" value={cfForm.accountId} onChange={(accountId) => updateCfForm({ accountId })} />
+                    <TextField label="Zone ID" value={cfForm.zoneId} onChange={(zoneId) => updateCfForm({ zoneId })} />
                   </div>
-                </div>
-              </div>
-            </section>
-            <section className="panel webhook-settings compact-settings-panel">
-              <div className="panel-head">
-                <h2>Worker install</h2>
-                <Server size={19} />
-              </div>
-              <Button variant="secondary" onClick={() => void copyWorkerInstallCommand()} icon={<Copy size={16} />}>
-                Copy worker command
-              </Button>
-            </section>
-            <section className="panel r2-settings-panel">
-              <div className="panel-head">
-                <h2>Cloudflare R2</h2>
-                <Cloud size={19} />
-              </div>
-              <form className="form-grid compact-form" onSubmit={saveR2Settings} autoComplete="off">
-                <ToggleField
-                  label="Upload enabled"
-                  value={r2Form.enabled}
-                  onChange={(enabled) => updateR2Form({ enabled })}
-                  description={settings.r2?.hasSecretAccessKey ? "Secret key saved" : "Add an R2 secret key before uploading"}
-                />
-                <div className="settings-form-pair">
-                  <TextField label="Account ID" value={r2Form.accountId} onChange={(accountId) => updateR2Form({ accountId })} autoComplete="off" />
-                  <TextField label="Bucket" value={r2Form.bucket} onChange={(bucket) => updateR2Form({ bucket })} autoComplete="off" />
-                </div>
-                <div className="settings-form-pair">
-                  <TextField label="Access key ID" value={r2Form.accessKeyId} onChange={(accessKeyId) => updateR2Form({ accessKeyId })} autoComplete="off" />
                   <TextField
-                    label="Secret access key"
+                    label="API Token"
                     type="password"
-                    value={r2Form.secretAccessKey}
-                    onChange={(secretAccessKey) => updateR2Form({ secretAccessKey })}
-                    placeholder={settings.r2?.hasSecretAccessKey ? "Saved; leave blank to keep" : ""}
+                    value={cfForm.apiToken}
+                    onChange={(apiToken) => updateCfForm({ apiToken })}
+                    placeholder={settings.cf?.hasApiToken ? "Saved; leave blank to keep" : ""}
                     autoComplete="new-password"
                   />
+                  <div className={`credential-status ${settings.cf?.hasApiToken ? "saved" : ""}`}>
+                    <ShieldCheck size={15} />
+                    <span>{settings.cf?.hasApiToken ? "API token saved" : "API token not saved"}</span>
+                  </div>
+                  <div className="actions">
+                    <Button variant="secondary" disabled={busy === "cf-validate"} onClick={() => void validateCfSettings()}>
+                      Validate
+                    </Button>
+                    <Button type="submit" disabled={busy === "cf-settings"} icon={<ShieldCheck size={16} />}>
+                      Save
+                    </Button>
+                  </div>
+                </form>
+              </section>
+
+              <section className="panel ssh-settings-panel">
+                <div className="panel-head">
+                  <h2>Git SSH key</h2>
+                  <KeyRound size={19} />
                 </div>
-                <TextField label="Object prefix" value={r2Form.prefix} onChange={(prefix) => updateR2Form({ prefix })} autoComplete="off" />
+                <dl className="settings-list ssh-status-list">
+                  <div>
+                    <dt>Active key path</dt>
+                    <dd>{settings.sshKey?.activePrivateKeyPath ?? "No key found"}</dd>
+                  </div>
+                  <div>
+                    <dt>Managed key</dt>
+                    <dd>{settings.sshKey?.hasManagedKey ? "Saved in app volume" : "Not saved"}</dd>
+                  </div>
+                  <div>
+                    <dt>Mounted VPS key</dt>
+                    <dd>{settings.sshKey?.hasMountedKey ? settings.sshKey.mountedPrivateKeyPath : "Not found"}</dd>
+                  </div>
+                </dl>
+                {settings.sshKey?.publicKey ? (
+                  <div className="token-box ssh-public-key-box">
+                    <span>{settings.sshKey.publicKey}</span>
+                    <button type="button" onClick={() => void copyText(settings.sshKey?.publicKey ?? "")} title="Copy public key" aria-label="Copy public key">
+                      <Copy size={15} />
+                    </button>
+                  </div>
+                ) : null}
+                <form className="form-grid ssh-key-form" onSubmit={saveSshPrivateKey}>
+                  <TextAreaField
+                    label="Private key"
+                    value={sshPrivateKey}
+                    onChange={setSshPrivateKey}
+                    placeholder={"Paste the full private key, starting with -----BEGIN OPENSSH PRIVATE KEY-----"}
+                  />
+                  <div className="actions">
+                    <Button type="submit" disabled={busy === "ssh-key" || !sshPrivateKey.trim()} icon={<KeyRound size={16} />}>
+                      Save SSH key
+                    </Button>
+                  </div>
+                </form>
+              </section>
+
+              <section className="panel cleanup-settings-panel">
+                <div className="panel-head">
+                  <h2>Cleanup</h2>
+                  <DatabaseZap size={19} />
+                </div>
+                <p className="muted">Preview reclaimable Docker space first, then clean protected unused cache and resources.</p>
                 <div className="actions">
-                  <Button type="submit" disabled={busy === "r2-settings"} icon={<Cloud size={16} />}>
-                    Save R2
+                  <Button
+                    variant="secondary"
+                    disabled={busy === "cleanup-preview" || busy === "cleanup"}
+                    onClick={() => void previewCleanup()}
+                    icon={busy === "cleanup-preview" ? <RefreshCw size={16} className="spin" /> : <DatabaseZap size={16} />}
+                  >
+                    {busy === "cleanup-preview" ? "Checking" : "Preview cleanup"}
                   </Button>
-                </div>
-              </form>
-            </section>
-            <section className="panel cf-tunnel-settings-panel">
-              <div className="panel-head">
-                <h2>Cloudflare Tunnel</h2>
-                <ShieldCheck size={19} />
-              </div>
-              <form className="form-grid compact-form" onSubmit={saveCfSettings} autoComplete="off">
-                <div className="settings-form-pair">
-                  <TextField label="Account ID" value={cfForm.accountId} onChange={(accountId) => updateCfForm({ accountId })} />
-                  <TextField label="Zone ID" value={cfForm.zoneId} onChange={(zoneId) => updateCfForm({ zoneId })} />
-                </div>
-                <TextField
-                  label="API Token"
-                  type="password"
-                  value={cfForm.apiToken}
-                  onChange={(apiToken) => updateCfForm({ apiToken })}
-                  placeholder={settings.cf?.hasApiToken ? "Saved; leave blank to keep" : ""}
-                  autoComplete="new-password"
-                />
-                <div className={`credential-status ${settings.cf?.hasApiToken ? "saved" : ""}`}>
-                  <ShieldCheck size={15} />
-                  <span>{settings.cf?.hasApiToken ? "API token saved" : "API token not saved"}</span>
-                </div>
-                <div className="actions">
-                  <Button variant="secondary" disabled={busy === "cf-validate"} onClick={() => void validateCfSettings()}>
-                    Validate
-                  </Button>
-                  <Button type="submit" disabled={busy === "cf-settings"} icon={<ShieldCheck size={16} />}>
-                    Save
-                  </Button>
-                </div>
-              </form>
-            </section>
-            <section className="panel ssh-settings-panel">
-              <div className="panel-head">
-                <h2>Git SSH key</h2>
-                <KeyRound size={19} />
-              </div>
-              <dl className="settings-list ssh-status-list">
-                <div>
-                  <dt>Active key path</dt>
-                  <dd>{settings.sshKey?.activePrivateKeyPath ?? "No key found"}</dd>
-                </div>
-                <div>
-                  <dt>Managed key</dt>
-                  <dd>{settings.sshKey?.hasManagedKey ? "Saved in app volume" : "Not saved"}</dd>
-                </div>
-                <div>
-                  <dt>Mounted VPS key</dt>
-                  <dd>{settings.sshKey?.hasMountedKey ? settings.sshKey.mountedPrivateKeyPath : "Not found"}</dd>
-                </div>
-              </dl>
-              {settings.sshKey?.publicKey ? (
-                <div className="token-box ssh-public-key-box">
-                  <span>{settings.sshKey.publicKey}</span>
-                  <button type="button" onClick={() => void copyText(settings.sshKey?.publicKey ?? "")} title="Copy public key" aria-label="Copy public key">
-                    <Copy size={15} />
-                  </button>
-                </div>
-              ) : null}
-              <form className="form-grid ssh-key-form" onSubmit={saveSshPrivateKey}>
-                <TextAreaField
-                  label="Private key"
-                  value={sshPrivateKey}
-                  onChange={setSshPrivateKey}
-                  placeholder={"Paste the full private key, starting with -----BEGIN OPENSSH PRIVATE KEY-----"}
-                />
-                <div className="actions">
-                  <Button type="submit" disabled={busy === "ssh-key" || !sshPrivateKey.trim()} icon={<KeyRound size={16} />}>
-                    Save SSH key
-                  </Button>
-                </div>
-              </form>
-            </section>
-            <section className="panel runtime-settings-panel">
-              <div className="panel-head">
-                <h2>Runtime</h2>
-              </div>
-              <dl className="settings-list">
-                <div>
-                  <dt>Container projects root</dt>
-                  <dd>{settings.projectsRoot}</dd>
-                </div>
-                <div>
-                  <dt>Host projects root</dt>
-                  <dd>{settings.hostProjectsRoot}</dd>
-                </div>
-                <div>
-                  <dt>SSH keys</dt>
-                  <dd>{settings.sshKeysDir}</dd>
-                </div>
-                <div>
-                  <dt>Base URL</dt>
-                  <dd>{settings.appBaseUrl}</dd>
-                </div>
-              </dl>
-            </section>
-            <section className="panel cleanup-settings-panel">
-              <div className="panel-head">
-                <h2>Cleanup</h2>
-                <DatabaseZap size={19} />
-              </div>
-              <p className="muted">Preview reclaimable Docker space first, then clean protected unused cache and resources.</p>
-              <div className="actions">
-                <Button
-                  variant="secondary"
-                  disabled={busy === "cleanup-preview" || busy === "cleanup"}
-                  onClick={() => void previewCleanup()}
-                  icon={busy === "cleanup-preview" ? <RefreshCw size={16} className="spin" /> : <DatabaseZap size={16} />}
-                >
-                  {busy === "cleanup-preview" ? "Checking" : "Preview cleanup"}
-                </Button>
-                <Button
-                  variant="danger"
-                  disabled={busy === "cleanup-preview" || busy === "cleanup"}
-                  onClick={() => {
-                    if (!cleanupPreviewed) {
-                      setToast({ message: "Run preview cleanup first, then clean cache.", kind: "error" });
-                      return;
-                    }
-                    setConfirm({
-                      title: "Run cleanup",
-                      body: "This removes unused Docker cache and unused Docker resources shown by the preview. Running containers, named volumes, and Yanto containers are protected.",
-                      label: "Clean cache",
-                      danger: true,
-                      action: async () => {
-                        setBusy("cleanup");
-                        setToast({ message: "Cleaning Docker cache...", kind: "loading" });
-                        setCleanupLogTitle("Cleanup logs");
-                        setCleanupLogs("Cleaning unused Docker cache and resources...");
-                        try {
-                          const result = await api.cleanup();
-                          setCleanupPreviewed(false);
-                          setCleanupLogs(result.logs);
-                          await loadAll();
-                          setToast({ message: "Cleanup completed." });
-                        } finally {
-                          setBusy(null);
-                        }
+                  <Button
+                    variant="danger"
+                    disabled={busy === "cleanup-preview" || busy === "cleanup"}
+                    onClick={() => {
+                      if (!cleanupPreviewed) {
+                        setToast({ message: "Run preview cleanup first, then clean cache.", kind: "error" });
+                        return;
                       }
-                    });
-                  }}
-                  icon={busy === "cleanup" ? <RefreshCw size={16} className="spin" /> : <Trash2 size={16} />}
-                >
-                  Clean cache
-                </Button>
-              </div>
-              <div className="cleanup-result">
-                <div className="cleanup-result-head">
-                  <strong>{cleanupLogTitle}</strong>
-                  <StatusBadge status={cleanupPreviewed ? "ready" : busy === "cleanup-preview" || busy === "cleanup" ? "running" : "idle"} />
+                      setConfirm({
+                        title: "Run cleanup",
+                        body: "This removes unused Docker cache and unused Docker resources shown by the preview. Running containers, named volumes, and Yanto containers are protected.",
+                        label: "Clean cache",
+                        danger: true,
+                        action: async () => {
+                          setBusy("cleanup");
+                          setToast({ message: "Cleaning Docker cache...", kind: "loading" });
+                          setCleanupLogTitle("Cleanup logs");
+                          setCleanupLogs("Cleaning unused Docker cache and resources...");
+                          try {
+                            const result = await api.cleanup();
+                            setCleanupPreviewed(false);
+                            setCleanupLogs(result.logs);
+                            await loadAll();
+                            setToast({ message: "Cleanup completed." });
+                          } finally {
+                            setBusy(null);
+                          }
+                        }
+                      });
+                    }}
+                    icon={busy === "cleanup" ? <RefreshCw size={16} className="spin" /> : <Trash2 size={16} />}
+                  >
+                    Clean cache
+                  </Button>
                 </div>
-                <LogViewer logs={cleanupLogs || "No cleanup preview yet."} />
-              </div>
-            </section>
-            <section className="panel system-log-panel">
-              <div className="panel-head">
-                <h2>System log</h2>
-                <Button variant="secondary" onClick={() => void api.systemLogs().then(setSystemLogs)} icon={<RefreshCw size={16} />}>
-                  Refresh
-                </Button>
-              </div>
-              <LogViewer logs={systemLogs || "No system log entries recorded yet."} />
-            </section>
+                <div className="cleanup-result">
+                  <div className="cleanup-result-head">
+                    <strong>{cleanupLogTitle}</strong>
+                    <StatusBadge status={cleanupPreviewed ? "ready" : busy === "cleanup-preview" || busy === "cleanup" ? "running" : "idle"} />
+                  </div>
+                  <LogViewer logs={cleanupLogs || "No cleanup preview yet."} />
+                </div>
+              </section>
+
+              <section className="panel system-log-panel">
+                <div className="panel-head">
+                  <h2>System log</h2>
+                  <Button variant="secondary" onClick={() => void api.systemLogs().then(setSystemLogs)} icon={<RefreshCw size={16} />}>
+                    Refresh
+                  </Button>
+                </div>
+                <LogViewer logs={systemLogs || "No system log entries recorded yet."} />
+              </section>
+            </div>
           </section>
         ) : null}
       </main>
