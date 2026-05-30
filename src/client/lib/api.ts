@@ -178,6 +178,7 @@ export const api = {
   containerLogs: (id: string) => request<string>(`/api/containers/${id}/logs`),
   containerLogStream: (id: string) => `/api/containers/${id}/logs/stream`,
   stopContainer: (id: string) => request<{ ok: true }>(`/api/containers/${id}/stop`, { method: "POST" }),
+  startContainer: (id: string) => request<{ ok: true }>(`/api/containers/${id}/start`, { method: "POST" }),
   restartContainer: (id: string) => request<{ ok: true }>(`/api/containers/${id}/restart`, { method: "POST" }),
   systemUsage: () => request<SystemUsage>("/api/system/usage"),
   systemLogs: () => request<string>("/api/system/logs"),

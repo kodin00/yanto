@@ -6,7 +6,7 @@ vi.mock("../src/server/services/commands.js", () => ({
   runCommand
 }));
 
-import { cleanupDocker, listContainers, normalizeDockerCreatedAt, previewDockerCleanup, restartContainer, stopContainer } from "../src/server/services/docker.js";
+import { cleanupDocker, listContainers, normalizeDockerCreatedAt, previewDockerCleanup, restartContainer, startContainer, stopContainer } from "../src/server/services/docker.js";
 
 describe("docker helpers", () => {
   beforeEach(() => {
@@ -72,6 +72,19 @@ describe("docker helpers", () => {
     expect(runCommand.mock.calls).toEqual([
       ["docker", ["inspect", "--format", "{{.Name}}", "container-id"]],
       ["docker", ["restart", "container-id"]]
+    ]);
+  });
+
+  it("inspects before starting unprotected containers", async () => {
+    runCommand
+      .mockResolvedValueOnce({ exitCode: 0, output: "/customer-web-1\n" })
+      .mockResolvedValueOnce({ exitCode: 0, output: "customer-web-1\n" });
+
+    await startContainer("container-id");
+
+    expect(runCommand.mock.calls).toEqual([
+      ["docker", ["inspect", "--format", "{{.Name}}", "container-id"]],
+      ["docker", ["start", "container-id"]]
     ]);
   });
 

@@ -211,16 +211,24 @@ export function App() {
     window.localStorage.setItem(themeStorageKey, theme);
   }, [theme]);
 
+  const fetchContainerRows = useCallback(async () => {
+    try {
+      return await api.containers();
+    } catch {
+      return null;
+    }
+  }, []);
+
   const refreshProjects = useCallback(async () => {
     const [projectRows, deploymentRows, containerRows] = await Promise.all([
       api.projects(),
       api.deployments(),
-      api.containers().catch(() => [])
+      fetchContainerRows()
     ]);
     setProjects(projectRows);
     setDeployments(deploymentRows);
-    setContainers(containerRows);
-  }, []);
+    if (containerRows) setContainers(containerRows);
+  }, [fetchContainerRows]);
 
   const refreshDeployments = useCallback(async () => {
     setDeployments(await api.deployments());
@@ -241,22 +249,23 @@ export function App() {
   }, []);
 
   const refreshContainers = useCallback(async () => {
-    setContainers(await api.containers().catch(() => []));
-  }, []);
+    const containerRows = await fetchContainerRows();
+    if (containerRows) setContainers(containerRows);
+  }, [fetchContainerRows]);
 
   const loadView = useCallback(async (targetView: View) => {
     if (targetView === "dashboard") {
       const [projectRows, deploymentRows, containerRows, nodeRows, systemRows, settingRows] = await Promise.all([
         api.projects(),
         api.deployments(),
-        api.containers().catch(() => []),
+        fetchContainerRows(),
         api.nodes().catch(() => []),
         api.systemUsage().catch(() => null),
         api.settings()
       ]);
       setProjects(projectRows);
       setDeployments(deploymentRows);
-      setContainers(containerRows);
+      if (containerRows) setContainers(containerRows);
       setNodes(nodeRows);
       setUsage(systemRows);
       setSettings(settingRows);
@@ -265,10 +274,10 @@ export function App() {
     }
 
     if (targetView === "projects") {
-      const [projectRows, deploymentRows, containerRows, nodeRows, settingRows] = await Promise.all([api.projects(), api.deployments(), api.containers().catch(() => []), api.nodes().catch(() => []), api.settings()]);
+      const [projectRows, deploymentRows, containerRows, nodeRows, settingRows] = await Promise.all([api.projects(), api.deployments(), fetchContainerRows(), api.nodes().catch(() => []), api.settings()]);
       setProjects(projectRows);
       setDeployments(deploymentRows);
-      setContainers(containerRows);
+      if (containerRows) setContainers(containerRows);
       setNodes(nodeRows);
       setSettings(settingRows);
       setSettingsLoaded(true);
@@ -281,7 +290,8 @@ export function App() {
     }
 
     if (targetView === "containers") {
-      setContainers(await api.containers().catch(() => []));
+      const containerRows = await fetchContainerRows();
+      if (containerRows) setContainers(containerRows);
       return;
     }
 
@@ -306,7 +316,7 @@ export function App() {
     setSettings(settingRows);
     setSettingsLoaded(true);
     setSystemLogs(logRows);
-  }, []);
+  }, [fetchContainerRows]);
 
   useEffect(() => {
     api

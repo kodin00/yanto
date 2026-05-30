@@ -152,6 +152,15 @@ export async function stopContainer(containerId: string) {
   invalidateContainerCache();
 }
 
+export async function startContainer(containerId: string) {
+  await assertContainerCanBeControlled(containerId);
+  const result = await runCommand("docker", ["start", containerId]);
+  if (result.exitCode !== 0) {
+    throw new Error(result.output || "Unable to start container.");
+  }
+  invalidateContainerCache();
+}
+
 export async function restartContainer(containerId: string) {
   await assertContainerCanBeControlled(containerId);
   const result = await runCommand("docker", ["restart", containerId]);

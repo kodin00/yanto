@@ -248,6 +248,16 @@ describe("api client", () => {
       }));
     });
 
+    it("startContainer sends POST to /api/containers/:id/start", async () => {
+      const fetchMock = mockFetch({ ok: true });
+
+      await api.startContainer("ct-1");
+
+      expect(fetchMock).toHaveBeenCalledWith("/api/containers/ct-1/start", expect.objectContaining({
+        method: "POST"
+      }));
+    });
+
     it("deploymentLogStream returns stream URL", () => {
       expect(api.deploymentLogStream("dep-1")).toBe("/api/deployments/dep-1/logs/stream");
     });

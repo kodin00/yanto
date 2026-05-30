@@ -1,4 +1,4 @@
-import { Archive, Download, RotateCw, ScrollText, Square, Trash2, Upload } from "lucide-react";
+import { Archive, Download, Play, RotateCw, ScrollText, Square, Trash2, Upload } from "lucide-react";
 import type { ContainerInfo, Deployment } from "../shared/types";
 import { bytes, dateTime, deploymentChanges, durationBetween, durationSince, isProtectedYantoContainer, usedMemoryMb } from "./app-utils";
 import { Button, IconButton, StatusBadge } from "./components/ui";
@@ -238,6 +238,7 @@ export function ContainerGroups({
               <tbody>
                 {rows.map((container) => {
                   const protectedContainer = isProtectedYantoContainer(container);
+                  const running = container.state === "running";
                   return (
                     <tr key={container.id}>
                       <td>{container.name}</td>
@@ -277,24 +278,44 @@ export function ContainerGroups({
                             >
                               <RotateCw size={15} />
                             </IconButton>
-                            <IconButton
-                              label="Stop container"
-                              variant="danger"
-                              onClick={() =>
-                                onConfirm({
-                                  title: "Stop container",
-                                  body: `Stop ${container.name}?`,
-                                  label: "Stop",
-                                  danger: true,
-                                  action: async () => {
-                                    await api.stopContainer(container.id);
-                                    await onReload();
-                                  }
-                                })
-                              }
-                            >
-                              <Square size={15} />
-                            </IconButton>
+                            {running ? (
+                              <IconButton
+                                label="Stop container"
+                                variant="danger"
+                                onClick={() =>
+                                  onConfirm({
+                                    title: "Stop container",
+                                    body: `Stop ${container.name}?`,
+                                    label: "Stop",
+                                    danger: true,
+                                    action: async () => {
+                                      await api.stopContainer(container.id);
+                                      await onReload();
+                                    }
+                                  })
+                                }
+                              >
+                                <Square size={15} />
+                              </IconButton>
+                            ) : (
+                              <IconButton
+                                label="Start container"
+                                variant="secondary"
+                                onClick={() =>
+                                  onConfirm({
+                                    title: "Start container",
+                                    body: `Start ${container.name}?`,
+                                    label: "Start",
+                                    action: async () => {
+                                      await api.startContainer(container.id);
+                                      await onReload();
+                                    }
+                                  })
+                                }
+                              >
+                                <Play size={15} />
+                              </IconButton>
+                            )}
                           </div>
                         )}
                       </td>

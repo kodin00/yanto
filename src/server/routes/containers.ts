@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { requireAuth } from "../auth.js";
 import { asyncRoute, actor, routeParam, sendStreamEvent, startEventStream } from "../http-utils.js";
 import { recordAuditLog } from "../services/audit.js";
-import { containerLogs, listContainers, restartContainer, stopContainer } from "../services/docker.js";
+import { containerLogs, listContainers, restartContainer, startContainer, stopContainer } from "../services/docker.js";
 
 const router = Router();
 
@@ -68,6 +68,17 @@ router.post(
     const id = routeParam(req, "id");
     await stopContainer(id);
     await recordAuditLog({ actor: actor(req), action: "container.stop", entityType: "container", entityId: id });
+    res.json({ ok: true });
+  })
+);
+
+router.post(
+  "/api/containers/:id/start",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const id = routeParam(req, "id");
+    await startContainer(id);
+    await recordAuditLog({ actor: actor(req), action: "container.start", entityType: "container", entityId: id });
     res.json({ ok: true });
   })
 );
