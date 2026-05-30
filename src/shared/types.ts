@@ -138,6 +138,7 @@ export type CloudflareRoute = {
   projectId: string;
   hostname: string;
   serviceTarget: string;
+  noTlsVerify: boolean;
   enabled: boolean;
   cfDnsRecordId: string | null;
   lastPublishedAt: string | null;

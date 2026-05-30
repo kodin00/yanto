@@ -1259,7 +1259,8 @@ th {
 
 .status.connected,
 .status.custom,
-.status.open {
+.status.open,
+.status.open-editor {
   background: var(--success-bg);
   color: var(--green-dark);
 }
@@ -1312,6 +1313,14 @@ th {
   padding: 0 12px;
   background: var(--control-solid);
   color: var(--ink);
+}
+
+.field input:disabled,
+.field textarea:disabled,
+.select-trigger:disabled,
+.toggle-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .field textarea {
@@ -1506,6 +1515,13 @@ th {
   gap: 10px;
 }
 
+.project-edit-side {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
 .lazy-editor-card {
   min-height: 96px;
   display: grid;
@@ -1638,12 +1654,23 @@ th {
   padding-right: 2px;
 }
 
+.env-section .env-editor.text-mode {
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
+}
+
 .env-section .env-row {
   grid-template-columns: minmax(100px, 0.7fr) minmax(140px, 1fr) minmax(110px, 0.5fr) 34px;
 }
 
 .env-section .text-area-field textarea {
   min-height: min(520px, calc(100vh - 340px));
+}
+
+.env-editor.text-mode .text-area-field textarea {
+  min-height: min(620px, calc(100vh - 260px));
+  max-height: none;
 }
 
 .project-edit-actions {
@@ -1860,7 +1887,7 @@ th {
 }
 
 .cf-routes-section {
-  grid-column: 1 / -1;
+  min-width: 0;
 }
 
 .cf-route-head {
@@ -1890,6 +1917,11 @@ th {
   border: 0;
   border-radius: 0;
   background: var(--panel-strong);
+}
+
+.cf-routes-section .cf-route-row {
+  align-items: flex-start;
+  flex-direction: column;
 }
 
 .cf-route-info {
@@ -1931,6 +1963,7 @@ th {
 
 .cf-route-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   flex-shrink: 0;
 }
@@ -1949,9 +1982,13 @@ th {
 
 .cf-route-add-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   align-items: end;
+}
+
+.cf-route-add-row .button {
+  justify-content: center;
 }
 
 @media (max-width: 900px) {

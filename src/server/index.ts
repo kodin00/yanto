@@ -1119,14 +1119,14 @@ app.post(
   asyncRoute(async (req, res) => {
     const body = cloudflareRouteInput.parse(req.body);
     const projectId = routeParam(req, "id");
-    const route = await publishProjectRoute(projectId, body.hostname, body.serviceTarget, body.nodeId);
+    const route = await publishProjectRoute(projectId, body.hostname, body.serviceTarget, body.noTlsVerify, body.nodeId);
     await recordAuditLog({
       actor: actor(req),
       action: "cloudflare.route.publish",
       entityType: "cloudflare_route",
       entityId: route.id,
       projectId,
-      metadata: { hostname: route.hostname, serviceTarget: route.serviceTarget }
+      metadata: { hostname: route.hostname, serviceTarget: route.serviceTarget, noTlsVerify: route.noTlsVerify }
     });
     res.status(201).json(route);
   })

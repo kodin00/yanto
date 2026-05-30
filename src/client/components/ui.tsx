@@ -35,7 +35,8 @@ export function TextField({
   placeholder,
   type = "text",
   required,
-  autoComplete
+  autoComplete,
+  disabled
 }: {
   label: string;
   value: string;
@@ -44,11 +45,12 @@ export function TextField({
   type?: "text" | "password";
   required?: boolean;
   autoComplete?: string;
+  disabled?: boolean;
 }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} type={type} required={required} autoComplete={autoComplete} />
+      <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} type={type} required={required} autoComplete={autoComplete} disabled={disabled} />
     </label>
   );
 }
@@ -72,14 +74,14 @@ export function TextAreaField({
   );
 }
 
-export function ToggleField({ label, value, onChange, description }: { label: string; value: boolean; onChange: (value: boolean) => void; description?: string }) {
+export function ToggleField({ label, value, onChange, description, disabled }: { label: string; value: boolean; onChange: (value: boolean) => void; description?: string; disabled?: boolean }) {
   return (
     <div className="toggle-field">
       <div>
         <span>{label}</span>
         {description ? <p>{description}</p> : null}
       </div>
-      <button type="button" role="switch" aria-checked={value} className={`toggle-switch ${value ? "on" : ""}`} onClick={() => onChange(!value)}>
+      <button type="button" role="switch" aria-checked={value} className={`toggle-switch ${value ? "on" : ""}`} onClick={() => onChange(!value)} disabled={disabled}>
         <span />
       </button>
     </div>
@@ -90,12 +92,14 @@ export function CustomSelect<T extends string>({
   label,
   value,
   options,
-  onChange
+  onChange,
+  disabled
 }: {
   label: string;
   value: T;
   options: { label: string; value: T }[];
   onChange: (value: T) => void;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
@@ -115,7 +119,7 @@ export function CustomSelect<T extends string>({
   return (
     <div className="field custom-select" ref={ref}>
       <span>{label}</span>
-      <button type="button" className="select-trigger" onClick={() => setOpen((current) => !current)}>
+      <button type="button" className="select-trigger" onClick={() => setOpen((current) => !current)} disabled={disabled}>
         <span>{selected.label}</span>
         <ChevronDown size={16} />
       </button>

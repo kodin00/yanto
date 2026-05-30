@@ -53,6 +53,8 @@ type ToastState = { message: string; kind?: "ok" | "error" | "loading" } | null;
 type LogModalState = { title: string; logs: string; streamPath?: string; live?: boolean; status?: string };
 type LogStreamPayload = { logs?: string; chunk?: string; status?: string; error?: string; done?: boolean };
 type EnvEditMode = "pairs" | "text";
+type CfRouteProtocol = "http" | "https";
+type CfRouteForm = { hostname: string; protocol: CfRouteProtocol; localTarget: string; noTlsVerify: boolean };
 type ProjectEnvState = { rows: ProjectEnvVariable[]; baseline: ProjectEnvVariable[]; draftKey: string; draftValue: string; content: string; mode: EnvEditMode; loading: boolean; available: boolean; opened: boolean };
 type ProjectComposeState = { open: boolean; loading: boolean; available: boolean; source: "saved" | "file" | "empty" | null; message: string };
 type RollbackModalState = { project: Project; deployments: Deployment[] };
@@ -145,6 +147,27 @@ function parseEnvContentRows(content: string) {
     rows.push({ key: line.slice(0, separator).trim(), value, masked: value === "********" });
   }
   return normalizeEnvRows(rows);
+}
+
+function parseCfServiceTarget(serviceTarget: string): Pick<CfRouteForm, "protocol" | "localTarget"> {
+  const match = serviceTarget.trim().match(/^(https?):\/\/(.+)$/);
+  if (!match) return { protocol: "http", localTarget: serviceTarget.trim() };
+  return { protocol: match[1] as CfRouteProtocol, localTarget: match[2] };
+}
+
+function buildCfRouteForm(hostname = "", serviceTarget = "", noTlsVerify = false): CfRouteForm {
+  const parsed = parseCfServiceTarget(serviceTarget);
+  return {
+    hostname,
+    protocol: parsed.protocol,
+    localTarget: parsed.localTarget,
+    noTlsVerify: parsed.protocol === "https" ? noTlsVerify : false
+  };
+}
+
+function cfRouteServiceTarget(form: CfRouteForm) {
+  const parsed = parseCfServiceTarget(form.localTarget);
+  return `${parsed.protocol === "https" ? "https" : form.protocol}://${parsed.localTarget}`;
 }
 
 export function App() {
@@ -404,6 +427,7 @@ export function App() {
   const visibleBackups = useMemo(() => pageItems(backups, backupPage), [backupPage, backups]);
   const visibleAuditEntries = useMemo(() => pageItems(auditEntries, auditPage), [auditEntries, auditPage]);
   const r2Ready = Boolean(settings.r2?.enabled && settings.r2.accountId && settings.r2.bucket && settings.r2.hasAccessKeyId && settings.r2.hasSecretAccessKey);
+  const cfSettingsReady = Boolean(settings.cf?.accountId && settings.cf.zoneId && settings.cf.hasApiToken);
 
   useEffect(() => {
     const routeEntries = projects.map((project) => [project.id, project.cloudflareRoutes ?? []] as const);
@@ -581,13 +605,18 @@ export function App() {
       });
       setProjectEnv(emptyProjectEnvState);
       setProjectCompose(emptyProjectComposeState);
-      setCfRouteForm({ hostname: "", serviceTarget: cloudflareServiceUrl(project, containersByProjectFolder.get(project.folderName) ?? []) });
-      setCfRoutes(project.cloudflareRoutes ?? []);
+      const projectRoutes = project.cloudflareRoutes ?? [];
+      const detectedServiceTarget = cloudflareServiceUrl(project, containersByProjectFolder.get(project.folderName) ?? []);
+      setCfRouteForm(buildCfRouteForm("", projectRoutes[0]?.serviceTarget || detectedServiceTarget, projectRoutes[0]?.noTlsVerify ?? false));
+      setCfRoutes(projectRoutes);
       setProjectModal(project);
       void api.projectCfRoutes(project.id).catch(() => [])
         .then((routes) => {
           setCfRoutes(routes);
           setCfRoutesByProject((current) => ({ ...current, [project.id]: routes }));
+          if (routes.length) {
+            setCfRouteForm(buildCfRouteForm("", routes[0].serviceTarget, routes[0].noTlsVerify));
+          }
         })
         .catch((error) => {
           setToast({ message: error instanceof Error ? error.message : "Unable to load Cloudflare routes.", kind: "error" });
@@ -598,7 +627,7 @@ export function App() {
     setProjectEnv(emptyProjectEnvState);
     setProjectCompose(emptyProjectComposeState);
     setCfRoutes([]);
-    setCfRouteForm({ hostname: "", serviceTarget: "" });
+    setCfRouteForm(buildCfRouteForm());
     setProjectModal("new");
   }
 
@@ -787,19 +816,24 @@ export function App() {
     }
   }
 
-  const [cfRouteForm, setCfRouteForm] = useState({ hostname: "", serviceTarget: "" });
+  const [cfRouteForm, setCfRouteForm] = useState<CfRouteForm>(buildCfRouteForm());
 
   async function publishCfRoute(projectId: string) {
     setBusy("cf-route-publish");
     setToast({ message: "Publishing Cloudflare route...", kind: "loading" });
     try {
-      const payload: CloudflareRoutePayload = { hostname: cfRouteForm.hostname, serviceTarget: cfRouteForm.serviceTarget };
+      const serviceTarget = cfRouteServiceTarget(cfRouteForm);
+      const payload: CloudflareRoutePayload = {
+        hostname: cfRouteForm.hostname,
+        serviceTarget,
+        noTlsVerify: serviceTarget.startsWith("https://") ? cfRouteForm.noTlsVerify : false
+      };
       const route = await api.publishCfRoute(projectId, payload);
       setCfRoutes((current) => [...current, route]);
       setCfRoutesByProject((current) => ({ ...current, [projectId]: [...(current[projectId] ?? []), route] }));
       setProjects((current) => current.map((project) => (project.id === projectId ? { ...project, cloudflareRoutes: [...(project.cloudflareRoutes ?? []), route] } : project)));
       const project = projects.find((item) => item.id === projectId);
-      setCfRouteForm({ hostname: "", serviceTarget: project ? cloudflareServiceUrl(project, containersByProjectFolder.get(project.folderName) ?? []) : "" });
+      setCfRouteForm(buildCfRouteForm("", project ? cloudflareServiceUrl(project, containersByProjectFolder.get(project.folderName) ?? []) : ""));
       setToast({ message: `Route published: https://${route.hostname}` });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to publish route.", kind: "error" });
@@ -1584,34 +1618,35 @@ export function App() {
                 />
               </section>
 
-              <section className="project-edit-section project-edit-tools">
-                <div className="section-kicker">Editors</div>
-                <button className="editor-launch-row" type="button" onClick={() => void openComposeEditor()} disabled={projectCompose.loading}>
-                  <FileText size={16} />
-                  <span>
-                    <strong>Compose</strong>
-                    <small>{projectCompose.loading ? "Opening..." : projectForm.composeContent.trim() ? "Override configured" : projectCompose.message || "Default compose file"}</small>
-                  </span>
-                  <StatusBadge status={projectForm.composeContent.trim() ? "custom" : "default"} />
-                </button>
-                <button className="editor-launch-row" type="button" onClick={() => void openEnvEditor()} disabled={projectEnv.loading}>
-                  <List size={16} />
-                  <span>
-                    <strong>Environment</strong>
-                    <small>{projectEnv.loading ? "Opening..." : projectEnv.opened ? `${projectEnvPayload().length} variables` : "Open only when needed"}</small>
-                  </span>
-                  <StatusBadge status={projectEnv.opened ? "open" : "closed"} />
-                </button>
-              </section>
+              <div className="project-edit-side">
+                <section className="project-edit-section project-edit-tools">
+                  <div className="section-kicker">Editors</div>
+                  <button className="editor-launch-row" type="button" onClick={() => void openComposeEditor()} disabled={projectCompose.loading}>
+                    <FileText size={16} />
+                    <span>
+                      <strong>Compose</strong>
+                      <small>{projectCompose.loading ? "Opening..." : "Open editor"}</small>
+                    </span>
+                    <StatusBadge status="Open editor" />
+                  </button>
+                  <button className="editor-launch-row" type="button" onClick={() => void openEnvEditor()} disabled={projectEnv.loading}>
+                    <List size={16} />
+                    <span>
+                      <strong>Environment</strong>
+                      <small>{projectEnv.loading ? "Opening..." : "Open editor"}</small>
+                    </span>
+                    <StatusBadge status="Open editor" />
+                  </button>
+                </section>
 
-              {projectModal !== "new" && settings.cf?.hasApiToken ? (
-                <section className="project-edit-section cf-routes-section">
+                {projectModal !== "new" ? (
+                  <section className="project-edit-section cf-routes-section">
                   <div className="cf-route-head">
                     <div>
                       <div className="section-kicker">Cloudflare Tunnel</div>
-                      <p className="muted">{cfRouteForm.serviceTarget || "Start the project containers to detect a target service."}</p>
+                      <p className="muted">{cfSettingsReady ? "Publish a public hostname to this project's local service." : "Set Cloudflare Tunnel settings first."}</p>
                     </div>
-                    <StatusBadge status={cfRoutes.some((route) => route.enabled) ? "connected" : "idle"} />
+                    <StatusBadge status={cfSettingsReady ? (cfRoutes.some((route) => route.enabled) ? "connected" : "idle") : "disabled"} />
                   </div>
                   <div className="cf-route-list compact">
                     {cfRoutes.map((route) => (
@@ -1620,14 +1655,15 @@ export function App() {
                           <a className="cf-route-hostname" href={`https://${route.hostname}`} target="_blank" rel="noopener noreferrer">
                             https://{route.hostname}
                           </a>
+                          <span className="cf-route-service">{route.serviceTarget}{route.noTlsVerify ? " · no TLS verify" : ""}</span>
                           <StatusBadge status={route.enabled ? "enabled" : "disabled"} />
                         </div>
                         <div className="cf-route-actions">
                           <IconButton label="Copy URL" onClick={() => void copyText(`https://${route.hostname}`)}><Copy size={14} /></IconButton>
-                          <Button variant="ghost" disabled={busy === `cf-route-toggle:${route.id}`} onClick={() => void toggleCfRoute(route)}>
+                          <Button variant="ghost" disabled={!cfSettingsReady || busy === `cf-route-toggle:${route.id}`} onClick={() => void toggleCfRoute(route)}>
                             {route.enabled ? "Disable" : "Enable"}
                           </Button>
-                          <IconButton label="Delete route" disabled={busy === `cf-route-delete:${route.id}`} onClick={() => void removeCfRoute(route.id)}><Trash2 size={14} /></IconButton>
+                          <IconButton label="Delete route" disabled={!cfSettingsReady || busy === `cf-route-delete:${route.id}`} onClick={() => void removeCfRoute(route.id)}><Trash2 size={14} /></IconButton>
                         </div>
                       </div>
                     ))}
@@ -1635,14 +1671,43 @@ export function App() {
                   </div>
                   <div className="cf-route-add-form compact">
                     <div className="cf-route-add-row">
-                      <TextField label="Hostname" value={cfRouteForm.hostname} onChange={(hostname) => setCfRouteForm((current) => ({ ...current, hostname }))} placeholder="app.example.com" />
-                      <Button disabled={busy === "cf-route-publish" || !cfRouteForm.hostname || !cfRouteForm.serviceTarget} variant="secondary" onClick={() => void publishCfRoute(projectModal.id)} icon={<Plus size={15} />}>
+                      <TextField label="Hostname" value={cfRouteForm.hostname} onChange={(hostname) => setCfRouteForm((current) => ({ ...current, hostname }))} placeholder="app.example.com" disabled={!cfSettingsReady} />
+                      <TextField
+                        label="Local service target"
+                        value={cfRouteForm.localTarget}
+                        onChange={(localTarget) => {
+                          const parsed = parseCfServiceTarget(localTarget);
+                          setCfRouteForm((current) => ({
+                            ...current,
+                            protocol: parsed.protocol,
+                            localTarget: parsed.localTarget,
+                            noTlsVerify: parsed.protocol === "https" ? current.noTlsVerify : false
+                          }));
+                        }}
+                        placeholder="container-name:3000"
+                        disabled={!cfSettingsReady}
+                      />
+                      <CustomSelect<CfRouteProtocol>
+                        label="Protocol"
+                        value={cfRouteForm.protocol}
+                        options={[
+                          { label: "HTTP", value: "http" },
+                          { label: "HTTPS", value: "https" }
+                        ]}
+                        onChange={(protocol) => setCfRouteForm((current) => ({ ...current, protocol, noTlsVerify: protocol === "https" ? current.noTlsVerify : false }))}
+                        disabled={!cfSettingsReady}
+                      />
+                      {cfRouteForm.protocol === "https" ? (
+                        <ToggleField label="No TLS verify" value={cfRouteForm.noTlsVerify} onChange={(noTlsVerify) => setCfRouteForm((current) => ({ ...current, noTlsVerify }))} disabled={!cfSettingsReady} />
+                      ) : null}
+                      <Button disabled={busy === "cf-route-publish" || !cfSettingsReady || !cfRouteForm.hostname || !cfRouteForm.localTarget} variant="secondary" onClick={() => void publishCfRoute(projectModal.id)} icon={<Plus size={15} />}>
                         Publish
                       </Button>
                     </div>
                   </div>
-                </section>
-              ) : null}
+                  </section>
+                ) : null}
+              </div>
             </div>
             <div className="actions project-edit-actions">
               <Button type="button" variant="secondary" disabled={busy === "project" || projectEnv.loading || !projectForm.manualDeployEnabled} onClick={() => void persistProjectDetails(undefined, "deploy")} icon={<Play size={15} />}>
@@ -1945,7 +2010,7 @@ function EnvEditor({ modal, onChange }: { modal: ProjectEnvState; onChange: (nex
   };
 
   return (
-    <div className="env-editor">
+    <div className={`env-editor ${modal.mode === "text" ? "text-mode" : ""}`}>
       <div className="env-mode-toggle" role="group" aria-label="Environment input mode">
         <button type="button" className={modal.mode === "pairs" ? "active" : ""} onClick={() => setMode("pairs")}>
           <List size={15} />

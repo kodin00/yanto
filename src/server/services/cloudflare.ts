@@ -272,7 +272,7 @@ export async function putTunnelConfig(tunnel: CloudflareTunnelRow): Promise<void
     ...enabledRoutes.map((r) => ({
       hostname: r.hostname,
       service: r.serviceTarget,
-      originRequest: {}
+      originRequest: r.noTlsVerify ? { noTLSVerify: true } : {}
     })),
     { service: "http_status:404" }
   ];
@@ -311,13 +311,26 @@ export async function upsertTunnelDnsRecord(settings: CloudflareSettings, tunnel
   return created.id;
 }
 
+export async function deleteTunnelDnsRecord(settings: CloudflareSettings, tunnelCfId: string, hostname: string, dnsRecordId?: string | null): Promise<void> {
+  if (!settings.zoneId) return;
+
+  type CfDnsListResult = { id: string; name: string; type: string; content: string }[];
+  const records = await cfFetch<CfDnsListResult>(settings, `/zones/${settings.zoneId}/dns_records?type=CNAME&name=${encodeURIComponent(hostname)}`);
+  const target = `${tunnelCfId}.cfargotunnel.com`;
+  const matchingRecords = records.filter((record) => record.type === "CNAME" && record.name === hostname && (record.id === dnsRecordId || record.content === target));
+
+  for (const record of matchingRecords) {
+    await cfFetch(settings, `/zones/${settings.zoneId}/dns_records/${record.id}`, { method: "DELETE" });
+  }
+}
+
 // --- Route Publishing ---
 
 export async function listRoutesForProject(projectId: string): Promise<CloudflareRouteRow[]> {
   return db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.projectId, projectId));
 }
 
-export async function publishProjectRoute(projectId: string, hostname: string, serviceTarget: string, nodeId?: string): Promise<CloudflareRouteRow> {
+export async function publishProjectRoute(projectId: string, hostname: string, serviceTarget: string, noTlsVerify = false, nodeId?: string): Promise<CloudflareRouteRow> {
   const project = await getProject(projectId);
   if (!project) throw new Error("Project not found.");
 
@@ -334,6 +347,7 @@ export async function publishProjectRoute(projectId: string, hostname: string, s
       projectId,
       hostname,
       serviceTarget,
+      noTlsVerify: serviceTarget.startsWith("https://") ? noTlsVerify : false,
       enabled: true
     })
     .returning();
@@ -390,9 +404,14 @@ export async function deleteProjectRoute(routeId: string): Promise<void> {
   const [route] = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.id, routeId)).limit(1);
   if (!route) throw new Error("Route not found.");
 
+  const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, route.tunnelId)).limit(1);
+  const settings = await getStoredCloudflareSettings();
+  if (tunnel) {
+    await deleteTunnelDnsRecord(settings, tunnel.cfTunnelId, route.hostname, route.cfDnsRecordId);
+  }
+
   await db.delete(cloudflareRoutes).where(eq(cloudflareRoutes.id, routeId));
 
-  const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, route.tunnelId)).limit(1);
   if (tunnel) await putTunnelConfig(decryptTunnelRow(tunnel));
 }
 

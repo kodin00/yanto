@@ -178,6 +178,7 @@ export async function migrate() {
       project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
       hostname text NOT NULL,
       service_target text NOT NULL,
+      no_tls_verify boolean NOT NULL DEFAULT false,
       enabled boolean NOT NULL DEFAULT true,
       cf_dns_record_id text,
       last_published_at timestamptz,
@@ -186,6 +187,7 @@ export async function migrate() {
     );
   `);
 
+  await pool.query(`ALTER TABLE cloudflare_routes ADD COLUMN IF NOT EXISTS no_tls_verify boolean NOT NULL DEFAULT false;`);
   await pool.query(`CREATE INDEX IF NOT EXISTS cloudflare_routes_tunnel_id_idx ON cloudflare_routes(tunnel_id);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS cloudflare_routes_project_id_idx ON cloudflare_routes(project_id);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS cloudflare_routes_hostname_idx ON cloudflare_routes(hostname);`);

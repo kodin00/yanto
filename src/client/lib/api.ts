@@ -33,6 +33,7 @@ export type CloudflareSettingsPayload = {
 export type CloudflareRoutePayload = {
   hostname: string;
   serviceTarget: string;
+  noTlsVerify?: boolean;
   nodeId?: string;
 };
 

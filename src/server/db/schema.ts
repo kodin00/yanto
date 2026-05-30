@@ -132,6 +132,7 @@ export const cloudflareRoutes = pgTable(
     projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
     hostname: text("hostname").notNull(),
     serviceTarget: text("service_target").notNull(),
+    noTlsVerify: boolean("no_tls_verify").notNull().default(false),
     enabled: boolean("enabled").notNull().default(true),
     cfDnsRecordId: text("cf_dns_record_id"),
     lastPublishedAt: timestamp("last_published_at", { withTimezone: true }),
