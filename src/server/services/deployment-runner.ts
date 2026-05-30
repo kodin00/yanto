@@ -17,7 +17,9 @@ export type DeploymentRunnerCallbacks = {
   updateMetadata?: (metadata: DeploymentMetadata) => Promise<void>;
 };
 
-async function runLogged(callbacks: DeploymentRunnerCallbacks, command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv) {
+async function runLogged(callbacks: DeploymentRunnerCallbacks, command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<void>;
+async function runLogged(callbacks: DeploymentRunnerCallbacks, command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv | undefined, returnOutput: true): Promise<string>;
+async function runLogged(callbacks: DeploymentRunnerCallbacks, command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv, returnOutput?: boolean): Promise<string | void> {
   await callbacks.appendLog(`$ ${command} ${args.join(" ")}\n`);
   const result = await runCommand(command, args, {
     cwd,
@@ -31,23 +33,7 @@ async function runLogged(callbacks: DeploymentRunnerCallbacks, command: string, 
     const tail = result.output.trim().split("\n").slice(-12).join("\n");
     throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.exitCode}${tail ? `:\n${tail}` : ""}`);
   }
-}
-
-async function runLoggedOutput(callbacks: DeploymentRunnerCallbacks, command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv) {
-  await callbacks.appendLog(`$ ${command} ${args.join(" ")}\n`);
-  const result = await runCommand(command, args, {
-    cwd,
-    env,
-    onData: (chunk) => {
-      void callbacks.appendLog(chunk);
-    }
-  });
-  await callbacks.appendLog("\n");
-  if (result.exitCode !== 0) {
-    const tail = result.output.trim().split("\n").slice(-12).join("\n");
-    throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.exitCode}${tail ? `:\n${tail}` : ""}`);
-  }
-  return result.output;
+  if (returnOutput) return result.output;
 }
 
 async function commandOutput(command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv) {
@@ -66,7 +52,7 @@ function countLines(output: string) {
 }
 
 async function replaceComposeDeployment(callbacks: DeploymentRunnerCallbacks, composeArgs: string[], cwd: string) {
-  const runningContainers = countLines(await runLoggedOutput(callbacks, "docker", [...composeArgs, "ps", "-q", "--status", "running"], cwd));
+  const runningContainers = countLines(await runLogged(callbacks, "docker", [...composeArgs, "ps", "-q", "--status", "running"], cwd, undefined, true));
   if (runningContainers > 0) {
     await callbacks.appendLog(`Found ${runningContainers} running compose container${runningContainers === 1 ? "" : "s"}; building before replacement to reduce downtime.\n`);
     await runLogged(callbacks, "docker", [...composeArgs, "build"], cwd);

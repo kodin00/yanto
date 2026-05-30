@@ -23,8 +23,12 @@ export function hashToken(token: string, secret = "") {
 export function constantTimeEqual(a: string, b: string) {
   const left = Buffer.from(a);
   const right = Buffer.from(b);
-  if (left.length !== right.length) {
-    return false;
-  }
-  return crypto.timingSafeEqual(left, right);
+  const maxLen = Math.max(left.length, right.length);
+  const paddedLeft = Buffer.alloc(maxLen);
+  const paddedRight = Buffer.alloc(maxLen);
+  left.copy(paddedLeft);
+  right.copy(paddedRight);
+  const contentsEqual = crypto.timingSafeEqual(paddedLeft, paddedRight);
+  const lengthEqual = left.length === right.length;
+  return contentsEqual && lengthEqual;
 }

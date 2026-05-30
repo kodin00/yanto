@@ -73,6 +73,16 @@ function csrfProtection(req: express.Request, res: express.Response, next: expre
     res.status(403).json({ message: "Invalid CSRF token." });
     return;
   }
+
+  // Rotate CSRF token after successful validation to limit token reuse window
+  const newToken = crypto.randomBytes(24).toString("base64url");
+  res.cookie(CSRF_COOKIE, newToken, {
+    httpOnly: false,
+    sameSite: "lax",
+    secure: config.cookieSecure
+  });
+  res.setHeader("x-csrf-token", newToken);
+
   next();
 }
 
@@ -113,7 +123,7 @@ async function main() {
   await migrate();
   await ensureLocalMasterNode();
   await recoverInterruptedDeployments();
-  app.listen(config.port, () => {
+  const server = app.listen(config.port, () => {
     logger.info("server started", { port: config.port });
     void ensureEnabledCloudflaredConnectors()
       .then((result) => {
@@ -125,12 +135,18 @@ async function main() {
         logger.error("cloudflared connector reconciliation failed", { error: error instanceof Error ? error.message : String(error) });
       });
   });
-}
 
-process.on("SIGINT", async () => {
-  await pool.end();
-  process.exit(0);
-});
+  const shutdown = async (signal: string) => {
+    logger.info("shutdown starting", { signal });
+    server.close();
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+    await pool.end();
+    process.exit(0);
+  };
+
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+}
 
 main().catch((error) => {
   logger.error("server failed to start", { error: error instanceof Error ? error.message : String(error) });

@@ -33,6 +33,13 @@ function parseJsonLines<T>(input: string) {
     });
 }
 
+function validateContainerId(id: string): string {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id)) {
+    throw new Error("Invalid container identifier.");
+  }
+  return id;
+}
+
 function parseLabels(labels: string | undefined) {
   const result = new Map<string, string>();
   for (const label of labels?.split(",") ?? []) {
@@ -116,6 +123,7 @@ export async function listContainers(): Promise<ContainerInfo[]> {
 }
 
 export async function containerLogs(containerId: string) {
+  validateContainerId(containerId);
   const result = await runCommand("docker", ["logs", "--tail", "500", containerId]);
   if (result.exitCode !== 0) {
     throw new Error(result.output || "Unable to read container logs.");
@@ -124,6 +132,7 @@ export async function containerLogs(containerId: string) {
 }
 
 async function assertContainerCanBeControlled(containerId: string) {
+  validateContainerId(containerId);
   const result = await runCommand("docker", ["inspect", "--format", "{{.Name}}", containerId]);
   if (result.exitCode !== 0) {
     throw new Error(result.output || "Unable to inspect container.");

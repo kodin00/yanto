@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "../auth.js";
 import { asyncRoute, routeParam, sendStreamEvent, startEventStream } from "../http-utils.js";
 import { findDeployment, latestDeployments } from "../services/deployments.js";
+import { deploymentEvents } from "../services/deployment-events.js";
 
 const router = Router();
 
@@ -51,50 +52,35 @@ router.get(
     }
 
     startEventStream(res);
-    let previousLogs = "";
-    let closed = false;
-    let timer: NodeJS.Timeout | null = null;
 
-    const pushLatest = async () => {
-      if (closed) return;
-      const deployment = await findDeployment(id);
-      if (!deployment) {
-        sendStreamEvent(res, { logs: previousLogs, status: "missing", done: true });
-        res.end();
-        return;
-      }
-      if (deployment.logs !== previousLogs || deployment.status !== "running") {
-        previousLogs = deployment.logs;
-        sendStreamEvent(res, {
-          logs: deployment.logs,
-          status: deployment.status,
-          done: deployment.status !== "running"
-        });
-      }
-      if (deployment.status !== "running") {
-        closed = true;
-        if (timer) {
-          clearInterval(timer);
-        }
-        res.end();
-      }
-    };
+    // Send initial state
+    const done = initial.status !== "running";
+    sendStreamEvent(res, {
+      logs: initial.logs,
+      status: initial.status,
+      done
+    });
 
-    await pushLatest();
-    if (!closed) {
-      timer = setInterval(() => {
-        void pushLatest().catch((error) => {
-          sendStreamEvent(res, { error: error instanceof Error ? error.message : "Unable to stream deployment logs.", done: true });
-          res.end();
-        });
-      }, 700);
+    if (done) {
+      res.end();
+      return;
     }
 
-    req.on("close", () => {
-      closed = true;
-      if (timer) {
-        clearInterval(timer);
+    // Subscribe to event bus instead of polling
+    const unsubscribe = deploymentEvents.onLogUpdate(id, (event) => {
+      sendStreamEvent(res, {
+        logs: event.logs,
+        status: event.status,
+        done: event.done
+      });
+      if (event.done) {
+        unsubscribe();
+        res.end();
       }
+    });
+
+    req.on("close", () => {
+      unsubscribe();
     });
   })
 );

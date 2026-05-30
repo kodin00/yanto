@@ -30,6 +30,7 @@ export const config = {
   commandTimeoutMs: Number(process.env.COMMAND_TIMEOUT_MS ?? 60 * 60 * 1000),
   commandOutputMaxBytes: Number(process.env.COMMAND_OUTPUT_MAX_BYTES ?? 2 * 1024 * 1024),
   deploymentLogMaxChars: Number(process.env.DEPLOYMENT_LOG_MAX_CHARS ?? 500_000),
+  sshStrictHostKeyChecking: process.env.SSH_STRICT_HOST_KEY_CHECKING ?? "accept-new",
   cookieSecure:
     process.env.COOKIE_SECURE === undefined
       ? (process.env.NODE_ENV ?? "development") === "production" || (process.env.APP_BASE_URL ?? "").startsWith("https://")
@@ -40,10 +41,16 @@ export function warnOnUnsafeDefaults() {
   if (!["master", "worker"].includes(config.nodeRole)) {
     console.warn(`YANTO_NODE_ROLE should be "master" or "worker"; got "${config.nodeRole}".`);
   }
-  if (config.nodeEnv === "production" && config.jwtSecret === requiredSecretFallback) {
+  if (config.jwtSecret === requiredSecretFallback) {
+    if (config.nodeEnv === "production") {
+      throw new Error("FATAL: JWT_SECRET is using the default value. Set a strong secret before running in production.");
+    }
     console.warn("JWT_SECRET is using the default value. Set a strong secret before exposing this app.");
   }
-  if (config.nodeEnv === "production" && config.adminPassword === "admin") {
+  if (config.adminPassword === "admin") {
+    if (config.nodeEnv === "production") {
+      throw new Error("FATAL: ADMIN_PASSWORD is using the default value. Set a strong admin password before running in production.");
+    }
     console.warn("ADMIN_PASSWORD is using the default value. Set a strong admin password.");
   }
 }

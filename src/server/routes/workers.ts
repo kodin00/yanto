@@ -1,5 +1,6 @@
 import { Router } from "express";
 import type express from "express";
+import rateLimit from "express-rate-limit";
 import { asyncRoute, routeParam } from "../http-utils.js";
 import { workerDeploymentUpdateInput, workerHeartbeatInput, workerLogInput, workerRegisterInput } from "../route-schemas.js";
 import { recordAuditLog } from "../services/audit.js";
@@ -11,6 +12,22 @@ import { getWorkerJoinToken } from "../services/settings.js";
 import { constantTimeEqual } from "../services/tokens.js";
 
 type RawBodyRequest = express.Request & { rawBody?: Buffer };
+
+const deployLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { message: "Too many deploy requests. Try again later." }
+});
+
+const webhookLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 60,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { message: "Too many webhook requests. Try again later." }
+});
 
 const router = Router();
 
@@ -107,6 +124,7 @@ router.patch(
 
 router.post(
   "/deploy",
+  deployLimiter,
   asyncRoute(async (req, res) => {
     const id = String(req.query.id ?? "");
     const header = req.header("authorization") ?? "";
@@ -128,6 +146,7 @@ router.post(
 
 router.post(
   "/webhooks/github",
+  webhookLimiter,
   asyncRoute(async (req, res) => {
     const projectId = String(req.query.id ?? req.query.projectId ?? "");
     const project = await getProject(projectId);

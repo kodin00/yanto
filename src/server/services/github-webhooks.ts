@@ -48,7 +48,11 @@ export function projectDeployBranch(project: Pick<ProjectRow, "branch">) {
 
 export function githubPayloadFromRequestBody(body: unknown) {
   if (body && typeof body === "object" && "payload" in body && typeof body.payload === "string") {
-    return JSON.parse(body.payload) as unknown;
+    try {
+      return JSON.parse(body.payload) as unknown;
+    } catch {
+      throw new Error("Invalid JSON in webhook payload field");
+    }
   }
   return body;
 }

@@ -34,9 +34,10 @@ export async function recordAuditLog(input: AuditInput) {
 }
 
 export async function listAuditLogs(limit = 100, projectId?: string) {
+  const safeLimit = Math.min(limit, 500);
   const query = db.select().from(auditLogs);
   if (projectId) {
-    return query.where(eq(auditLogs.projectId, projectId)).orderBy(desc(auditLogs.createdAt)).limit(limit);
+    return query.where(eq(auditLogs.projectId, projectId)).orderBy(desc(auditLogs.createdAt)).limit(safeLimit);
   }
-  return query.orderBy(desc(auditLogs.createdAt)).limit(limit);
+  return query.orderBy(desc(auditLogs.createdAt)).limit(safeLimit);
 }

@@ -9,6 +9,7 @@ import { createId } from "./tokens.js";
 import { runCommand } from "./commands.js";
 import { getProject } from "./projects.js";
 import { encrypt, decrypt, isEncrypted } from "./crypto.js";
+import { normalizeString } from "./utils.js";
 
 // --- Cloudflare Settings (app_settings key: "cloudflare.tunnel") ---
 
@@ -25,10 +26,6 @@ const emptyCloudflareSettings: CloudflareSettings = {
   zoneId: "",
   apiToken: ""
 };
-
-function normalizeString(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
 
 async function runRequiredDocker(args: string[]) {
   const result = await runCommand("docker", args);

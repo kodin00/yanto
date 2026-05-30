@@ -3,6 +3,7 @@ import { db } from "../db/index.js";
 import { appSettings } from "../db/schema.js";
 import { config } from "../config.js";
 import { createWorkerJoinToken } from "./tokens.js";
+import { normalizeString } from "./utils.js";
 
 export type R2SettingsInput = {
   enabled?: boolean;
@@ -38,10 +39,6 @@ const emptySetupWizardSettings: SetupWizardSettings = {
   dismissedAt: null,
   updatedAt: null
 };
-
-function normalizeString(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
 
 function parseR2Settings(value: string | undefined): StoredR2Settings {
   if (!value) return emptyR2Settings;

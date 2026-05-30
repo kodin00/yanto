@@ -23,8 +23,16 @@ import {
   Sun,
   Trash2
 } from "lucide-react";
-import { AuditView, BackupsView, ContainersView, DashboardView, DeploymentsView, NodesView, ProjectsView, SettingsView } from "./views";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { DashboardView } from "./views";
+import { FormEvent, lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+
+const AuditView = lazy(() => import("./views/AuditView").then(m => ({ default: m.AuditView })));
+const BackupsView = lazy(() => import("./views/BackupsView").then(m => ({ default: m.BackupsView })));
+const ContainersView = lazy(() => import("./views/ContainersView").then(m => ({ default: m.ContainersView })));
+const DeploymentsView = lazy(() => import("./views/DeploymentsView").then(m => ({ default: m.DeploymentsView })));
+const NodesView = lazy(() => import("./views/NodesView").then(m => ({ default: m.NodesView })));
+const ProjectsView = lazy(() => import("./views/ProjectsView").then(m => ({ default: m.ProjectsView })));
+const SettingsView = lazy(() => import("./views/SettingsView").then(m => ({ default: m.SettingsView })));
 import type { CloudflarePublicSettings, CloudflareRoute, ContainerInfo, Deployment, DeploymentNode, Project, ProjectWithDeployToken, R2PublicSettings, SetupWizardStatus, SystemUsage } from "../shared/types";
 import {
   cloudflareServiceUrl,
@@ -38,17 +46,16 @@ import {
   totalPages
 } from "./app-utils";
 import { Button, ConfirmDialog, CustomSelect, IconButton, LoadingInline, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast, ToggleField } from "./components/ui";
+import { EnvEditor, type ProjectEnvState } from "./components/EnvEditor";
 import { YantoBootLoader } from "./components/YantoBootLoader";
-import { api, type AuditLogEntry, type BackupRecord, type CloudflareRoutePayload, type PostgresTarget, type ProjectEnvVariable } from "./lib/api";
+import { api, type AuditLogEntry, type BackupRecord, type CloudflareRoutePayload, type PostgresTarget } from "./lib/api";
 
 type View = "dashboard" | "projects" | "deployments" | "containers" | "nodes" | "backups" | "audit" | "settings";
 type ToastState = { message: string; kind?: "ok" | "error" | "loading" } | null;
 type LogModalState = { title: string; logs: string; streamPath?: string; live?: boolean; status?: string };
 type LogStreamPayload = { logs?: string; chunk?: string; status?: string; error?: string; done?: boolean };
-type EnvEditMode = "pairs" | "text";
 type CfRouteProtocol = "http" | "https";
 type CfRouteForm = { hostname: string; protocol: CfRouteProtocol; localTarget: string; noTlsVerify: boolean };
-type ProjectEnvState = { rows: ProjectEnvVariable[]; baseline: ProjectEnvVariable[]; draftKey: string; draftValue: string; content: string; mode: EnvEditMode; loading: boolean; available: boolean; opened: boolean };
 type ProjectComposeState = { open: boolean; loading: boolean; available: boolean; source: "saved" | "file" | "empty" | null; message: string };
 type RollbackModalState = { project: Project; deployments: Deployment[] };
 type ConfirmState = { title: string; body: string; label: string; danger?: boolean; loadingMessage?: string; successMessage?: string; action: () => Promise<void> };
@@ -131,26 +138,6 @@ function getInitialTheme(): ThemeMode {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-function serializeEnvRows(rows: ProjectEnvVariable[]) {
-  const content = normalizeEnvRows(rows)
-    .map((row) => `${row.key}=${row.value ?? ""}`)
-    .join("\n");
-  return content ? `${content}\n` : "";
-}
-
-function parseEnvContentRows(content: string) {
-  const rows: ProjectEnvVariable[] = [];
-  for (const line of content.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const separator = line.indexOf("=");
-    if (separator <= 0) continue;
-    const value = line.slice(separator + 1);
-    rows.push({ key: line.slice(0, separator).trim(), value, masked: value === "********" });
-  }
-  return normalizeEnvRows(rows);
-}
-
 function parseCfServiceTarget(serviceTarget: string): Pick<CfRouteForm, "protocol" | "localTarget"> {
   const match = serviceTarget.trim().match(/^(https?):\/\/(.+)$/);
   if (!match) return { protocol: "http", localTarget: serviceTarget.trim() };
@@ -223,32 +210,6 @@ export function App() {
     document.documentElement.style.colorScheme = theme;
     window.localStorage.setItem(themeStorageKey, theme);
   }, [theme]);
-
-  const loadAll = useCallback(async () => {
-    const [projectRows, deploymentRows, containerRows, nodeRows, backupRows, postgresRows, auditRows, systemRows, settingRows, logRows] = await Promise.all([
-      api.projects(),
-      api.deployments(),
-      api.containers().catch(() => []),
-      api.nodes().catch(() => []),
-      api.backups().catch(() => []),
-      api.postgresBackupTargets().catch(() => []),
-      api.auditLog().catch(() => []),
-      api.systemUsage().catch(() => null),
-      api.settings().catch(() => null),
-      api.systemLogs().catch(() => "")
-    ]);
-    setProjects(projectRows);
-    setDeployments(deploymentRows);
-    setContainers(containerRows);
-    setNodes(nodeRows);
-    setBackups(backupRows);
-    setPostgresTargets(postgresRows);
-    setAuditEntries(auditRows);
-    setUsage(systemRows);
-    if (settingRows) setSettings(settingRows);
-    setSettingsLoaded(true);
-    setSystemLogs(logRows);
-  }, []);
 
   const refreshProjects = useCallback(async () => {
     const [projectRows, deploymentRows, containerRows] = await Promise.all([
@@ -1144,6 +1105,7 @@ export function App() {
           />
         ) : null}
 
+        <Suspense fallback={<LoadingInline label="Loading..." />}>
         {view === "projects" ? (
           <ProjectsView
             visibleProjects={visibleProjects}
@@ -1205,7 +1167,7 @@ export function App() {
             containers={containers}
             openContainerLogs={openContainerLogs}
             setConfirm={setConfirm}
-            loadAll={loadAll}
+            refreshContainers={refreshContainers}
           />
         ) : null}
 
@@ -1244,6 +1206,7 @@ export function App() {
             setCleanupPreviewed={setCleanupPreviewed}
           />
         ) : null}
+        </Suspense>
       </main>
 
       {setupModalOpen ? (
@@ -1693,89 +1656,6 @@ export function App() {
       ) : null}
 
       {toast ? <Toast {...toast} onClose={() => setToast(null)} /> : null}
-    </div>
-  );
-}
-
-function EnvEditor({ modal, onChange }: { modal: ProjectEnvState; onChange: (next: ProjectEnvState) => void }) {
-  const baselineKeys = new Set(modal.baseline.map((row) => row.key));
-  const currentKeys = new Set(modal.rows.map((row) => row.key));
-  const changedRows = modal.rows.filter((row) => {
-    const original = modal.baseline.find((item) => item.key === row.key);
-    return !original || original.value !== row.value || original.masked !== row.masked;
-  });
-  const removedRows = modal.baseline.filter((row) => !currentKeys.has(row.key));
-  const setRows = (rows: ProjectEnvVariable[], patch: Partial<ProjectEnvState> = {}) => onChange({ ...modal, ...patch, rows, content: serializeEnvRows(rows) });
-  const setMode = (mode: EnvEditMode) => {
-    if (mode === modal.mode) return;
-    onChange(mode === "text" ? { ...modal, mode } : { ...modal, mode, rows: parseEnvContentRows(modal.content) });
-  };
-
-  return (
-    <div className={`env-editor ${modal.mode === "text" ? "text-mode" : ""}`}>
-      <div className="env-mode-toggle" role="group" aria-label="Environment input mode">
-        <button type="button" className={modal.mode === "pairs" ? "active" : ""} onClick={() => setMode("pairs")}>
-          <List size={15} />
-          <span>Key/value</span>
-        </button>
-        <button type="button" className={modal.mode === "text" ? "active" : ""} onClick={() => setMode("text")}>
-          <FileText size={15} />
-          <span>Text</span>
-        </button>
-      </div>
-      {modal.mode === "text" ? (
-        <TextAreaField label="Environment text" value={modal.content} onChange={(content) => onChange({ ...modal, content })} />
-      ) : (
-        <>
-          <div className="env-rows">
-            {modal.rows.map((row, index) => (
-              <div className="env-row" key={`${row.key}:${index}`}>
-                <TextField label="Key" value={row.key} onChange={(key) => setRows(modal.rows.map((item, rowIndex) => (rowIndex === index ? { ...item, key } : item)))} />
-                <TextField
-                  label="Value"
-                  type={row.masked ? "password" : "text"}
-                  value={row.value ?? ""}
-                  onChange={(value) => setRows(modal.rows.map((item, rowIndex) => (rowIndex === index ? { ...item, value } : item)))}
-                />
-                <ToggleField label="Masked" value={Boolean(row.masked)} onChange={(masked) => setRows(modal.rows.map((item, rowIndex) => (rowIndex === index ? { ...item, masked } : item)))} />
-                <IconButton label="Remove variable" variant="danger" onClick={() => setRows(modal.rows.filter((_, rowIndex) => rowIndex !== index))}>
-                  <Trash2 size={15} />
-                </IconButton>
-              </div>
-            ))}
-          </div>
-          <div className="env-add-row">
-            <TextField label="New key" value={modal.draftKey} onChange={(draftKey) => onChange({ ...modal, draftKey })} />
-            <TextField label="New value" type="password" value={modal.draftValue} onChange={(draftValue) => onChange({ ...modal, draftValue })} />
-            <Button
-              variant="secondary"
-              onClick={() => {
-                const key = modal.draftKey.trim();
-                if (!key) return;
-                setRows(normalizeEnvRows([...modal.rows, { key, value: modal.draftValue, masked: true }]), { draftKey: "", draftValue: "" });
-              }}
-              icon={<Plus size={15} />}
-            >
-              Add
-            </Button>
-          </div>
-          <div className="env-diff">
-            <div className="section-kicker">Masked diff</div>
-            {[...changedRows, ...removedRows].map((row) => {
-              const removed = !currentKeys.has(row.key);
-              const created = !baselineKeys.has(row.key);
-              return (
-                <div key={`${row.key}:diff`}>
-                  <ShieldCheck size={15} />
-                  <span>{row.key}</span>
-                  <strong>{removed ? "removed" : created ? "added" : "updated"}</strong>
-                </div>
-              );
-            })}
-            {!changedRows.length && !removedRows.length ? <p className="muted">No pending environment changes.</p> : null}
-          </div>
-        </>
-      )}
     </div>
   );
 }

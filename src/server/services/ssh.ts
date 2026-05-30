@@ -2,15 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config.js";
 import { runCommand } from "./commands.js";
-
-async function fileExists(target: string) {
-  try {
-    await fs.access(target);
-    return true;
-  } catch {
-    return false;
-  }
-}
+import { pathExists } from "./paths.js";
 
 export async function ensureSshKey(projectId: string) {
   await fs.mkdir(config.sshKeysDir, { recursive: true, mode: 0o700 });
@@ -32,17 +24,17 @@ export async function ensureSshKey(projectId: string) {
 }
 
 export function gitSshEnv(privateKeyPath: string | null) {
-  const baseCommand = "ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/yanto_known_hosts";
+  const baseCommand = `ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=${config.sshStrictHostKeyChecking} -o UserKnownHostsFile=/tmp/yanto_known_hosts`;
   return {
     GIT_SSH_COMMAND: privateKeyPath ? `${baseCommand} -i ${privateKeyPath}` : baseCommand
   };
 }
 
 export async function resolveGitPrivateKeyPath() {
-  if (await fileExists(config.managedSshPrivateKeyPath)) {
+  if (await pathExists(config.managedSshPrivateKeyPath)) {
     return config.managedSshPrivateKeyPath;
   }
-  if (await fileExists(config.sshPrivateKeyPath)) {
+  if (await pathExists(config.sshPrivateKeyPath)) {
     return config.sshPrivateKeyPath;
   }
   return null;
@@ -73,8 +65,8 @@ export async function saveManagedSshPrivateKey(privateKey: string) {
 }
 
 export async function managedSshKeyStatus() {
-  const hasManagedKey = await fileExists(config.managedSshPrivateKeyPath);
-  const hasMountedKey = await fileExists(config.sshPrivateKeyPath);
+  const hasManagedKey = await pathExists(config.managedSshPrivateKeyPath);
+  const hasMountedKey = await pathExists(config.sshPrivateKeyPath);
   let publicKey: string | null = null;
   if (hasManagedKey) {
     try {

@@ -90,3 +90,15 @@ export function runCommand(command: string, args: string[], options: RunCommandO
     });
   });
 }
+
+/**
+ * Runs a command and throws if it exits with a non-zero code.
+ * Returns the command output on success.
+ */
+export async function runCommandChecked(command: string, args: string[], options?: RunCommandOptions): Promise<string> {
+  const result = await runCommand(command, args, options);
+  if (result.exitCode !== 0) {
+    throw new Error(`Command "${command} ${args.join(" ")}" failed with exit code ${result.exitCode}: ${result.output.slice(-500)}`);
+  }
+  return result.output;
+}

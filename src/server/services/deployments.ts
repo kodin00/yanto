@@ -17,7 +17,7 @@ export async function appendDeploymentLog(deploymentId: string, chunk: string) {
   const nextLogs = sql`${deployments.logs} || ${chunk}`;
   const truncationNotice = "[... older deployment logs truncated ...]\n";
   const retainedChars = Math.max(0, config.deploymentLogMaxChars - truncationNotice.length);
-  await db
+  const [updated] = await db
     .update(deployments)
     .set({
       logs:
@@ -25,9 +25,9 @@ export async function appendDeploymentLog(deploymentId: string, chunk: string) {
           ? sql`CASE WHEN length(${nextLogs}) > ${config.deploymentLogMaxChars} THEN ${truncationNotice} || right(${nextLogs}, ${retainedChars}) ELSE ${nextLogs} END`
           : nextLogs
     })
-    .where(eq(deployments.id, deploymentId));
+    .where(eq(deployments.id, deploymentId))
+    .returning({ logs: deployments.logs, status: deployments.status });
 
-  const updated = await findDeployment(deploymentId);
   if (updated) {
     deploymentEvents.emitLogUpdate({
       deploymentId,
@@ -160,7 +160,6 @@ export async function latestDeployments(limit = 20) {
       commitSha: deployments.commitSha,
       commitMessage: deployments.commitMessage,
       rollbackFromDeploymentId: deployments.rollbackFromDeploymentId,
-      logs: deployments.logs,
       exitCode: deployments.exitCode,
       startedAt: deployments.startedAt,
       finishedAt: deployments.finishedAt

@@ -140,6 +140,8 @@ async function main() {
   warnOnUnsafeDefaults();
   const token = await tokenForWorker();
   logger.info("worker started", { masterUrl: config.masterUrl, name: config.workerName || os.hostname() });
+  let consecutiveErrors = 0;
+  const maxBackoffMs = 60_000;
   while (true) {
     try {
       await heartbeat(token);
@@ -147,10 +149,15 @@ async function main() {
       if (job) {
         await runJob(token, job);
       }
+      consecutiveErrors = 0;
     } catch (error) {
-      logger.error("worker loop failed", { error: error instanceof Error ? error.message : String(error) });
+      consecutiveErrors++;
+      logger.error("worker loop failed", { error: error instanceof Error ? error.message : String(error), consecutiveErrors });
     }
-    await sleep(config.workerPollIntervalMs);
+    const backoff = consecutiveErrors > 0
+      ? Math.min(config.workerPollIntervalMs * Math.pow(2, consecutiveErrors - 1), maxBackoffMs)
+      : config.workerPollIntervalMs;
+    await sleep(backoff);
   }
 }
 
