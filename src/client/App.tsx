@@ -45,6 +45,7 @@ import {
   totalPages
 } from "./app-utils";
 import { Button, ConfirmDialog, CustomSelect, IconButton, LoadingInline, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast, ToggleField } from "./components/ui";
+import { YantoBootLoader } from "./components/YantoBootLoader";
 import { AuditTable, BackupTable, ContainerGroups, DeploymentTable, PostgresTargetTable } from "./data-tables";
 import { api, type AuditLogEntry, type BackupRecord, type CloudflareRoutePayload, type PostgresTarget, type ProjectEnvVariable } from "./lib/api";
 
@@ -1009,7 +1010,7 @@ export function App() {
   if (loading) {
     return (
       <main className="login-shell">
-        <LoadingInline label="Starting Yanto" />
+        <YantoBootLoader />
       </main>
     );
   }

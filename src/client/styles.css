@@ -136,6 +136,34 @@ button:disabled {
   padding: 24px;
 }
 
+.boot-loader {
+  width: min(760px, 100%);
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+}
+
+.boot-loader__ascii {
+  width: 100%;
+  min-height: 360px;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  box-shadow: var(--shadow);
+  font-family: var(--font-mono);
+  font-size: clamp(5.5px, 1.2vw, 11px);
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: pre;
+  text-align: left;
+  backdrop-filter: blur(14px);
+}
+
 .login-panel {
   width: min(420px, 100%);
   display: grid;
