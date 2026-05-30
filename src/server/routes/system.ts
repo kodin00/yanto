@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "../auth.js";
 import { config } from "../config.js";
-import { asyncRoute, actor, routeParam } from "../http-utils.js";
+import { asyncRoute, actor } from "../http-utils.js";
 import { recordAuditLog } from "../services/audit.js";
 import { listAuditLogs } from "../services/audit.js";
 import { cleanupDocker, previewDockerCleanup } from "../services/docker.js";

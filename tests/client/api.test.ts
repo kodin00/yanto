@@ -200,7 +200,7 @@ describe("api client", () => {
     });
 
     it("deleteProject sends DELETE to /api/projects/:id", async () => {
-      const fetchMock = mockFetch(undefined, { status: 204 });
+      mockFetch(undefined, { status: 204 });
       const response = {
         ok: true,
         status: 204,
