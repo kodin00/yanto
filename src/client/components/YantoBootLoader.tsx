@@ -6,9 +6,15 @@ import { LoadingInline } from "./ui";
 const asciiWidth = 74;
 const asciiHeight = 24;
 
+const bufferSize = asciiWidth * asciiHeight;
+const chars: string[] = new Array(bufferSize);
+const zBuffer: number[] = new Array(bufferSize);
+
 function renderFrame(time: number) {
-  const chars = Array.from({ length: asciiWidth * asciiHeight }, () => " ");
-  const zBuffer = Array.from({ length: asciiWidth * asciiHeight }, () => -Infinity);
+  for (let i = 0; i < bufferSize; i++) {
+    chars[i] = " ";
+    zBuffer[i] = -Infinity;
+  }
   const options: PlotOptions = {
     width: asciiWidth,
     height: asciiHeight,

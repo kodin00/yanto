@@ -1,22 +1,18 @@
 import {
   Activity,
   Archive,
-  AlertTriangle,
   Boxes,
   ChevronLeft,
   ChevronRight,
   Container,
+  Cloud,
   Copy,
-  DatabaseZap,
   FileClock,
   FileText,
   GitBranch,
-  Cloud,
-  HardDrive,
   KeyRound,
   List,
   LogOut,
-  MemoryStick,
   Moon,
   Play,
   Plus,
@@ -24,15 +20,13 @@ import {
   Server,
   Settings,
   ShieldCheck,
-  Square,
   Sun,
-  Undo2,
   Trash2
 } from "lucide-react";
-import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { AuditView, BackupsView, ContainersView, DashboardView, DeploymentsView, NodesView, ProjectsView, SettingsView } from "./views";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { CloudflarePublicSettings, CloudflareRoute, ContainerInfo, Deployment, DeploymentNode, Project, ProjectWithDeployToken, R2PublicSettings, SetupWizardStatus, SystemUsage } from "../shared/types";
 import {
-  bytes,
   cloudflareServiceUrl,
   dateTime,
   durationBetween,
@@ -40,13 +34,11 @@ import {
   githubWebhookEndpoint,
   normalizeEnvRows,
   pageItems,
-  pageSize,
   slugifyFolderName,
   totalPages
 } from "./app-utils";
 import { Button, ConfirmDialog, CustomSelect, IconButton, LoadingInline, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast, ToggleField } from "./components/ui";
 import { YantoBootLoader } from "./components/YantoBootLoader";
-import { AuditTable, BackupTable, ContainerGroups, DeploymentTable, PostgresTargetTable } from "./data-tables";
 import { api, type AuditLogEntry, type BackupRecord, type CloudflareRoutePayload, type PostgresTarget, type ProjectEnvVariable } from "./lib/api";
 
 type View = "dashboard" | "projects" | "deployments" | "containers" | "nodes" | "backups" | "audit" | "settings";
@@ -242,7 +234,7 @@ export function App() {
       api.postgresBackupTargets().catch(() => []),
       api.auditLog().catch(() => []),
       api.systemUsage().catch(() => null),
-      api.settings(),
+      api.settings().catch(() => null),
       api.systemLogs().catch(() => "")
     ]);
     setProjects(projectRows);
@@ -253,9 +245,42 @@ export function App() {
     setPostgresTargets(postgresRows);
     setAuditEntries(auditRows);
     setUsage(systemRows);
-    setSettings(settingRows);
+    if (settingRows) setSettings(settingRows);
     setSettingsLoaded(true);
     setSystemLogs(logRows);
+  }, []);
+
+  const refreshProjects = useCallback(async () => {
+    const [projectRows, deploymentRows, containerRows] = await Promise.all([
+      api.projects(),
+      api.deployments(),
+      api.containers().catch(() => [])
+    ]);
+    setProjects(projectRows);
+    setDeployments(deploymentRows);
+    setContainers(containerRows);
+  }, []);
+
+  const refreshDeployments = useCallback(async () => {
+    setDeployments(await api.deployments());
+  }, []);
+
+  const refreshBackups = useCallback(async () => {
+    const [backupRows, postgresRows] = await Promise.all([
+      api.backups().catch(() => []),
+      api.postgresBackupTargets().catch(() => [])
+    ]);
+    setBackups(backupRows);
+    setPostgresTargets(postgresRows);
+  }, []);
+
+  const refreshSettings = useCallback(async () => {
+    const settingRows = await api.settings().catch(() => null);
+    if (settingRows) setSettings(settingRows);
+  }, []);
+
+  const refreshContainers = useCallback(async () => {
+    setContainers(await api.containers().catch(() => []));
   }, []);
 
   const loadView = useCallback(async (targetView: View) => {
@@ -548,7 +573,7 @@ export function App() {
       }
       setProjectModal(null);
       setProjectEditorModal(null);
-      await loadAll();
+      await refreshProjects();
       if (creatingProject && "deployToken" in savedProject) {
         setCreatedProjectSecret({
           projectName: savedProject.name,
@@ -591,7 +616,7 @@ export function App() {
         live: true,
         status: result.deployment.status
       });
-      await loadAll();
+      await refreshDeployments();
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to deploy project.", kind: "error" });
     } finally {
@@ -751,7 +776,7 @@ export function App() {
     setToast({ message: "Creating Postgres backup...", kind: "loading" });
     try {
       await api.createBackup(containerId);
-      await loadAll();
+      await refreshBackups();
       setToast({ message: "Postgres backup created." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to create backup.", kind: "error" });
@@ -771,7 +796,7 @@ export function App() {
         setToast({ message: "Restoring Postgres dump...", kind: "loading" });
         try {
           await api.restorePostgresTarget(target.containerId, file);
-          await loadAll();
+          await refreshBackups();
           setToast({ message: "Postgres dump restored." });
         } finally {
           setBusy(null);
@@ -937,7 +962,7 @@ export function App() {
     try {
       await api.saveSshKey(sshPrivateKey);
       setSshPrivateKey("");
-      await loadAll();
+      await refreshSettings();
       setToast({ message: "SSH key saved." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to save SSH key.", kind: "error" });
@@ -978,6 +1003,11 @@ export function App() {
       setSetupModalOpen(false);
       return;
     }
+    if (busy?.startsWith("setup-")) {
+      setSetupModalOpen(false);
+      return;
+    }
+    setSetupModalOpen(false);
     void saveSetupWizard("dismissed");
   }
 
@@ -1097,568 +1127,122 @@ export function App() {
         </header>
 
         {view === "dashboard" ? (
-          <section className="dashboard">
-            <section className="stat-grid">
-              <StatTile label="Projects" value={projects.length} detail={`${settings.hostProjectsRoot} root`} />
-              <StatTile label="Nodes" value={nodes.length || 1} detail={`${nodes.filter((node) => node.status === "online").length || 1} online`} />
-              {runningDeployments.length ? <StatTile label="Active deploys" value={runningDeployments.length} detail="Deployment in progress" /> : null}
-              <StatTile label="Running containers" value={containers.filter((container) => container.state === "running").length} detail={`${containers.length} total containers`} />
-              <StatTile label="RAM used" value={usage ? `${usage.memory.usedPercent}%` : "-"} detail={usage ? `${bytes(usage.memory.used)} of ${bytes(usage.memory.total)}` : "Unavailable"} />
-            </section>
-
-            {setupCanReopen ? (
-              <section className="setup-banner">
-                <div>
-                  <strong>Quick setup</strong>
-                  <p>SSH, Cloudflare Tunnel, and R2 can be added now or later.</p>
-                </div>
-                <Button variant="secondary" onClick={() => openSetupWizard()} icon={<Settings size={16} />}>
-                  Open setup
-                </Button>
-              </section>
-            ) : null}
-
-            <div className="dashboard-main-grid">
-              <div className="dashboard-left-column">
-                <WarningsPanel failingProjects={failingProjects} unhealthyContainers={unhealthyContainers} warningDisks={warningDisks} />
-                <UsagePanel usage={usage} />
-                <section className="panel">
-                  <div className="section-kicker">Build history</div>
-                  <div className="panel-head">
-                    <h2>Recent deployments</h2>
-                    <StatusBadge status={runningDeployments.length ? "running" : "idle"} />
-                  </div>
-                  <DeploymentTable deployments={deployments.slice(0, 6)} onLogs={openDeploymentLogs} compact />
-                </section>
-              </div>
-              <section className="panel container-overview">
-                <div className="section-kicker">Runtime inventory</div>
-                <div className="panel-head">
-                  <h2>Containers</h2>
-                  <span className="count">{containers.filter((container) => container.state === "running").length} running</span>
-                </div>
-                <div className="compact-list">
-                  {containers.slice(0, 7).map((container) => (
-                    <div className="row-item technical-row" key={container.id}>
-                      <div>
-                        <strong>{container.name}</strong>
-                        <span>{container.image}</span>
-                      </div>
-                      <div className="row-metrics">
-                        <span>{container.cpuPercent}</span>
-                        <span>{container.memoryPercent}</span>
-                        <StatusBadge status={container.state} />
-                      </div>
-                    </div>
-                  ))}
-                  {!containers.length ? <p className="muted">No containers found yet.</p> : null}
-                </div>
-              </section>
-            </div>
-          </section>
+          <DashboardView
+            projects={projects}
+            nodes={nodes}
+            containers={containers}
+            deployments={deployments}
+            runningDeployments={runningDeployments}
+            usage={usage}
+            settings={settings}
+            setupCanReopen={setupCanReopen}
+            failingProjects={failingProjects}
+            unhealthyContainers={unhealthyContainers}
+            warningDisks={warningDisks}
+            openSetupWizard={openSetupWizard}
+            openDeploymentLogs={openDeploymentLogs}
+          />
         ) : null}
 
         {view === "projects" ? (
-          <section className="panel">
-            <div className="panel-head">
-              <h2>Registered projects</h2>
-              <Button onClick={() => openProject()} icon={<Plus size={16} />}>
-                Add project
-              </Button>
-            </div>
-            <div className="project-grid">
-              {visibleProjects.map((project) => {
-                const projectContainers = containersByProjectFolder.get(project.folderName) ?? [];
-                const projectRoutes = cfRoutesByProject[project.id] ?? project.cloudflareRoutes ?? [];
-                const activeRoutes = projectRoutes.filter((route) => route.enabled);
-                const primaryRoute = activeRoutes[0] ?? projectRoutes[0];
-                const runningCount = projectContainers.filter((container) => container.state === "running").length;
-                return (
-                <article
-                  className="project-card"
-                  key={project.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => openProject(project)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      openProject(project);
-                    }
-                  }}
-                >
-                  <div className="project-card-main">
-                    <div className="project-card-head">
-                      <div>
-                        <h3>{project.name}</h3>
-                        <p>{project.gitUrl || "Compose file project"}</p>
-                      </div>
-                      <StatusBadge status={latestDeploymentByProject.get(project.id)?.status ?? "ready"} />
-                    </div>
-                    <div className="project-card-meta">
-                      <span>{runningCount}/{projectContainers.length || project.containerCount || 0} running</span>
-                      {primaryRoute ? <span className={primaryRoute.enabled ? "route-live" : ""}>{primaryRoute.enabled ? "Tunnel" : "Tunnel off"}: {primaryRoute.hostname}</span> : null}
-                    </div>
-                    {primaryRoute ? (
-                      <a className="project-domain" href={`https://${primaryRoute.hostname}`} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()}>
-                        https://{primaryRoute.hostname}
-                      </a>
-                    ) : settings.cf?.hasApiToken ? (
-                      <span className="project-domain muted">No tunnel domain</span>
-                    ) : null}
-                  </div>
-                  <div className="project-card-side" onClick={(event) => event.stopPropagation()}>
-                    <div className="project-copy-actions">
-                      <Button variant="ghost" onClick={() => void copyText(endpoint(project, settings.appBaseUrl))} icon={<Copy size={14} />}>
-                        Deploy URL
-                      </Button>
-                      <Button variant="ghost" onClick={() => void copyText(githubWebhookEndpoint(project, settings.appBaseUrl))} icon={<Copy size={14} />}>
-                        Webhook
-                      </Button>
-                    </div>
-                    <div className="actions" onClick={(event) => event.stopPropagation()}>
-                      <Button variant="secondary" onClick={() => openRollback(project)} icon={<Undo2 size={15} />}>
-                        Rollback
-                      </Button>
-                      <Button disabled={busy === `deploy:${project.id}` || !project.manualDeployEnabled} onClick={() => void deploy(project)} icon={<Play size={15} />}>
-                        Deploy
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() =>
-                          setConfirm({
-                            title: "Stop project",
-                            body: `Stop containers for ${project.name}?`,
-                            label: "Stop",
-                            danger: true,
-                            loadingMessage: `Stopping ${project.name}...`,
-                            successMessage: "Project stopped.",
-                            action: async () => {
-                              await api.stopProject(project.id);
-                              await loadAll();
-                            }
-                          })
-                        }
-                        icon={<Square size={15} />}
-                      >
-                        Stop
-                      </Button>
-                      <Button
-                        variant="danger"
-                        onClick={() =>
-                          setConfirm({
-                            title: "Remove project",
-                            body: "This removes the project record and deployment logs. The project folder is left untouched.",
-                            label: "Remove",
-                            danger: true,
-                            loadingMessage: `Removing ${project.name}...`,
-                            successMessage: "Project removed.",
-                            action: async () => {
-                              await api.deleteProject(project.id);
-                              await loadAll();
-                            }
-                          })
-                        }
-                      >
-                        Remove
-                      </Button>
-                    </div>
-                  </div>
-                </article>
-                );
-              })}
-            </div>
-            <Pagination label="Projects" page={projectPage} totalItems={projects.length} onPageChange={setProjectPage} />
-          </section>
+          <ProjectsView
+            visibleProjects={visibleProjects}
+            projects={projects}
+            containersByProjectFolder={containersByProjectFolder}
+            cfRoutesByProject={cfRoutesByProject}
+            latestDeploymentByProject={latestDeploymentByProject}
+            settings={settings}
+            busy={busy}
+            projectPage={projectPage}
+            openProject={openProject}
+            openRollback={openRollback}
+            deploy={deploy}
+            copyText={copyText}
+            setConfirm={setConfirm}
+            refreshProjects={refreshProjects}
+            setProjectPage={setProjectPage}
+          />
         ) : null}
 
         {view === "deployments" ? (
-          <section className="panel">
-            <div className="panel-head">
-              <h2>Deployment history</h2>
-              <span className="count">{deployments.length} records</span>
-            </div>
-            <DeploymentTable deployments={visibleDeployments} onLogs={openDeploymentLogs} />
-            <Pagination label="Deployments" page={deploymentPage} totalItems={deployments.length} onPageChange={setDeploymentPage} />
-          </section>
+          <DeploymentsView
+            deployments={deployments}
+            visibleDeployments={visibleDeployments}
+            deploymentPage={deploymentPage}
+            openDeploymentLogs={openDeploymentLogs}
+            setDeploymentPage={setDeploymentPage}
+          />
         ) : null}
 
         {view === "backups" ? (
-          <div className="backup-layout">
-            <section className="panel">
-              <div className="panel-head">
-                <h2>Postgres targets</h2>
-                <div className="actions">
-                  <span className="count">{postgresTargets.length} detected</span>
-                  <Button disabled={busy === "backup:yanto"} onClick={() => void dumpPostgresTarget()} icon={<Archive size={16} />}>
-                    Dump Yanto DB
-                  </Button>
-                </div>
-              </div>
-              <PostgresTargetTable targets={postgresTargets} busy={busy} onDump={dumpPostgresTarget} onRestore={restorePostgresTarget} />
-            </section>
-            <section className="panel">
-              <div className="panel-head">
-                <h2>Backup history</h2>
-                <span className="count">{backups.length} dumps</span>
-              </div>
-              <BackupTable
-                backups={visibleBackups}
-                busy={busy}
-                r2Ready={r2Ready}
-                onUploadR2={uploadBackupR2}
-                onDelete={(backup) =>
-                  setConfirm({
-                    title: "Remove backup",
-                    body: `Remove ${backup.filename || backup.id}? The dump file will be deleted from disk.`,
-                    label: "Remove",
-                    danger: true,
-                    loadingMessage: "Removing backup...",
-                    successMessage: "Backup removed.",
-                    action: async () => {
-                      await api.deleteBackup(backup.id);
-                      await loadAll();
-                    }
-                  })
-                }
-              />
-              <Pagination label="Backups" page={backupPage} totalItems={backups.length} onPageChange={setBackupPage} />
-            </section>
-          </div>
+          <BackupsView
+            postgresTargets={postgresTargets}
+            visibleBackups={visibleBackups}
+            backups={backups}
+            busy={busy}
+            r2Ready={r2Ready}
+            backupPage={backupPage}
+            dumpPostgresTarget={dumpPostgresTarget}
+            restorePostgresTarget={restorePostgresTarget}
+            uploadBackupR2={uploadBackupR2}
+            setConfirm={setConfirm}
+            refreshBackups={refreshBackups}
+            setBackupPage={setBackupPage}
+          />
         ) : null}
 
         {view === "audit" ? (
-          <section className="panel">
-            <div className="panel-head">
-              <h2>Audit log</h2>
-              <span className="count">{auditEntries.length} events</span>
-            </div>
-            <AuditTable entries={visibleAuditEntries} />
-            <Pagination label="Audit events" page={auditPage} totalItems={auditEntries.length} onPageChange={setAuditPage} />
-          </section>
+          <AuditView
+            auditEntries={auditEntries}
+            visibleAuditEntries={visibleAuditEntries}
+            auditPage={auditPage}
+            setAuditPage={setAuditPage}
+          />
         ) : null}
 
         {view === "containers" ? (
-          <section className="panel">
-            <div className="panel-head">
-              <h2>Docker containers</h2>
-              <span className="count">{containers.length} found</span>
-            </div>
-            <ContainerGroups containers={containers} onLogs={openContainerLogs} onConfirm={(next) => setConfirm(next)} onReload={loadAll} />
-          </section>
+          <ContainersView
+            containers={containers}
+            openContainerLogs={openContainerLogs}
+            setConfirm={setConfirm}
+            loadAll={loadAll}
+          />
         ) : null}
 
         {view === "nodes" ? (
-          <section className="panel">
-            <div className="panel-head">
-              <h2>Deployment nodes</h2>
-              <span className="count">{nodes.length} registered</span>
-            </div>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Role</th>
-                    <th>Status</th>
-                    <th>Docker</th>
-                    <th>Projects</th>
-                    <th>Active</th>
-                    <th>Last seen</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {nodes.map((node) => (
-                    <tr key={node.id}>
-                      <td>{node.name}</td>
-                      <td>{node.role}</td>
-                      <td><StatusBadge status={node.status} /></td>
-                      <td>{node.dockerVersion ?? "-"}</td>
-                      <td>{node.projectCount ?? 0}</td>
-                      <td>{node.runningDeploymentCount ?? 0}</td>
-                      <td>{node.lastSeenAt ? dateTime(node.lastSeenAt) : "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {!nodes.length ? <p className="muted">No nodes registered yet.</p> : null}
-          </section>
+          <NodesView nodes={nodes} />
         ) : null}
 
         {view === "settings" ? (
-          <section className="settings-grid">
-            <div className="settings-column">
-              <section className="panel r2-settings-panel">
-                <div className="panel-head">
-                  <h2>Cloudflare R2</h2>
-                  <Cloud size={19} />
-                </div>
-                <form className="form-grid compact-form" onSubmit={saveR2Settings} autoComplete="off">
-                  <ToggleField
-                    label="Upload enabled"
-                    value={r2Form.enabled}
-                    onChange={(enabled) => updateR2Form({ enabled })}
-                    description={settings.r2?.hasSecretAccessKey ? "Secret key saved" : "Add an R2 secret key before uploading"}
-                  />
-                  <div className="settings-form-pair">
-                    <TextField label="Account ID" value={r2Form.accountId} onChange={(accountId) => updateR2Form({ accountId })} autoComplete="off" />
-                    <TextField label="Bucket" value={r2Form.bucket} onChange={(bucket) => updateR2Form({ bucket })} autoComplete="off" />
-                  </div>
-                  <div className="settings-form-pair">
-                    <TextField
-                      label="Access key ID"
-                      value={r2Form.accessKeyId}
-                      onChange={(accessKeyId) => updateR2Form({ accessKeyId })}
-                      placeholder={settings.r2?.maskedAccessKeyId ? `${settings.r2.maskedAccessKeyId}; leave blank to keep` : ""}
-                      autoComplete="off"
-                    />
-                    <TextField
-                      label="Secret access key"
-                      type="password"
-                      value={r2Form.secretAccessKey}
-                      onChange={(secretAccessKey) => updateR2Form({ secretAccessKey })}
-                      placeholder={settings.r2?.hasSecretAccessKey ? "Saved; leave blank to keep" : ""}
-                      autoComplete="new-password"
-                    />
-                  </div>
-                  <TextField label="Object prefix" value={r2Form.prefix} onChange={(prefix) => updateR2Form({ prefix })} autoComplete="off" />
-                  <div className="actions">
-                    <Button type="submit" disabled={busy === "r2-settings"} icon={<Cloud size={16} />}>
-                      Save R2
-                    </Button>
-                  </div>
-                </form>
-              </section>
-
-              <section className="panel runtime-settings-panel">
-                <div className="panel-head">
-                  <h2>Runtime</h2>
-                  <Button variant="secondary" onClick={() => openSetupWizard()} icon={<Settings size={16} />}>
-                    Setup
-                  </Button>
-                </div>
-                <dl className="settings-list">
-                  <div>
-                    <dt>Container projects root</dt>
-                    <dd>{settings.projectsRoot}</dd>
-                  </div>
-                  <div>
-                    <dt>Host projects root</dt>
-                    <dd>{settings.hostProjectsRoot}</dd>
-                  </div>
-                  <div>
-                    <dt>SSH keys</dt>
-                    <dd>{settings.sshKeysDir}</dd>
-                  </div>
-                  <div>
-                    <dt>Base URL</dt>
-                    <dd>{settings.appBaseUrl}</dd>
-                  </div>
-                </dl>
-              </section>
-
-              <section className="panel webhook-settings compact-settings-panel">
-                <div className="panel-head">
-                  <h2>Deployment webhook</h2>
-                  <GitBranch size={19} />
-                </div>
-                <div className="settings-code-list">
-                  <div>
-                    <dt>Endpoint</dt>
-                    <div className="endpoint-box">
-                      <span>{`${settings.appBaseUrl.replace(/\/$/, "")}/deploy?id=<project-id>`}</span>
-                      <button type="button" onClick={() => void copyText(`${settings.appBaseUrl.replace(/\/$/, "")}/deploy?id=<project-id>`)} title="Copy endpoint" aria-label="Copy endpoint">
-                        <Copy size={15} />
-                      </button>
-                    </div>
-                  </div>
-                  <div>
-                    <dt>Auth header</dt>
-                    <div className="token-box">
-                      <span>Authorization: Bearer &lt;project-deploy-token&gt;</span>
-                      <button type="button" onClick={() => void copyText("Authorization: Bearer <project-deploy-token>")} title="Copy auth header" aria-label="Copy auth header">
-                        <Copy size={15} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section className="panel webhook-settings compact-settings-panel">
-                <div className="panel-head">
-                  <h2>Worker install</h2>
-                  <Server size={19} />
-                </div>
-                <Button variant="secondary" onClick={() => void copyWorkerInstallCommand()} icon={<Copy size={16} />}>
-                  Copy worker command
-                </Button>
-              </section>
-
-              <section className="panel cleanup-settings-panel">
-                <div className="panel-head">
-                  <h2>Cleanup</h2>
-                  <DatabaseZap size={19} />
-                </div>
-                <p className="muted">Preview reclaimable Docker space first, then clean protected unused cache and resources.</p>
-                <div className="actions">
-                  <Button
-                    variant="secondary"
-                    disabled={busy === "cleanup-preview" || busy === "cleanup"}
-                    onClick={() => void previewCleanup()}
-                    icon={busy === "cleanup-preview" ? <RefreshCw size={16} className="spin" /> : <DatabaseZap size={16} />}
-                  >
-                    {busy === "cleanup-preview" ? "Checking" : "Preview cleanup"}
-                  </Button>
-                  <Button
-                    variant="danger"
-                    disabled={busy === "cleanup-preview" || busy === "cleanup"}
-                    onClick={() => {
-                      if (!cleanupPreviewed) {
-                        setToast({ message: "Run preview cleanup first, then clean cache.", kind: "error" });
-                        return;
-                      }
-                      setConfirm({
-                        title: "Run cleanup",
-                        body: "This removes unused Docker cache and unused Docker resources shown by the preview. Running containers, named volumes, and Yanto containers are protected.",
-                        label: "Clean cache",
-                        danger: true,
-                        loadingMessage: "Cleaning Docker cache...",
-                        successMessage: "Cleanup completed.",
-                        action: async () => {
-                          setBusy("cleanup");
-                          setToast({ message: "Cleaning Docker cache...", kind: "loading" });
-                          setCleanupLogTitle("Cleanup logs");
-                          setCleanupLogs("Cleaning unused Docker cache and resources...");
-                          try {
-                            const result = await api.cleanup();
-                            setCleanupPreviewed(false);
-                            setCleanupLogs(result.logs);
-                            await loadAll();
-                            setToast({ message: "Cleanup completed." });
-                          } finally {
-                            setBusy(null);
-                          }
-                        }
-                      });
-                    }}
-                    icon={busy === "cleanup" ? <RefreshCw size={16} className="spin" /> : <Trash2 size={16} />}
-                  >
-                    Clean cache
-                  </Button>
-                </div>
-                <div className="cleanup-result">
-                  <div className="cleanup-result-head">
-                    <strong>{cleanupLogTitle}</strong>
-                    <StatusBadge status={cleanupPreviewed ? "ready" : busy === "cleanup-preview" || busy === "cleanup" ? "running" : "idle"} />
-                  </div>
-                  <LogViewer logs={cleanupLogs || "No cleanup preview yet."} />
-                </div>
-              </section>
-            </div>
-
-            <div className="settings-column">
-              <section className="panel cf-tunnel-settings-panel">
-                <div className="panel-head">
-                  <h2>Cloudflare Tunnel</h2>
-                  <ShieldCheck size={19} />
-                </div>
-                <form className="form-grid compact-form" onSubmit={saveCfSettings} autoComplete="off">
-                  <div className="cf-help">
-                    <div>
-                      <strong>Where to find these values</strong>
-                      <p>Open Cloudflare Dashboard, choose your account and zone, then copy Account ID and Zone ID from the zone overview. Create a custom API token from the API Tokens page and use the scoped permissions below.</p>
-                    </div>
-                  </div>
-                  <div className="cf-token-requirements">
-                    <span>Token permissions</span>
-                    <ul>
-                      <li>Account / Cloudflare Tunnel / Edit</li>
-                      <li>Account / Account Settings / Read</li>
-                      <li>Zone / Zone / Read</li>
-                      <li>Zone / DNS / Edit</li>
-                    </ul>
-                  </div>
-                  <div className="settings-form-pair">
-                    <TextField label="Account ID" value={cfForm.accountId} onChange={(accountId) => updateCfForm({ accountId })} />
-                    <TextField label="Zone ID" value={cfForm.zoneId} onChange={(zoneId) => updateCfForm({ zoneId })} />
-                  </div>
-                  <TextField
-                    label="API Token"
-                    type="password"
-                    value={cfForm.apiToken}
-                    onChange={(apiToken) => updateCfForm({ apiToken })}
-                    placeholder={settings.cf?.hasApiToken ? "Saved; leave blank to keep" : ""}
-                    autoComplete="new-password"
-                  />
-                  <div className={`credential-status ${settings.cf?.hasApiToken ? "saved" : ""}`}>
-                    <ShieldCheck size={15} />
-                    <span>{settings.cf?.hasApiToken ? "API token saved" : "API token not saved"}</span>
-                  </div>
-                  <div className="actions">
-                    <Button variant="secondary" disabled={busy === "cf-validate"} onClick={() => void validateCfSettings()}>
-                      Validate
-                    </Button>
-                    <Button type="submit" disabled={busy === "cf-settings"} icon={<ShieldCheck size={16} />}>
-                      Save
-                    </Button>
-                  </div>
-                </form>
-              </section>
-
-              <section className="panel ssh-settings-panel">
-                <div className="panel-head">
-                  <h2>Git SSH key</h2>
-                  <KeyRound size={19} />
-                </div>
-                <dl className="settings-list ssh-status-list">
-                  <div>
-                    <dt>Active key path</dt>
-                    <dd>{settings.sshKey?.activePrivateKeyPath ?? "No key found"}</dd>
-                  </div>
-                  <div>
-                    <dt>Managed key</dt>
-                    <dd>{settings.sshKey?.hasManagedKey ? "Saved in app volume" : "Not saved"}</dd>
-                  </div>
-                  <div>
-                    <dt>Mounted VPS key</dt>
-                    <dd>{settings.sshKey?.hasMountedKey ? settings.sshKey.mountedPrivateKeyPath : "Not found"}</dd>
-                  </div>
-                </dl>
-                {settings.sshKey?.publicKey ? (
-                  <div className="token-box ssh-public-key-box">
-                    <span>{settings.sshKey.publicKey}</span>
-                    <button type="button" onClick={() => void copyText(settings.sshKey?.publicKey ?? "")} title="Copy public key" aria-label="Copy public key">
-                      <Copy size={15} />
-                    </button>
-                  </div>
-                ) : null}
-                <form className="form-grid ssh-key-form" onSubmit={saveSshPrivateKey}>
-                  <TextAreaField
-                    label="Private key"
-                    value={sshPrivateKey}
-                    onChange={setSshPrivateKey}
-                    placeholder={"Paste the full private key, starting with -----BEGIN OPENSSH PRIVATE KEY-----"}
-                  />
-                  <div className="actions">
-                    <Button type="submit" disabled={busy === "ssh-key" || !sshPrivateKey.trim()} icon={<KeyRound size={16} />}>
-                      Save SSH key
-                    </Button>
-                  </div>
-                </form>
-              </section>
-
-              <section className="panel system-log-panel">
-                <div className="panel-head">
-                  <h2>System log</h2>
-                  <Button variant="secondary" disabled={busy === "system-logs"} onClick={() => void refreshSystemLogs()} icon={<RefreshCw size={16} className={busy === "system-logs" ? "spin" : ""} />}>
-                    Refresh
-                  </Button>
-                </div>
-                <LogViewer logs={systemLogs || "No system log entries recorded yet."} />
-              </section>
-            </div>
-          </section>
+          <SettingsView
+            settings={settings}
+            r2Form={r2Form}
+            cfForm={cfForm}
+            busy={busy}
+            sshPrivateKey={sshPrivateKey}
+            systemLogs={systemLogs}
+            cleanupLogs={cleanupLogs}
+            cleanupLogTitle={cleanupLogTitle}
+            cleanupPreviewed={cleanupPreviewed}
+            updateR2Form={updateR2Form}
+            updateCfForm={updateCfForm}
+            saveR2Settings={saveR2Settings}
+            saveCfSettings={saveCfSettings}
+            validateCfSettings={validateCfSettings}
+            saveSshPrivateKey={saveSshPrivateKey}
+            setSshPrivateKey={setSshPrivateKey}
+            copyText={copyText}
+            copyWorkerInstallCommand={copyWorkerInstallCommand}
+            openSetupWizard={openSetupWizard}
+            previewCleanup={previewCleanup}
+            refreshSystemLogs={refreshSystemLogs}
+            refreshContainers={refreshContainers}
+            setConfirm={setConfirm}
+            setBusy={setBusy}
+            setCleanupLogTitle={setCleanupLogTitle}
+            setCleanupLogs={setCleanupLogs}
+            setCleanupPreviewed={setCleanupPreviewed}
+          />
         ) : null}
       </main>
 
@@ -1810,7 +1394,7 @@ export function App() {
             ) : null}
 
             <div className="setup-actions">
-              <Button variant="ghost" disabled={busy === "setup-dismissed"} onClick={() => void saveSetupWizard("dismissed")}>
+              <Button variant="ghost" disabled={!!busy?.startsWith("setup-")} onClick={() => void saveSetupWizard("dismissed")}>
                 Skip
               </Button>
               <div className="actions">
@@ -1822,7 +1406,7 @@ export function App() {
                     Next
                   </Button>
                 ) : (
-                  <Button disabled={busy === "setup-completed"} onClick={() => void saveSetupWizard("completed")} icon={<ShieldCheck size={16} />}>
+                  <Button disabled={!!busy?.startsWith("setup-")} onClick={() => void saveSetupWizard("completed")} icon={<ShieldCheck size={16} />}>
                     Finish
                   </Button>
                 )}
@@ -2024,7 +1608,7 @@ export function App() {
                       live: true,
                       status: result.deployment.status
                     });
-                    await loadAll();
+                    await refreshDeployments();
                   } catch (error) {
                     setToast({ message: error instanceof Error ? error.message : "Unable to start rollback.", kind: "error" });
                   } finally {
@@ -2109,139 +1693,6 @@ export function App() {
       ) : null}
 
       {toast ? <Toast {...toast} onClose={() => setToast(null)} /> : null}
-    </div>
-  );
-}
-
-function UsagePanel({ usage }: { usage: SystemUsage | null }) {
-  const storage = usage?.storage.find((disk) => disk.mount === "/projects") ?? usage?.storage[0];
-
-  return (
-    <section className="panel">
-      <div className="section-kicker">Host telemetry</div>
-      <div className="panel-head">
-        <h2>VPS usage</h2>
-        <Server size={19} />
-      </div>
-      {usage ? (
-        <div className="meter-grid">
-          <SegmentedMeter label="CPU load" value={usage.cpuLoadPercent} icon={<Activity size={15} />} />
-          <SegmentedMeter label="RAM" value={usage.memory.usedPercent} detail={`${bytes(usage.memory.used)} / ${bytes(usage.memory.total)}`} icon={<MemoryStick size={15} />} />
-          {storage ? <SegmentedMeter label={`Storage ${storage.mount}`} value={storage.usedPercent} detail={`${bytes(storage.used)} / ${bytes(storage.size)}`} icon={<HardDrive size={15} />} /> : null}
-        </div>
-      ) : (
-        <p className="muted">System usage is unavailable. Check the container permissions and mounted project path.</p>
-      )}
-    </section>
-  );
-}
-
-function WarningsPanel({
-  failingProjects,
-  unhealthyContainers,
-  warningDisks
-}: {
-  failingProjects: Project[];
-  unhealthyContainers: ContainerInfo[];
-  warningDisks: SystemUsage["storage"];
-}) {
-  const warningCount = failingProjects.length + unhealthyContainers.length + warningDisks.length;
-  if (!warningCount) return null;
-
-  return (
-    <section className="panel warning-panel">
-      <div className="panel-head">
-        <h2>Warnings</h2>
-        <AlertTriangle size={19} />
-      </div>
-      <div className="warning-list">
-        {failingProjects.map((project) => (
-          <div key={`project:${project.id}`}>
-            <StatusBadge status="failed" />
-            <span>{project.name}</span>
-            <small>Latest deployment failed</small>
-          </div>
-        ))}
-        {unhealthyContainers.slice(0, 5).map((container) => (
-          <div key={`container:${container.id}`}>
-            <StatusBadge status={container.state} />
-            <span>{container.name}</span>
-            <small>Container is not running</small>
-          </div>
-        ))}
-        {warningDisks.map((disk) => (
-          <div key={`disk:${disk.filesystem}:${disk.mount}`}>
-            <StatusBadge status="warning" />
-            <span>{disk.mount}</span>
-            <small>{disk.usedPercent}% disk used</small>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function StatTile({ label, value, detail }: { label: string; value: string | number; detail: string }) {
-  return (
-    <article className="stat-tile">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <small>{detail}</small>
-    </article>
-  );
-}
-
-function Pagination({
-  label,
-  page,
-  totalItems,
-  onPageChange
-}: {
-  label: string;
-  page: number;
-  totalItems: number;
-  onPageChange: (page: number) => void;
-}) {
-  const pages = totalPages(Array.from({ length: totalItems }));
-  if (totalItems <= pageSize) return null;
-
-  const start = (page - 1) * pageSize + 1;
-  const end = Math.min(page * pageSize, totalItems);
-
-  return (
-    <div className="pagination" aria-label={`${label} pagination`}>
-      <span>
-        {label} {start}-{end} of {totalItems}
-      </span>
-      <div>
-        <Button variant="secondary" disabled={page <= 1} onClick={() => onPageChange(Math.max(1, page - 1))} icon={<ChevronLeft size={15} />}>
-          Prev
-        </Button>
-        <span className="page-count">
-          {page} / {pages}
-        </span>
-        <Button variant="secondary" disabled={page >= pages} onClick={() => onPageChange(Math.min(pages, page + 1))} icon={<ChevronRight size={15} />}>
-          Next
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function SegmentedMeter({ label, value, detail, icon }: { label: string; value: number; detail?: string; icon?: ReactNode }) {
-  const activeBlocks = Math.round((Math.min(100, Math.max(0, value)) / 100) * 50);
-  return (
-    <div className="meter">
-      <div>
-        <span>{icon}{label}</span>
-        <strong>{value}%</strong>
-      </div>
-      <div className="segmented-meter" aria-label={`${label} ${value}%`}>
-        {Array.from({ length: 50 }).map((_, index) => (
-          <span key={index} className={index < activeBlocks ? "on" : ""} />
-        ))}
-      </div>
-      {detail ? <small>{detail}</small> : null}
     </div>
   );
 }

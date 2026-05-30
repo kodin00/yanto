@@ -1,4 +1,5 @@
 import type express from "express";
+import { currentUser } from "./auth.js";
 
 export function asyncRoute(handler: (req: express.Request, res: express.Response) => Promise<void>) {
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -9,6 +10,10 @@ export function asyncRoute(handler: (req: express.Request, res: express.Response
 export function routeParam(req: express.Request, name: string) {
   const value = req.params[name];
   return Array.isArray(value) ? value[0] : value;
+}
+
+export function actor(req: express.Request) {
+  return currentUser(req)?.username ?? "admin";
 }
 
 export function startEventStream(res: express.Response) {

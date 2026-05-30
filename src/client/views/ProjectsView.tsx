@@ -1,0 +1,196 @@
+import { ChevronLeft, ChevronRight, Copy, Play, Plus, Square, Undo2 } from "lucide-react";
+import { memo } from "react";
+import type { CloudflareRoute, ContainerInfo, Deployment, Project } from "../../shared/types";
+import { endpoint, githubWebhookEndpoint, pageSize, totalPages } from "../app-utils";
+import { Button, StatusBadge } from "../components/ui";
+import { api } from "../lib/api";
+import type { ConfirmState, SettingsState } from "./types";
+
+type Props = {
+  visibleProjects: Project[];
+  projects: Project[];
+  containersByProjectFolder: Map<string, ContainerInfo[]>;
+  cfRoutesByProject: Record<string, CloudflareRoute[]>;
+  latestDeploymentByProject: Map<string, Deployment>;
+  settings: SettingsState;
+  busy: string | null;
+  projectPage: number;
+  openProject: (project?: Project) => void;
+  openRollback: (project: Project) => void;
+  deploy: (project: Project) => void;
+  copyText: (value: string) => Promise<void>;
+  setConfirm: (state: ConfirmState) => void;
+  refreshProjects: () => Promise<void>;
+  setProjectPage: (page: number) => void;
+};
+
+export const ProjectsView = memo(function ProjectsView(props: Props) {
+  const {
+    visibleProjects,
+    projects,
+    containersByProjectFolder,
+    cfRoutesByProject,
+    latestDeploymentByProject,
+    settings,
+    busy,
+    projectPage,
+    openProject,
+    openRollback,
+    deploy,
+    copyText,
+    setConfirm,
+    refreshProjects,
+    setProjectPage,
+  } = props;
+
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h2>Registered projects</h2>
+        <Button onClick={() => openProject()} icon={<Plus size={16} />}>
+          Add project
+        </Button>
+      </div>
+      <div className="project-grid">
+        {visibleProjects.map((project) => {
+          const projectContainers = containersByProjectFolder.get(project.folderName) ?? [];
+          const projectRoutes = cfRoutesByProject[project.id] ?? project.cloudflareRoutes ?? [];
+          const activeRoutes = projectRoutes.filter((route) => route.enabled);
+          const primaryRoute = activeRoutes[0] ?? projectRoutes[0];
+          const runningCount = projectContainers.filter((container) => container.state === "running").length;
+          return (
+            <article
+              className="project-card"
+              key={project.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => openProject(project)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  openProject(project);
+                }
+              }}
+            >
+              <div className="project-card-main">
+                <div className="project-card-head">
+                  <div>
+                    <h3>{project.name}</h3>
+                    <p>{project.gitUrl || "Compose file project"}</p>
+                  </div>
+                  <StatusBadge status={latestDeploymentByProject.get(project.id)?.status ?? "ready"} />
+                </div>
+                <div className="project-card-meta">
+                  <span>{runningCount}/{projectContainers.length || project.containerCount || 0} running</span>
+                  {primaryRoute ? <span className={primaryRoute.enabled ? "route-live" : ""}>{primaryRoute.enabled ? "Tunnel" : "Tunnel off"}: {primaryRoute.hostname}</span> : null}
+                </div>
+                {primaryRoute ? (
+                  <a className="project-domain" href={`https://${primaryRoute.hostname}`} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()}>
+                    https://{primaryRoute.hostname}
+                  </a>
+                ) : settings.cf?.hasApiToken ? (
+                  <span className="project-domain muted">No tunnel domain</span>
+                ) : null}
+              </div>
+              <div className="project-card-side" onClick={(event) => event.stopPropagation()}>
+                <div className="project-copy-actions">
+                  <Button variant="ghost" onClick={() => void copyText(endpoint(project, settings.appBaseUrl))} icon={<Copy size={14} />}>
+                    Deploy URL
+                  </Button>
+                  <Button variant="ghost" onClick={() => void copyText(githubWebhookEndpoint(project, settings.appBaseUrl))} icon={<Copy size={14} />}>
+                    Webhook
+                  </Button>
+                </div>
+                <div className="actions" onClick={(event) => event.stopPropagation()}>
+                  <Button variant="secondary" onClick={() => openRollback(project)} icon={<Undo2 size={15} />}>
+                    Rollback
+                  </Button>
+                  <Button disabled={busy === `deploy:${project.id}` || !project.manualDeployEnabled} onClick={() => void deploy(project)} icon={<Play size={15} />}>
+                    Deploy
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() =>
+                      setConfirm({
+                        title: "Stop project",
+                        body: `Stop containers for ${project.name}?`,
+                        label: "Stop",
+                        danger: true,
+                        loadingMessage: `Stopping ${project.name}...`,
+                        successMessage: "Project stopped.",
+                        action: async () => {
+                          await api.stopProject(project.id);
+                          await refreshProjects();
+                        },
+                      })
+                    }
+                    icon={<Square size={15} />}
+                  >
+                    Stop
+                  </Button>
+                  <Button
+                    variant="danger"
+                    onClick={() =>
+                      setConfirm({
+                        title: "Remove project",
+                        body: "This removes the project record and deployment logs. The project folder is left untouched.",
+                        label: "Remove",
+                        danger: true,
+                        loadingMessage: `Removing ${project.name}...`,
+                        successMessage: "Project removed.",
+                        action: async () => {
+                          await api.deleteProject(project.id);
+                          await refreshProjects();
+                        },
+                      })
+                    }
+                  >
+                    Remove
+                  </Button>
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+      <Pagination label="Projects" page={projectPage} totalItems={projects.length} onPageChange={setProjectPage} />
+    </section>
+  );
+});
+
+function Pagination({
+  label,
+  page,
+  totalItems,
+  onPageChange,
+}: {
+  label: string;
+  page: number;
+  totalItems: number;
+  onPageChange: (page: number) => void;
+}) {
+  const pages = totalPages(Array.from({ length: totalItems }));
+  if (totalItems <= pageSize) return null;
+
+  const start = (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, totalItems);
+
+  return (
+    <div className="pagination" aria-label={`${label} pagination`}>
+      <span>
+        {label} {start}-{end} of {totalItems}
+      </span>
+      <div>
+        <Button variant="secondary" disabled={page <= 1} onClick={() => onPageChange(Math.max(1, page - 1))} icon={<ChevronLeft size={15} />}>
+          Prev
+        </Button>
+        <span className="page-count">
+          {page} / {pages}
+        </span>
+        <Button variant="secondary" disabled={page >= pages} onClick={() => onPageChange(Math.min(pages, page + 1))} icon={<ChevronRight size={15} />}>
+          Next
+        </Button>
+      </div>
+    </div>
+  );
+}

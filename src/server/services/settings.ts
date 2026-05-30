@@ -127,23 +127,28 @@ export async function publicSetupWizardSettings() {
 }
 
 export async function saveSetupWizardSettings(action: "completed" | "dismissed") {
-  const current = await publicSetupWizardSettings();
-  const now = new Date().toISOString();
-  const next: SetupWizardSettings = {
-    completedAt: action === "completed" ? now : current.completedAt,
-    dismissedAt: action === "dismissed" ? now : current.dismissedAt,
-    updatedAt: now
-  };
+  const result = await db.transaction(async (tx) => {
+    const [row] = await tx.select().from(appSettings).where(eq(appSettings.key, setupWizardKey)).limit(1);
+    const current = parseSetupWizardSettings(row?.value);
+    const now = new Date().toISOString();
+    const next: SetupWizardSettings = {
+      completedAt: action === "completed" ? now : current.completedAt,
+      dismissedAt: action === "dismissed" ? now : current.dismissedAt,
+      updatedAt: now
+    };
 
-  await db
-    .insert(appSettings)
-    .values({ key: setupWizardKey, value: JSON.stringify(next), updatedAt: new Date() })
-    .onConflictDoUpdate({
-      target: appSettings.key,
-      set: { value: JSON.stringify(next), updatedAt: new Date() }
-    });
+    await tx
+      .insert(appSettings)
+      .values({ key: setupWizardKey, value: JSON.stringify(next), updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: appSettings.key,
+        set: { value: JSON.stringify(next), updatedAt: new Date() }
+      });
 
-  return next;
+    return next;
+  });
+
+  return result;
 }
 
 export async function getWorkerJoinToken() {

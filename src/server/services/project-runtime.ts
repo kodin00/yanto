@@ -3,6 +3,7 @@ import path from "node:path";
 import type { ProjectRow } from "../db/schema.js";
 import { runCommand } from "./commands.js";
 import { autoStartOverrideFile } from "./compose.js";
+import { invalidateContainerCache } from "./docker.js";
 import { pathExists } from "./paths.js";
 
 async function composeArgs(project: ProjectRow) {
@@ -23,6 +24,7 @@ async function runProjectCompose(project: ProjectRow, command: "stop" | "restart
   if (result.exitCode !== 0) {
     throw new Error(result.output || `Unable to ${command} project compose services.`);
   }
+  invalidateContainerCache();
   return result.output;
 }
 

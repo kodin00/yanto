@@ -5,6 +5,7 @@ import { config } from "../config.js";
 import { logger } from "../logger.js";
 import { runProjectDeployment, type DeploymentMetadata } from "./deployment-runner.js";
 import { createId } from "./tokens.js";
+import { deploymentEvents } from "./deployment-events.js";
 
 const activeDeployments = new Map<string, DeploymentRow>();
 
@@ -25,6 +26,16 @@ export async function appendDeploymentLog(deploymentId: string, chunk: string) {
           : nextLogs
     })
     .where(eq(deployments.id, deploymentId));
+
+  const updated = await findDeployment(deploymentId);
+  if (updated) {
+    deploymentEvents.emitLogUpdate({
+      deploymentId,
+      logs: updated.logs,
+      status: updated.status,
+      done: updated.status !== "running"
+    });
+  }
 }
 
 export async function updateDeploymentMetadata(deploymentId: string, metadata: DeploymentMetadata) {
@@ -43,6 +54,16 @@ export async function finishDeployment(deploymentId: string, status: "success" |
     .update(deployments)
     .set({ status, exitCode, finishedAt: now() })
     .where(eq(deployments.id, deploymentId));
+
+  const updated = await findDeployment(deploymentId);
+  if (updated) {
+    deploymentEvents.emitLogUpdate({
+      deploymentId,
+      logs: updated.logs,
+      status: updated.status,
+      done: true
+    });
+  }
 }
 
 async function runLocalDeployment(project: ProjectRow, deployment: DeploymentRow) {

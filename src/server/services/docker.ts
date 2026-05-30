@@ -63,7 +63,21 @@ export function isPostgresContainerLike(container: Pick<ContainerInfo, "name" | 
   return /\b(postgres|postgresql|postgis|timescale|timescaledb|pgvector)\b/.test(haystack) || haystack.includes("bitnami/postgresql");
 }
 
+let containerCache: ContainerInfo[] | null = null;
+let containerCacheTime = 0;
+const CONTAINER_CACHE_TTL_MS = 5000;
+
+export function invalidateContainerCache() {
+  containerCache = null;
+  containerCacheTime = 0;
+}
+
 export async function listContainers(): Promise<ContainerInfo[]> {
+  const now = Date.now();
+  if (containerCache && now - containerCacheTime < CONTAINER_CACHE_TTL_MS) {
+    return containerCache;
+  }
+
   const ps = await runCommand("docker", ["ps", "-a", "--format", "{{json .}}"]);
   if (ps.exitCode !== 0) {
     throw new Error(ps.output || "Unable to list Docker containers.");
@@ -72,7 +86,7 @@ export async function listContainers(): Promise<ContainerInfo[]> {
   const stats = await runCommand("docker", ["stats", "--no-stream", "--format", "{{json .}}"]);
   const statsById = new Map(parseJsonLines<DockerStatsLine>(stats.output).map((item) => [item.ID, item]));
 
-  return parseJsonLines<DockerPsLine>(ps.output).map((container) => {
+  const result = parseJsonLines<DockerPsLine>(ps.output).map((container) => {
     const stat = statsById.get(container.ID);
     const labels = parseLabels(container.Labels);
     const composeService = labels.get("com.docker.compose.service") ?? null;
@@ -95,6 +109,10 @@ export async function listContainers(): Promise<ContainerInfo[]> {
       isPostgresCandidate: isPostgresContainerLike(row)
     };
   });
+
+  containerCache = result;
+  containerCacheTime = now;
+  return result;
 }
 
 export async function containerLogs(containerId: string) {
@@ -122,6 +140,7 @@ export async function stopContainer(containerId: string) {
   if (result.exitCode !== 0) {
     throw new Error(result.output || "Unable to stop container.");
   }
+  invalidateContainerCache();
 }
 
 export async function restartContainer(containerId: string) {
@@ -130,6 +149,7 @@ export async function restartContainer(containerId: string) {
   if (result.exitCode !== 0) {
     throw new Error(result.output || "Unable to restart container.");
   }
+  invalidateContainerCache();
 }
 
 const cleanupCommands = [
@@ -172,5 +192,6 @@ export async function cleanupDocker() {
       throw new Error(output);
     }
   }
+  invalidateContainerCache();
   return output;
 }
