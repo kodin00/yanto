@@ -30,7 +30,7 @@ import {
   Trash2
 } from "lucide-react";
 import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import type { CloudflarePublicSettings, CloudflareRoute, ContainerInfo, Deployment, DeploymentNode, Project, ProjectWithDeployToken, R2PublicSettings, SystemUsage } from "../shared/types";
+import type { CloudflarePublicSettings, CloudflareRoute, ContainerInfo, Deployment, DeploymentNode, Project, ProjectWithDeployToken, R2PublicSettings, SetupWizardStatus, SystemUsage } from "../shared/types";
 import {
   bytes,
   cloudflareServiceUrl,
@@ -61,6 +61,7 @@ type RollbackModalState = { project: Project; deployments: Deployment[] };
 type ConfirmState = { title: string; body: string; label: string; danger?: boolean; loadingMessage?: string; successMessage?: string; action: () => Promise<void> };
 type CreatedProjectSecret = { projectName: string; deployUrl: string; webhookUrl: string; deployToken: string };
 type ThemeMode = "light" | "dark";
+type SetupStep = "intro" | "ssh" | "cloudflare" | "r2";
 
 const themeStorageKey = "yanto-theme";
 
@@ -101,6 +102,14 @@ const emptyCfSettings: CloudflarePublicSettings = {
   zoneId: "",
   hasApiToken: false
 };
+
+const emptySetupWizardStatus: SetupWizardStatus = {
+  completedAt: null,
+  dismissedAt: null,
+  updatedAt: null
+};
+
+const setupSteps: SetupStep[] = ["intro", "ssh", "cloudflare", "r2"];
 
 const emptyProjectEnvState: ProjectEnvState = {
   rows: [],
@@ -183,7 +192,8 @@ export function App() {
   const [postgresTargets, setPostgresTargets] = useState<PostgresTarget[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
   const [usage, setUsage] = useState<SystemUsage | null>(null);
-  const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: "", sshKey: emptySshKeySettings, r2: emptyR2Settings, cf: emptyCfSettings });
+  const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: "", sshKey: emptySshKeySettings, r2: emptyR2Settings, cf: emptyCfSettings, setupWizard: emptySetupWizardStatus });
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [r2Form, setR2Form] = useState({ enabled: false, accountId: "", bucket: "", accessKeyId: "", secretAccessKey: "", prefix: "postgres-dumps" });
   const [r2FormDirty, setR2FormDirty] = useState(false);
   const [cfForm, setCfForm] = useState({ accountId: "", zoneId: "", apiToken: "" });
@@ -207,6 +217,9 @@ export function App() {
   const [createdProjectSecret, setCreatedProjectSecret] = useState<CreatedProjectSecret | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [sshPrivateKey, setSshPrivateKey] = useState("");
+  const [setupModalOpen, setSetupModalOpen] = useState(false);
+  const [setupStep, setSetupStep] = useState<SetupStep>("intro");
+  const [setupAutoPrompted, setSetupAutoPrompted] = useState(false);
   const [projectPage, setProjectPage] = useState(1);
   const [deploymentPage, setDeploymentPage] = useState(1);
   const [backupPage, setBackupPage] = useState(1);
@@ -240,6 +253,7 @@ export function App() {
     setAuditEntries(auditRows);
     setUsage(systemRows);
     setSettings(settingRows);
+    setSettingsLoaded(true);
     setSystemLogs(logRows);
   }, []);
 
@@ -259,6 +273,7 @@ export function App() {
       setNodes(nodeRows);
       setUsage(systemRows);
       setSettings(settingRows);
+      setSettingsLoaded(true);
       return;
     }
 
@@ -269,6 +284,7 @@ export function App() {
       setContainers(containerRows);
       setNodes(nodeRows);
       setSettings(settingRows);
+      setSettingsLoaded(true);
       return;
     }
 
@@ -301,6 +317,7 @@ export function App() {
 
     const [settingRows, logRows] = await Promise.all([api.settings(), api.systemLogs().catch(() => "")]);
     setSettings(settingRows);
+    setSettingsLoaded(true);
     setSystemLogs(logRows);
   }, []);
 
@@ -348,6 +365,14 @@ export function App() {
       apiToken: ""
     });
   }, [cfFormDirty, settings.cf]);
+
+  useEffect(() => {
+    if (!user || !settingsLoaded || setupAutoPrompted) return;
+    if (settings.setupWizard.completedAt || settings.setupWizard.dismissedAt) return;
+    setSetupStep("intro");
+    setSetupModalOpen(true);
+    setSetupAutoPrompted(true);
+  }, [settings.setupWizard.completedAt, settings.setupWizard.dismissedAt, settingsLoaded, setupAutoPrompted, user]);
 
   useEffect(() => {
     if (view !== "settings") return;
@@ -426,8 +451,13 @@ export function App() {
   const visibleDeployments = useMemo(() => pageItems(deployments, deploymentPage), [deploymentPage, deployments]);
   const visibleBackups = useMemo(() => pageItems(backups, backupPage), [backupPage, backups]);
   const visibleAuditEntries = useMemo(() => pageItems(auditEntries, auditPage), [auditEntries, auditPage]);
+  const sshReady = Boolean(settings.sshKey?.activePrivateKeyPath);
   const r2Ready = Boolean(settings.r2?.enabled && settings.r2.accountId && settings.r2.bucket && settings.r2.hasAccessKeyId && settings.r2.hasSecretAccessKey);
   const cfSettingsReady = Boolean(settings.cf?.accountId && settings.cf.zoneId && settings.cf.hasApiToken);
+  const setupStepIndex = setupSteps.indexOf(setupStep);
+  const setupCanGoBack = setupStepIndex > 0;
+  const setupCanGoNext = setupStepIndex < setupSteps.length - 1;
+  const setupCanReopen = settingsLoaded && !setupModalOpen && !settings.setupWizard.completedAt && Boolean(settings.setupWizard.dismissedAt);
 
   useEffect(() => {
     const routeEntries = projects.map((project) => [project.id, project.cloudflareRoutes ?? []] as const);
@@ -915,6 +945,41 @@ export function App() {
     }
   }
 
+  function openSetupWizard(step: SetupStep = "intro") {
+    setSetupStep(step);
+    setSetupModalOpen(true);
+  }
+
+  function goToNextSetupStep() {
+    setSetupStep(setupSteps[Math.min(setupStepIndex + 1, setupSteps.length - 1)]);
+  }
+
+  function goToPreviousSetupStep() {
+    setSetupStep(setupSteps[Math.max(setupStepIndex - 1, 0)]);
+  }
+
+  async function saveSetupWizard(action: "completed" | "dismissed") {
+    setBusy(`setup-${action}`);
+    try {
+      const result = await api.saveSetupWizard(action);
+      setSettings((current) => ({ ...current, setupWizard: result.setupWizard }));
+      setSetupModalOpen(false);
+      setToast({ message: action === "completed" ? "Setup finished." : "Setup skipped. You can reopen it from Settings." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to update setup status.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function closeSetupWizard() {
+    if (settings.setupWizard.completedAt || settings.setupWizard.dismissedAt) {
+      setSetupModalOpen(false);
+      return;
+    }
+    void saveSetupWizard("dismissed");
+  }
+
   async function refreshCurrentView() {
     setBusy("refresh-view");
     setToast({ message: `Refreshing ${view}...`, kind: "loading" });
@@ -1039,6 +1104,18 @@ export function App() {
               <StatTile label="Running containers" value={containers.filter((container) => container.state === "running").length} detail={`${containers.length} total containers`} />
               <StatTile label="RAM used" value={usage ? `${usage.memory.usedPercent}%` : "-"} detail={usage ? `${bytes(usage.memory.used)} of ${bytes(usage.memory.total)}` : "Unavailable"} />
             </section>
+
+            {setupCanReopen ? (
+              <section className="setup-banner">
+                <div>
+                  <strong>Quick setup</strong>
+                  <p>SSH, Cloudflare Tunnel, and R2 can be added now or later.</p>
+                </div>
+                <Button variant="secondary" onClick={() => openSetupWizard()} icon={<Settings size={16} />}>
+                  Open setup
+                </Button>
+              </section>
+            ) : null}
 
             <div className="dashboard-main-grid">
               <div className="dashboard-left-column">
@@ -1356,6 +1433,9 @@ export function App() {
               <section className="panel runtime-settings-panel">
                 <div className="panel-head">
                   <h2>Runtime</h2>
+                  <Button variant="secondary" onClick={() => openSetupWizard()} icon={<Settings size={16} />}>
+                    Setup
+                  </Button>
                 </div>
                 <dl className="settings-list">
                   <div>
@@ -1580,6 +1660,176 @@ export function App() {
           </section>
         ) : null}
       </main>
+
+      {setupModalOpen ? (
+        <Modal title="Quick setup" onClose={closeSetupWizard}>
+          <div className="setup-wizard">
+            <div className="setup-progress" aria-label="Setup progress">
+              {setupSteps.map((step, index) => (
+                <button key={step} type="button" className={setupStep === step ? "active" : index < setupStepIndex ? "done" : ""} onClick={() => setSetupStep(step)} aria-label={`Go to ${step}`}>
+                  <span>{index + 1}</span>
+                </button>
+              ))}
+            </div>
+
+            {setupStep === "intro" ? (
+              <div className="setup-step">
+                <div className="setup-intro">
+                  <strong>Bring the basics in now, or skip and keep moving.</strong>
+                  <p className="muted">These settings are optional. Yanto will remember if you skip this modal and keep the setup entry available in Settings.</p>
+                </div>
+                <div className="setup-checklist">
+                  <div>
+                    <KeyRound size={16} />
+                    <span>Git SSH key</span>
+                    <StatusBadge status={sshReady ? "ready" : "optional"} />
+                  </div>
+                  <div>
+                    <ShieldCheck size={16} />
+                    <span>Cloudflare Tunnel</span>
+                    <StatusBadge status={cfSettingsReady ? "ready" : "optional"} />
+                  </div>
+                  <div>
+                    <Cloud size={16} />
+                    <span>Cloudflare R2</span>
+                    <StatusBadge status={r2Ready ? "ready" : "optional"} />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {setupStep === "ssh" ? (
+              <form className="setup-step form-grid ssh-key-form" onSubmit={saveSshPrivateKey}>
+                <div className="setup-status-row">
+                  <span>Active key</span>
+                  <StatusBadge status={sshReady ? "ready" : "optional"} />
+                </div>
+                <dl className="settings-list ssh-status-list">
+                  <div>
+                    <dt>Active key path</dt>
+                    <dd>{settings.sshKey?.activePrivateKeyPath ?? "No key found"}</dd>
+                  </div>
+                  <div>
+                    <dt>Mounted VPS key</dt>
+                    <dd>{settings.sshKey?.hasMountedKey ? settings.sshKey.mountedPrivateKeyPath : "Not found"}</dd>
+                  </div>
+                </dl>
+                <TextAreaField
+                  label="Private key"
+                  value={sshPrivateKey}
+                  onChange={setSshPrivateKey}
+                  placeholder={"Paste the full private key, starting with -----BEGIN OPENSSH PRIVATE KEY-----"}
+                />
+                <div className="actions">
+                  <Button type="submit" disabled={busy === "ssh-key" || !sshPrivateKey.trim()} icon={<KeyRound size={16} />}>
+                    Save SSH key
+                  </Button>
+                </div>
+              </form>
+            ) : null}
+
+            {setupStep === "cloudflare" ? (
+              <form className="setup-step form-grid compact-form" onSubmit={saveCfSettings} autoComplete="off">
+                <div className="setup-status-row">
+                  <span>Tunnel settings</span>
+                  <StatusBadge status={cfSettingsReady ? "ready" : "optional"} />
+                </div>
+                <div className="cf-token-requirements">
+                  <span>Token permissions</span>
+                  <ul>
+                    <li>Account / Cloudflare Tunnel / Edit</li>
+                    <li>Account / Account Settings / Read</li>
+                    <li>Zone / Zone / Read</li>
+                    <li>Zone / DNS / Edit</li>
+                  </ul>
+                </div>
+                <div className="settings-form-pair">
+                  <TextField label="Account ID" value={cfForm.accountId} onChange={(accountId) => updateCfForm({ accountId })} />
+                  <TextField label="Zone ID" value={cfForm.zoneId} onChange={(zoneId) => updateCfForm({ zoneId })} />
+                </div>
+                <TextField
+                  label="API Token"
+                  type="password"
+                  value={cfForm.apiToken}
+                  onChange={(apiToken) => updateCfForm({ apiToken })}
+                  placeholder={settings.cf?.hasApiToken ? "Saved; leave blank to keep" : ""}
+                  autoComplete="new-password"
+                />
+                <div className="actions">
+                  <Button variant="secondary" disabled={busy === "cf-validate"} onClick={() => void validateCfSettings()}>
+                    Validate
+                  </Button>
+                  <Button type="submit" disabled={busy === "cf-settings"} icon={<ShieldCheck size={16} />}>
+                    Save
+                  </Button>
+                </div>
+              </form>
+            ) : null}
+
+            {setupStep === "r2" ? (
+              <form className="setup-step form-grid compact-form" onSubmit={saveR2Settings} autoComplete="off">
+                <div className="setup-status-row">
+                  <span>R2 uploads</span>
+                  <StatusBadge status={r2Ready ? "ready" : "optional"} />
+                </div>
+                <ToggleField
+                  label="Upload enabled"
+                  value={r2Form.enabled}
+                  onChange={(enabled) => updateR2Form({ enabled })}
+                  description={settings.r2?.hasSecretAccessKey ? "Secret key saved" : "Add an R2 secret key before uploading"}
+                />
+                <div className="settings-form-pair">
+                  <TextField label="Account ID" value={r2Form.accountId} onChange={(accountId) => updateR2Form({ accountId })} autoComplete="off" />
+                  <TextField label="Bucket" value={r2Form.bucket} onChange={(bucket) => updateR2Form({ bucket })} autoComplete="off" />
+                </div>
+                <div className="settings-form-pair">
+                  <TextField
+                    label="Access key ID"
+                    value={r2Form.accessKeyId}
+                    onChange={(accessKeyId) => updateR2Form({ accessKeyId })}
+                    placeholder={settings.r2?.maskedAccessKeyId ? `${settings.r2.maskedAccessKeyId}; leave blank to keep` : ""}
+                    autoComplete="off"
+                  />
+                  <TextField
+                    label="Secret access key"
+                    type="password"
+                    value={r2Form.secretAccessKey}
+                    onChange={(secretAccessKey) => updateR2Form({ secretAccessKey })}
+                    placeholder={settings.r2?.hasSecretAccessKey ? "Saved; leave blank to keep" : ""}
+                    autoComplete="new-password"
+                  />
+                </div>
+                <TextField label="Object prefix" value={r2Form.prefix} onChange={(prefix) => updateR2Form({ prefix })} autoComplete="off" />
+                <div className="actions">
+                  <Button type="submit" disabled={busy === "r2-settings"} icon={<Cloud size={16} />}>
+                    Save R2
+                  </Button>
+                </div>
+              </form>
+            ) : null}
+
+            <div className="setup-actions">
+              <Button variant="ghost" disabled={busy === "setup-dismissed"} onClick={() => void saveSetupWizard("dismissed")}>
+                Skip
+              </Button>
+              <div className="actions">
+                <Button variant="secondary" disabled={!setupCanGoBack} onClick={goToPreviousSetupStep} icon={<ChevronLeft size={16} />}>
+                  Back
+                </Button>
+                {setupCanGoNext ? (
+                  <Button onClick={goToNextSetupStep} icon={<ChevronRight size={16} />}>
+                    Next
+                  </Button>
+                ) : (
+                  <Button disabled={busy === "setup-completed"} onClick={() => void saveSetupWizard("completed")} icon={<ShieldCheck size={16} />}>
+                    Finish
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
 
       {projectModal ? (
         <Modal title={projectModal === "new" ? "Add project" : "Edit project"} size="wide" closeOnEscape={!projectEditorModal} onClose={() => {

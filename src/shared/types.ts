@@ -120,6 +120,12 @@ export type CloudflarePublicSettings = {
   hasApiToken: boolean;
 };
 
+export type SetupWizardStatus = {
+  completedAt: string | null;
+  dismissedAt: string | null;
+  updatedAt: string | null;
+};
+
 export type CloudflareTunnel = {
   id: string;
   nodeId: string;

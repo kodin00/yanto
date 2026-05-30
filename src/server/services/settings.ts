@@ -17,6 +17,7 @@ export type StoredR2Settings = Required<R2SettingsInput>;
 
 const r2SettingsKey = "cloudflare.r2";
 const workerJoinTokenKey = "worker.join_token";
+const setupWizardKey = "setup.wizard";
 const emptyR2Settings: StoredR2Settings = {
   enabled: false,
   accountId: "",
@@ -24,6 +25,18 @@ const emptyR2Settings: StoredR2Settings = {
   accessKeyId: "",
   secretAccessKey: "",
   prefix: "postgres-dumps"
+};
+
+type SetupWizardSettings = {
+  completedAt: string | null;
+  dismissedAt: string | null;
+  updatedAt: string | null;
+};
+
+const emptySetupWizardSettings: SetupWizardSettings = {
+  completedAt: null,
+  dismissedAt: null,
+  updatedAt: null
 };
 
 function normalizeString(value: unknown) {
@@ -92,6 +105,45 @@ export async function saveR2Settings(input: R2SettingsInput) {
     });
 
   return publicR2Settings();
+}
+
+function parseSetupWizardSettings(value: string | undefined): SetupWizardSettings {
+  if (!value) return emptySetupWizardSettings;
+  try {
+    const parsed = JSON.parse(value) as Partial<SetupWizardSettings>;
+    return {
+      completedAt: normalizeString(parsed.completedAt) || null,
+      dismissedAt: normalizeString(parsed.dismissedAt) || null,
+      updatedAt: normalizeString(parsed.updatedAt) || null
+    };
+  } catch {
+    return emptySetupWizardSettings;
+  }
+}
+
+export async function publicSetupWizardSettings() {
+  const [row] = await db.select().from(appSettings).where(eq(appSettings.key, setupWizardKey)).limit(1);
+  return parseSetupWizardSettings(row?.value);
+}
+
+export async function saveSetupWizardSettings(action: "completed" | "dismissed") {
+  const current = await publicSetupWizardSettings();
+  const now = new Date().toISOString();
+  const next: SetupWizardSettings = {
+    completedAt: action === "completed" ? now : current.completedAt,
+    dismissedAt: action === "dismissed" ? now : current.dismissedAt,
+    updatedAt: now
+  };
+
+  await db
+    .insert(appSettings)
+    .values({ key: setupWizardKey, value: JSON.stringify(next), updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: appSettings.key,
+      set: { value: JSON.stringify(next), updatedAt: new Date() }
+    });
+
+  return next;
 }
 
 export async function getWorkerJoinToken() {

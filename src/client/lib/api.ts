@@ -1,4 +1,4 @@
-import type { AuditLog, Backup, CloudflarePublicSettings, CloudflareRoute, CloudflareTunnel, CloudflareTunnelStatus, ContainerInfo, Deployment, DeploymentNode, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, SystemUsage } from "../../shared/types";
+import type { AuditLog, Backup, CloudflarePublicSettings, CloudflareRoute, CloudflareTunnel, CloudflareTunnelStatus, ContainerInfo, Deployment, DeploymentNode, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, SetupWizardStatus, SystemUsage } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -202,6 +202,7 @@ export const api = {
       projectCount: number;
       r2: R2PublicSettings;
       cf: CloudflarePublicSettings;
+      setupWizard: SetupWizardStatus;
       sshKey: {
         hasManagedKey: boolean;
         hasMountedKey: boolean;
@@ -211,6 +212,11 @@ export const api = {
         publicKey: string | null;
       };
     }>("/api/settings"),
+  saveSetupWizard: (action: "completed" | "dismissed") =>
+    request<{ ok: true; setupWizard: SetupWizardStatus }>("/api/settings/setup-wizard", {
+      method: "POST",
+      body: JSON.stringify({ action })
+    }),
   saveCloudflareSettings: (payload: CloudflareSettingsPayload) =>
     request<{ ok: true; cf: CloudflarePublicSettings }>("/api/settings/cloudflare", {
       method: "POST",

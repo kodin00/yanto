@@ -24,6 +24,7 @@ import {
   projectInput,
   r2SettingsInput,
   rollbackInput,
+  setupWizardInput,
   workerDeploymentUpdateInput,
   workerHeartbeatInput,
   workerLogInput,
@@ -68,7 +69,7 @@ import {
   stopCloudflared,
   validateCloudflareSettings
 } from "./services/cloudflare.js";
-import { ensureWorkerJoinToken, getWorkerJoinToken, publicR2Settings, saveR2Settings } from "./services/settings.js";
+import { ensureWorkerJoinToken, getWorkerJoinToken, publicR2Settings, publicSetupWizardSettings, saveR2Settings, saveSetupWizardSettings } from "./services/settings.js";
 import { constantTimeEqual } from "./services/tokens.js";
 import { githubBranchFromRef, githubPayloadFromRequestBody, githubWebhookPayloadInput, projectDeployBranch, verifyGithubSignature } from "./services/github-webhooks.js";
 
@@ -984,7 +985,7 @@ app.get(
   "/api/settings",
   requireAuth,
   asyncRoute(async (_req, res) => {
-    const [count, sshKey, r2, cf] = await Promise.all([db.select().from(projects), managedSshKeyStatus(), publicR2Settings(), publicCloudflareSettings()]);
+    const [count, sshKey, r2, cf, setupWizard] = await Promise.all([db.select().from(projects), managedSshKeyStatus(), publicR2Settings(), publicCloudflareSettings(), publicSetupWizardSettings()]);
     res.json({
       projectsRoot: config.projectsRoot,
       hostProjectsRoot: config.hostProjectsRoot,
@@ -993,7 +994,8 @@ app.get(
       projectCount: count.length,
       sshKey,
       r2,
-      cf
+      cf,
+      setupWizard
     });
   })
 );
@@ -1039,6 +1041,17 @@ app.post(
     const sshKey = await saveManagedSshPrivateKey(body.privateKey);
     await recordAuditLog({ actor: actor(req), action: "settings.ssh_key.save", entityType: "settings" });
     res.json({ ok: true, sshKey });
+  })
+);
+
+app.post(
+  "/api/settings/setup-wizard",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const body = setupWizardInput.parse(req.body ?? {});
+    const setupWizard = await saveSetupWizardSettings(body.action);
+    await recordAuditLog({ actor: actor(req), action: `settings.setup_wizard.${body.action}`, entityType: "settings" });
+    res.json({ ok: true, setupWizard });
   })
 );
 

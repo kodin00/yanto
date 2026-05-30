@@ -611,6 +611,27 @@ a.button {
   white-space: nowrap;
 }
 
+.setup-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 18px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.setup-banner strong {
+  display: block;
+  margin-bottom: 3px;
+  font-family: var(--font-display);
+}
+
+.setup-banner p {
+  margin: 0;
+  font-size: 13px;
+}
+
 .panel {
   min-width: 0;
   background: var(--panel);
@@ -1495,6 +1516,105 @@ th {
   max-height: 220px;
 }
 
+.setup-wizard {
+  display: grid;
+  gap: 16px;
+}
+
+.setup-progress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.setup-progress button {
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  background: var(--field);
+}
+
+.setup-progress button span {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.setup-progress button.active {
+  border-color: var(--green);
+  background: var(--panel-strong);
+}
+
+.setup-progress button.active span,
+.setup-progress button.done span {
+  color: #fff;
+  background: var(--green);
+}
+
+.setup-step {
+  min-height: 340px;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.setup-intro {
+  display: grid;
+  gap: 6px;
+  padding: 18px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line-light);
+}
+
+.setup-intro strong {
+  font-size: 20px;
+  line-height: 1.2;
+  font-family: var(--font-display);
+}
+
+.setup-intro p {
+  margin: 0;
+}
+
+.setup-checklist {
+  display: grid;
+  gap: 1px;
+  border: 1px solid var(--line-light);
+  background: var(--line-light);
+}
+
+.setup-checklist div,
+.setup-status-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: var(--panel-strong);
+}
+
+.setup-checklist div span:nth-child(2),
+.setup-status-row span:first-child {
+  min-width: 0;
+  flex: 1;
+  font-weight: 700;
+}
+
+.setup-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--line-light);
+  padding-top: 14px;
+}
+
 .project-edit-form,
 .project-edit-section {
   display: grid;
@@ -2089,6 +2209,17 @@ th {
   .cf-route-add-row {
     grid-template-columns: 1fr;
     justify-content: flex-start;
+  }
+
+  .setup-banner,
+  .setup-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .setup-actions > .actions,
+  .setup-actions > .button {
+    width: 100%;
   }
 
   .compose-section .text-area-field,
