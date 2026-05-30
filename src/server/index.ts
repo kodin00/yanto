@@ -22,6 +22,7 @@ import workersRouter from "./routes/workers.js";
 import settingsRouter from "./routes/settings.js";
 import cloudflareRouter from "./routes/cloudflare.js";
 import systemRouter from "./routes/system.js";
+import dashboardRouter from "./routes/dashboard.js";
 
 const app = express();
 
@@ -97,6 +98,7 @@ app.use(workersRouter);
 app.use(settingsRouter);
 app.use(cloudflareRouter);
 app.use(systemRouter);
+app.use(dashboardRouter);
 
 app.use((error: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   void next;
@@ -113,8 +115,16 @@ const clientDir =
   [path.resolve(__dirname, "../client"), path.resolve(__dirname, "../../client"), path.resolve(__dirname, "../../dist/client")].find((candidate) =>
     fs.existsSync(path.join(candidate, "index.html"))
   ) ?? path.resolve(__dirname, "../client");
-app.use(express.static(clientDir));
+app.use(
+  "/assets",
+  express.static(path.join(clientDir, "assets"), {
+    immutable: true,
+    maxAge: "1y"
+  })
+);
+app.use(express.static(clientDir, { maxAge: 0 }));
 app.get(/.*/, (_req, res) => {
+  res.setHeader("Cache-Control", "no-cache");
   res.sendFile(path.join(clientDir, "index.html"));
 });
 

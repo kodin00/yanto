@@ -77,6 +77,11 @@ export function useProjects(deps: {
     setDeployments(deploymentRows);
   }, []);
 
+  const setProjectsAndDeployments = useCallback((newProjects: Project[], newDeployments: Deployment[]) => {
+    setProjects(newProjects);
+    setDeployments(newDeployments);
+  }, []);
+
   const refreshDeployments = useCallback(async () => {
     setDeployments(await api.deployments());
   }, []);
@@ -320,7 +325,7 @@ export function useProjects(deps: {
     cfRoutesByProject, cfRoutes, cfRouteForm, setCfRouteForm,
     rollbackModal, setRollbackModal, createdProjectSecret, setCreatedProjectSecret,
     containersByProjectFolder, latestDeploymentByProject, visibleProjects, nodeOptions,
-    refreshProjects, refreshDeployments, persistProjectDetails, deploy, openProject,
+    refreshProjects, refreshDeployments, setProjectsAndDeployments, persistProjectDetails, deploy, openProject,
     openComposeEditor, openEnvEditor, openRollback, executeRollback,
     publishCfRoute, toggleCfRoute, removeCfRoute, parseCfServiceTarget
   };

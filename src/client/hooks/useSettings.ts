@@ -67,6 +67,11 @@ export function useSettings() {
     }
   }, []);
 
+  const setSettingsFromPayload = useCallback((payload: SettingsState) => {
+    setSettings(payload);
+    setSettingsLoaded(true);
+  }, []);
+
   function updateR2Form(patch: Partial<R2FormState>) {
     setR2FormDirty(true);
     setR2Form((current) => ({ ...current, ...patch }));
@@ -229,7 +234,7 @@ export function useSettings() {
     systemLogs, cleanupLogs, cleanupLogTitle, cleanupPreviewed, setCleanupLogs, setCleanupLogTitle, setCleanupPreviewed,
     sshReady, r2Ready, cfSettingsReady,
     setupModalOpen, setupStep, setSetupStep, setupCanGoBack, setupCanGoNext, setupCanReopen,
-    refreshSettings, updateR2Form, updateCfForm,
+    refreshSettings, setSettingsFromPayload, updateR2Form, updateCfForm,
     saveR2Settings, saveCfSettings, validateCfSettings, saveSshPrivateKey,
     previewCleanup, refreshSystemLogs,
     openSetupWizard, goToNextSetupStep, goToPreviousSetupStep, saveSetupWizard, closeSetupWizard,

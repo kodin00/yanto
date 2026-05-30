@@ -19,7 +19,10 @@ import { api } from "./lib/api";
 import { Button, LoadingInline, TextField } from "./components/ui";
 import { YantoBootLoader } from "./components/YantoBootLoader";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { ProjectModal, CreatedProjectSecretModal, RollbackModal, SetupWizardModal } from "./components/ProjectModal";
+const ProjectModal = lazy(() => import("./components/ProjectModal").then(m => ({ default: m.ProjectModal })));
+const CreatedProjectSecretModal = lazy(() => import("./components/ProjectModal").then(m => ({ default: m.CreatedProjectSecretModal })));
+const RollbackModal = lazy(() => import("./components/ProjectModal").then(m => ({ default: m.RollbackModal })));
+const SetupWizardModal = lazy(() => import("./components/ProjectModal").then(m => ({ default: m.SetupWizardModal })));
 
 import { ToastProvider, useToast } from "./contexts/ToastContext";
 import { ConfirmProvider, useConfirm } from "./contexts/ConfirmContext";
@@ -142,13 +145,25 @@ function AppShell() {
   // Data loading per view
   const loadView = useCallback(async (targetView: View) => {
     if (targetView === "dashboard") {
-      await Promise.all([
-        projectsHook.refreshProjects(),
-        containersHook.refreshContainers(),
-        nodesHook.refreshNodes(),
-        api.systemUsage().catch(() => null).then(setUsage),
-        settingsHook.refreshSettings(),
-      ]);
+      try {
+        const data = await api.dashboard();
+        projectsHook.setProjectsAndDeployments(data.projects, data.deployments);
+        containersHook.setContainers(data.containers);
+        nodesHook.setNodes(data.nodes);
+        setUsage(data.usage);
+        settingsHook.setSettingsFromPayload(data.settings);
+      } catch {
+        // Fallback to individual requests if aggregate endpoint fails
+        await Promise.all([
+          projectsHook.refreshProjects(),
+          containersHook.refreshContainersFast(),
+          nodesHook.refreshNodes(),
+          api.systemUsage().catch(() => null).then(setUsage),
+          settingsHook.refreshSettings(),
+        ]);
+      }
+      // Load full container stats in background
+      containersHook.refreshContainers().catch(() => undefined);
       return;
     }
     if (targetView === "projects") {
@@ -395,77 +410,85 @@ function AppShell() {
         </ErrorBoundary>
       </main>
 
-      {projectsHook.projectModal ? (
-        <ProjectModal
-          projectModal={projectsHook.projectModal}
-          projectForm={projectsHook.projectForm}
-          setProjectForm={projectsHook.setProjectForm}
-          projectEnv={projectsHook.projectEnv}
-          setProjectEnv={projectsHook.setProjectEnv}
-          projectCompose={projectsHook.projectCompose}
-          projectEditorModal={projectsHook.projectEditorModal}
-          setProjectEditorModal={projectsHook.setProjectEditorModal}
-          cfRoutes={projectsHook.cfRoutes}
-          cfRouteForm={projectsHook.cfRouteForm}
-          setCfRouteForm={projectsHook.setCfRouteForm}
-          cfSettingsReady={settingsHook.cfSettingsReady}
-          nodeOptions={projectsHook.nodeOptions}
-          busy={projectsHook.busy}
-          onSave={(e) => void projectsHook.persistProjectDetails(e)}
-          onSaveAndDeploy={() => void projectsHook.persistProjectDetails(undefined, "deploy")}
-          onClose={() => projectsHook.setProjectModal(null)}
-          openComposeEditor={projectsHook.openComposeEditor}
-          openEnvEditor={projectsHook.openEnvEditor}
-          publishCfRoute={projectsHook.publishCfRoute}
-          toggleCfRoute={projectsHook.toggleCfRoute}
-          removeCfRoute={projectsHook.removeCfRoute}
-          copyText={copyText}
-        />
-      ) : null}
+      <Suspense fallback={null}>
+        {projectsHook.projectModal ? (
+          <ProjectModal
+            projectModal={projectsHook.projectModal}
+            projectForm={projectsHook.projectForm}
+            setProjectForm={projectsHook.setProjectForm}
+            projectEnv={projectsHook.projectEnv}
+            setProjectEnv={projectsHook.setProjectEnv}
+            projectCompose={projectsHook.projectCompose}
+            projectEditorModal={projectsHook.projectEditorModal}
+            setProjectEditorModal={projectsHook.setProjectEditorModal}
+            cfRoutes={projectsHook.cfRoutes}
+            cfRouteForm={projectsHook.cfRouteForm}
+            setCfRouteForm={projectsHook.setCfRouteForm}
+            cfSettingsReady={settingsHook.cfSettingsReady}
+            nodeOptions={projectsHook.nodeOptions}
+            busy={projectsHook.busy}
+            onSave={(e) => void projectsHook.persistProjectDetails(e)}
+            onSaveAndDeploy={() => void projectsHook.persistProjectDetails(undefined, "deploy")}
+            onClose={() => projectsHook.setProjectModal(null)}
+            openComposeEditor={projectsHook.openComposeEditor}
+            openEnvEditor={projectsHook.openEnvEditor}
+            publishCfRoute={projectsHook.publishCfRoute}
+            toggleCfRoute={projectsHook.toggleCfRoute}
+            removeCfRoute={projectsHook.removeCfRoute}
+            copyText={copyText}
+          />
+        ) : null}
+      </Suspense>
 
-      {projectsHook.rollbackModal ? (
-        <RollbackModal
-          rollbackModal={projectsHook.rollbackModal}
-          onClose={() => projectsHook.setRollbackModal(null)}
-          onRollback={projectsHook.executeRollback}
-        />
-      ) : null}
+      <Suspense fallback={null}>
+        {projectsHook.rollbackModal ? (
+          <RollbackModal
+            rollbackModal={projectsHook.rollbackModal}
+            onClose={() => projectsHook.setRollbackModal(null)}
+            onRollback={projectsHook.executeRollback}
+          />
+        ) : null}
+      </Suspense>
 
-      {projectsHook.createdProjectSecret ? (
-        <CreatedProjectSecretModal
-          secret={projectsHook.createdProjectSecret}
-          onClose={() => projectsHook.setCreatedProjectSecret(null)}
-          copyText={copyText}
-        />
-      ) : null}
+      <Suspense fallback={null}>
+        {projectsHook.createdProjectSecret ? (
+          <CreatedProjectSecretModal
+            secret={projectsHook.createdProjectSecret}
+            onClose={() => projectsHook.setCreatedProjectSecret(null)}
+            copyText={copyText}
+          />
+        ) : null}
+      </Suspense>
 
-      {settingsHook.setupModalOpen ? (
-        <SetupWizardModal
-          settings={settingsHook.settings}
-          sshReady={settingsHook.sshReady}
-          cfSettingsReady={settingsHook.cfSettingsReady}
-          r2Ready={settingsHook.r2Ready}
-          setupStep={settingsHook.setupStep}
-          setupCanGoBack={settingsHook.setupCanGoBack}
-          setupCanGoNext={settingsHook.setupCanGoNext}
-          busy={settingsHook.busy}
-          sshPrivateKey={settingsHook.sshPrivateKey}
-          setSshPrivateKey={settingsHook.setSshPrivateKey}
-          r2Form={settingsHook.r2Form}
-          cfForm={settingsHook.cfForm}
-          updateR2Form={settingsHook.updateR2Form}
-          updateCfForm={settingsHook.updateCfForm}
-          saveSshPrivateKey={settingsHook.saveSshPrivateKey}
-          saveCfSettings={settingsHook.saveCfSettings}
-          saveR2Settings={settingsHook.saveR2Settings}
-          validateCfSettings={settingsHook.validateCfSettings}
-          goToNextSetupStep={settingsHook.goToNextSetupStep}
-          goToPreviousSetupStep={settingsHook.goToPreviousSetupStep}
-          saveSetupWizard={settingsHook.saveSetupWizard}
-          onClose={settingsHook.closeSetupWizard}
-          setSetupStep={settingsHook.setSetupStep}
-        />
-      ) : null}
+      <Suspense fallback={null}>
+        {settingsHook.setupModalOpen ? (
+          <SetupWizardModal
+            settings={settingsHook.settings}
+            sshReady={settingsHook.sshReady}
+            cfSettingsReady={settingsHook.cfSettingsReady}
+            r2Ready={settingsHook.r2Ready}
+            setupStep={settingsHook.setupStep}
+            setupCanGoBack={settingsHook.setupCanGoBack}
+            setupCanGoNext={settingsHook.setupCanGoNext}
+            busy={settingsHook.busy}
+            sshPrivateKey={settingsHook.sshPrivateKey}
+            setSshPrivateKey={settingsHook.setSshPrivateKey}
+            r2Form={settingsHook.r2Form}
+            cfForm={settingsHook.cfForm}
+            updateR2Form={settingsHook.updateR2Form}
+            updateCfForm={settingsHook.updateCfForm}
+            saveSshPrivateKey={settingsHook.saveSshPrivateKey}
+            saveCfSettings={settingsHook.saveCfSettings}
+            saveR2Settings={settingsHook.saveR2Settings}
+            validateCfSettings={settingsHook.validateCfSettings}
+            goToNextSetupStep={settingsHook.goToNextSetupStep}
+            goToPreviousSetupStep={settingsHook.goToPreviousSetupStep}
+            saveSetupWizard={settingsHook.saveSetupWizard}
+            onClose={settingsHook.closeSetupWizard}
+            setSetupStep={settingsHook.setSetupStep}
+          />
+        ) : null}
+      </Suspense>
     </div>
   );
 }

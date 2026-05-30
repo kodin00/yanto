@@ -3,15 +3,16 @@ import { spawn } from "node:child_process";
 import { requireAuth } from "../auth.js";
 import { asyncRoute, actor, routeParam, sendStreamEvent, startEventStream } from "../http-utils.js";
 import { recordAuditLog } from "../services/audit.js";
-import { containerLogs, listContainers, restartContainer, startContainer, stopContainer } from "../services/docker.js";
+import { containerLogs, listContainers, listContainersSummary, restartContainer, startContainer, stopContainer } from "../services/docker.js";
 
 const router = Router();
 
 router.get(
   "/api/containers",
   requireAuth,
-  asyncRoute(async (_req, res) => {
-    res.json(await listContainers());
+  asyncRoute(async (req, res) => {
+    const skipStats = req.query.stats === "false";
+    res.json(skipStats ? await listContainersSummary() : await listContainers());
   })
 );
 

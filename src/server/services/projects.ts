@@ -2,7 +2,6 @@ import { eq, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { cloudflareRoutes, projects } from "../db/schema.js";
 import { createDeployToken, createId } from "./tokens.js";
-import { listContainers } from "./docker.js";
 import { ensureProjectsRoot, normalizeComposeFile, normalizeEnvFile, projectPath, slugifyFolderName } from "./paths.js";
 import { config } from "../config.js";
 import { assertDeployableNode } from "./nodes.js";
@@ -31,7 +30,7 @@ export async function listProjects() {
   return db.select().from(projects).orderBy(projects.createdAt);
 }
 
-export async function listProjectsWithContainerCounts() {
+export async function listProjectsWithRoutes() {
   const rows = await listProjects();
   const routeRows = rows.length
     ? await db.select().from(cloudflareRoutes).where(inArray(cloudflareRoutes.projectId, rows.map((project) => project.id)))
@@ -40,16 +39,8 @@ export async function listProjectsWithContainerCounts() {
   for (const route of routeRows) {
     routesByProject.set(route.projectId, [...(routesByProject.get(route.projectId) ?? []), route]);
   }
-  let containers: Awaited<ReturnType<typeof listContainers>> = [];
-  try {
-    containers = await listContainers();
-  } catch {
-    return rows.map((project) => ({ ...project, containerCount: 0, cloudflareRoutes: routesByProject.get(project.id) ?? [] }));
-  }
-
   return rows.map((project) => ({
     ...project,
-    containerCount: containers.filter((container) => container.composeProject === project.folderName).length,
     cloudflareRoutes: routesByProject.get(project.id) ?? []
   }));
 }
