@@ -7,6 +7,25 @@ import { Button, StatusBadge } from "../components/ui";
 import { api } from "../lib/api";
 import type { ConfirmState, SettingsState } from "./types";
 
+function deploymentBadge(deployment?: Deployment) {
+  if (!deployment) return { status: "ready", label: "Deployment ready" };
+  return {
+    status: deployment.status,
+    label: `Deployment ${deployment.status}`
+  };
+}
+
+function containerBadge(containers: ContainerInfo[], fallbackCount = 0) {
+  if (!containers.length) {
+    return fallbackCount ? { status: "warning", label: "Containers unknown" } : { status: "idle", label: "No containers" };
+  }
+  const total = containers.length;
+  const running = containers.filter((container) => container.state === "running").length;
+  if (running === total) return { status: "running", label: total === 1 ? "Container running" : "Containers running" };
+  if (running === 0) return { status: "exited", label: total === 1 ? "Container stopped" : "Containers stopped" };
+  return { status: "warning", label: "Containers mixed" };
+}
+
 type Props = {
   visibleProjects: Project[];
   projects: Project[];
@@ -59,6 +78,8 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
           const activeRoutes = projectRoutes.filter((route) => route.enabled);
           const primaryRoute = activeRoutes[0] ?? projectRoutes[0];
           const runningCount = projectContainers.filter((container) => container.state === "running").length;
+          const deploymentStatus = deploymentBadge(latestDeploymentByProject.get(project.id));
+          const containerStatus = containerBadge(projectContainers, project.containerCount);
           return (
             <article
               className="project-card"
@@ -79,7 +100,10 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
                     <h3>{project.name}</h3>
                     <p>{project.gitUrl || "Compose file project"}</p>
                   </div>
-                  <StatusBadge status={latestDeploymentByProject.get(project.id)?.status ?? "ready"} />
+                  <div className="project-card-statuses">
+                    <StatusBadge status={deploymentStatus.status} label={deploymentStatus.label} />
+                    <StatusBadge status={containerStatus.status} label={containerStatus.label} />
+                  </div>
                 </div>
                 <div className="project-card-meta">
                   <span>{runningCount}/{projectContainers.length || project.containerCount || 0} running</span>

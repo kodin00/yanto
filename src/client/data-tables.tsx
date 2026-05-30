@@ -148,11 +148,15 @@ export function BackupTable({
 
 export function AuditTable({ entries }: { entries: AuditLogEntry[] }) {
   if (!entries.length) {
-    return <p className="muted">No audit events recorded yet.</p>;
+    return (
+      <div className="audit-empty-state">
+        <p className="muted">No audit events recorded yet.</p>
+      </div>
+    );
   }
 
   return (
-    <div className="table-wrap">
+    <div className="table-wrap audit-table-wrap">
       <table>
         <thead>
           <tr>

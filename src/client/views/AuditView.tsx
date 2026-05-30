@@ -14,7 +14,7 @@ export const AuditView = memo(function AuditView(props: Props) {
   const { auditEntries, visibleAuditEntries, auditPage, setAuditPage } = props;
 
   return (
-    <section className="panel">
+    <section className="panel audit-panel">
       <div className="panel-head">
         <h2>Audit log</h2>
         <span className="count">{auditEntries.length} events</span>

@@ -686,6 +686,34 @@ a.button {
   letter-spacing: -0.02em;
 }
 
+.audit-panel {
+  min-height: calc(100vh - 128px);
+  display: flex;
+  flex-direction: column;
+}
+
+.audit-panel .panel-head {
+  flex: 0 0 auto;
+}
+
+.audit-table-wrap,
+.audit-empty-state {
+  flex: 1 1 auto;
+  min-height: 360px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+}
+
+.audit-empty-state {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.audit-panel .pagination {
+  flex: 0 0 auto;
+}
+
 .count {
   color: var(--muted);
   font-size: 13px;
@@ -870,6 +898,14 @@ a.button {
 
 .project-card-side {
   justify-items: end;
+}
+
+.project-card-statuses {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .project-card-head .status {
@@ -2293,6 +2329,10 @@ th {
 
   .project-card-head {
     flex-direction: column;
+  }
+
+  .project-card-statuses {
+    justify-content: flex-start;
   }
 
   .actions,

@@ -223,10 +223,10 @@ export function Toast({ message, kind = "ok", onClose }: { message: string; kind
   );
 }
 
-export function StatusBadge({ status }: { status: string }) {
+export function StatusBadge({ status, label, title }: { status: string; label?: string; title?: string }) {
   const normalized = status.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
-  const label = status.replace(/[-_]+/g, " ");
-  return <span className={`status ${normalized}`}>{label}</span>;
+  const displayLabel = label ?? status.replace(/[-_]+/g, " ");
+  return <span className={`status ${normalized}`} title={title}>{displayLabel}</span>;
 }
 
 export function LogViewer({ logs }: { logs: string }) {
