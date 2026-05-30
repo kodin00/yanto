@@ -1,6 +1,6 @@
 import { Archive, ChevronLeft, ChevronRight } from "lucide-react";
 import { memo } from "react";
-import type { BackupRecord } from "../../shared/types";
+import type { Backup } from "../../shared/types";
 import { pageSize, totalPages } from "../app-utils";
 import { Button } from "../components/ui";
 import { BackupTable, PostgresTargetTable } from "../data-tables";
@@ -9,14 +9,14 @@ import type { ConfirmState } from "./types";
 
 type Props = {
   postgresTargets: PostgresTarget[];
-  visibleBackups: BackupRecord[];
-  backups: BackupRecord[];
+  visibleBackups: Backup[];
+  backups: Backup[];
   busy: string | null;
   r2Ready: boolean;
   backupPage: number;
-  dumpPostgresTarget: (containerId?: string) => void;
-  restorePostgresTarget: (target: PostgresTarget, file: File) => void;
-  uploadBackupR2: (backup: BackupRecord) => void;
+  dumpPostgresTarget: (containerId?: string) => Promise<void>;
+  restorePostgresTarget: (target: PostgresTarget, file: File) => Promise<void>;
+  uploadBackupR2: (backup: Backup) => Promise<void>;
   setConfirm: (state: ConfirmState) => void;
   refreshBackups: () => Promise<void>;
   setBackupPage: (page: number) => void;
