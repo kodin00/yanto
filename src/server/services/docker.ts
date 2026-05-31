@@ -73,20 +73,10 @@ export function isPostgresContainerLike(container: Pick<ContainerInfo, "name" | 
 let containerCache: ContainerInfo[] | null = null;
 let containerCacheTime = 0;
 const CONTAINER_CACHE_TTL_MS = 5000;
-let containerCachePromise: Promise<ContainerInfo[]> | null = null;
-
-let summaryCachePromise: Promise<ContainerInfo[]> | null = null;
-let summaryCache: ContainerInfo[] | null = null;
-let summaryCacheTime = 0;
-const SUMMARY_CACHE_TTL_MS = 3000;
 
 export function invalidateContainerCache() {
   containerCache = null;
   containerCacheTime = 0;
-  containerCachePromise = null;
-  summaryCache = null;
-  summaryCacheTime = 0;
-  summaryCachePromise = null;
 }
 
 export async function listContainers(): Promise<ContainerInfo[]> {
@@ -95,104 +85,41 @@ export async function listContainers(): Promise<ContainerInfo[]> {
     return containerCache;
   }
 
-  if (containerCachePromise) {
-    return containerCachePromise;
+  const ps = await runCommand("docker", ["ps", "-a", "--format", "{{json .}}"]);
+  if (ps.exitCode !== 0) {
+    throw new Error(ps.output || "Unable to list Docker containers.");
   }
 
-  containerCachePromise = (async () => {
-    try {
-      const ps = await runCommand("docker", ["ps", "-a", "--format", "{{json .}}"]);
-      if (ps.exitCode !== 0) {
-        throw new Error(ps.output || "Unable to list Docker containers.");
-      }
+  const stats = await runCommand("docker", ["stats", "--no-stream", "--format", "{{json .}}"]);
+  const statsById = new Map(parseJsonLines<DockerStatsLine>(stats.output).map((item) => [item.ID, item]));
 
-      const stats = await runCommand("docker", ["stats", "--no-stream", "--format", "{{json .}}"]);
-      const statsById = new Map(parseJsonLines<DockerStatsLine>(stats.output).map((item) => [item.ID, item]));
+  const result = parseJsonLines<DockerPsLine>(ps.output).map((container) => {
+    const stat = statsById.get(container.ID);
+    const labels = parseLabels(container.Labels);
+    const composeService = labels.get("com.docker.compose.service") ?? null;
+    const row = {
+      id: container.ID,
+      name: container.Names,
+      image: container.Image,
+      status: container.Status,
+      state: container.State,
+      ports: container.Ports,
+      createdAt: normalizeDockerCreatedAt(container.CreatedAt),
+      cpuPercent: stat?.CPUPerc ?? "0%",
+      memoryUsage: stat?.MemUsage ?? "-",
+      memoryPercent: stat?.MemPerc ?? "0%",
+      composeProject: labels.get("com.docker.compose.project") ?? null,
+      composeService
+    };
+    return {
+      ...row,
+      isPostgresCandidate: isPostgresContainerLike(row)
+    };
+  });
 
-      const result = parseJsonLines<DockerPsLine>(ps.output).map((container) => {
-        const stat = statsById.get(container.ID);
-        const labels = parseLabels(container.Labels);
-        const composeService = labels.get("com.docker.compose.service") ?? null;
-        const row = {
-          id: container.ID,
-          name: container.Names,
-          image: container.Image,
-          status: container.Status,
-          state: container.State,
-          ports: container.Ports,
-          createdAt: normalizeDockerCreatedAt(container.CreatedAt),
-          cpuPercent: stat?.CPUPerc ?? "0%",
-          memoryUsage: stat?.MemUsage ?? "-",
-          memoryPercent: stat?.MemPerc ?? "0%",
-          composeProject: labels.get("com.docker.compose.project") ?? null,
-          composeService
-        };
-        return {
-          ...row,
-          isPostgresCandidate: isPostgresContainerLike(row)
-        };
-      });
-
-      containerCache = result;
-      containerCacheTime = Date.now();
-      return result;
-    } finally {
-      containerCachePromise = null;
-    }
-  })();
-
-  return containerCachePromise;
-}
-
-export async function listContainersSummary(): Promise<ContainerInfo[]> {
-  const now = Date.now();
-  if (summaryCache && now - summaryCacheTime < SUMMARY_CACHE_TTL_MS) {
-    return summaryCache;
-  }
-
-  if (summaryCachePromise) {
-    return summaryCachePromise;
-  }
-
-  summaryCachePromise = (async () => {
-    try {
-      const ps = await runCommand("docker", ["ps", "-a", "--format", "{{json .}}"]);
-      if (ps.exitCode !== 0) {
-        throw new Error(ps.output || "Unable to list Docker containers.");
-      }
-
-      const result = parseJsonLines<DockerPsLine>(ps.output).map((container) => {
-        const labels = parseLabels(container.Labels);
-        const composeService = labels.get("com.docker.compose.service") ?? null;
-        const row = {
-          id: container.ID,
-          name: container.Names,
-          image: container.Image,
-          status: container.Status,
-          state: container.State,
-          ports: container.Ports,
-          createdAt: normalizeDockerCreatedAt(container.CreatedAt),
-          cpuPercent: "0%",
-          memoryUsage: "-",
-          memoryPercent: "0%",
-          composeProject: labels.get("com.docker.compose.project") ?? null,
-          composeService
-        };
-        return {
-          ...row,
-          isPostgresCandidate: isPostgresContainerLike(row)
-        };
-      });
-
-      summaryCache = result;
-      summaryCacheTime = Date.now();
-      return result;
-    } finally {
-      summaryCachePromise = null;
-    }
-  })();
-
-  return summaryCachePromise;
+  containerCache = result;
+  containerCacheTime = now;
+  return result;
 }
 
 export async function containerLogs(containerId: string) {

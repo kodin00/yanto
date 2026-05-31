@@ -7,7 +7,7 @@ import { readProjectCompose } from "../services/compose.js";
 import { rollbackTargetForProject, startDeployment } from "../services/deployments.js";
 import { previewEnvContent, previewProjectEnv, readProjectEnv, readProjectEnvVariables, writeProjectEnv, writeProjectEnvVariables } from "../services/project-env.js";
 import { restartProjectCompose, stopProjectCompose } from "../services/project-runtime.js";
-import { createProject, deleteProject, getProject, listProjectsWithRoutes, publicProject, updateProject } from "../services/projects.js";
+import { createProject, deleteProject, getProject, listProjectsWithContainerCounts, publicProject, updateProject } from "../services/projects.js";
 import { config } from "../config.js";
 
 const router = Router();
@@ -16,7 +16,7 @@ router.get(
   "/api/projects",
   requireAuth,
   asyncRoute(async (_req, res) => {
-    const rows = await listProjectsWithRoutes();
+    const rows = await listProjectsWithContainerCounts();
     res.json(rows.map(publicProject));
   })
 );

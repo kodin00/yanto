@@ -94,32 +94,6 @@ export const api = {
     }),
   logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
   me: () => request<{ username: string }>("/api/auth/me"),
-  dashboard: () =>
-    request<{
-      projects: Project[];
-      deployments: Deployment[];
-      nodes: DeploymentNode[];
-      containers: ContainerInfo[];
-      usage: SystemUsage | null;
-      settings: {
-        projectsRoot: string;
-        hostProjectsRoot: string;
-        sshKeysDir: string;
-        appBaseUrl: string;
-        projectCount: number;
-        r2: R2PublicSettings;
-        cf: CloudflarePublicSettings;
-        setupWizard: SetupWizardStatus;
-        sshKey: {
-          hasManagedKey: boolean;
-          hasMountedKey: boolean;
-          managedPrivateKeyPath: string;
-          mountedPrivateKeyPath: string;
-          activePrivateKeyPath: string | null;
-          publicKey: string | null;
-        };
-      };
-    }>("/api/dashboard"),
   projects: () => request<Project[]>("/api/projects"),
   nodes: () => request<DeploymentNode[]>("/api/nodes"),
   workerJoinToken: () => request<{ token: string; command: string }>("/api/nodes/join-token", { method: "POST" }),
@@ -201,7 +175,6 @@ export const api = {
   backupDownloadUrl: (id: string) => `/api/backups/${id}/download`,
   auditLog: () => request<AuditLogEntry[]>("/api/audit-logs"),
   containers: () => request<ContainerInfo[]>("/api/containers"),
-  containersSummary: () => request<ContainerInfo[]>("/api/containers?stats=false"),
   containerLogs: (id: string) => request<string>(`/api/containers/${id}/logs`),
   containerLogStream: (id: string) => `/api/containers/${id}/logs/stream`,
   stopContainer: (id: string) => request<{ ok: true }>(`/api/containers/${id}/stop`, { method: "POST" }),
