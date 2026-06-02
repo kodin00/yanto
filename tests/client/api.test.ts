@@ -238,6 +238,16 @@ describe("api client", () => {
       }));
     });
 
+    it("generateSshKey sends POST to settings endpoint", async () => {
+      const fetchMock = mockFetch({ ok: true, sshKey: { hasManagedKey: true, publicKey: "ssh-ed25519 test" } });
+
+      await api.generateSshKey();
+
+      expect(fetchMock).toHaveBeenCalledWith("/api/settings/ssh-key/generate", expect.objectContaining({
+        method: "POST"
+      }));
+    });
+
     it("containers sends GET to /api/containers", async () => {
       const fetchMock = mockFetch([]);
 

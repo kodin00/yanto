@@ -1,4 +1,4 @@
-import { Cloud, Copy, DatabaseZap, GitBranch, KeyRound, RefreshCw, Server, Settings, ShieldCheck, Trash2 } from "lucide-react";
+import { Cloud, Copy, DatabaseZap, GitBranch, GitPullRequest, KeyRound, RefreshCw, Server, Settings, ShieldCheck, Trash2 } from "lucide-react";
 import { memo } from "react";
 import type { FormEvent } from "react";
 import { Button, LogViewer, StatusBadge, TextAreaField, TextField, ToggleField } from "../components/ui";
@@ -21,6 +21,7 @@ type Props = {
   saveCfSettings: (event: FormEvent) => void;
   validateCfSettings: () => void;
   saveSshPrivateKey: (event: FormEvent) => void;
+  generateSshPrivateKey: () => void;
   setSshPrivateKey: (value: string) => void;
   copyText: (value: string) => Promise<void>;
   copyWorkerInstallCommand: () => void;
@@ -52,6 +53,7 @@ export const SettingsView = memo(function SettingsView(props: Props) {
     saveCfSettings,
     validateCfSettings,
     saveSshPrivateKey,
+    generateSshPrivateKey,
     setSshPrivateKey,
     copyText,
     copyWorkerInstallCommand,
@@ -126,10 +128,6 @@ export const SettingsView = memo(function SettingsView(props: Props) {
             <div>
               <dt>Host projects root</dt>
               <dd>{settings.hostProjectsRoot}</dd>
-            </div>
-            <div>
-              <dt>SSH keys</dt>
-              <dd>{settings.sshKeysDir}</dd>
             </div>
             <div>
               <dt>Base URL</dt>
@@ -290,16 +288,12 @@ export const SettingsView = memo(function SettingsView(props: Props) {
           </div>
           <dl className="settings-list ssh-status-list">
             <div>
-              <dt>Active key path</dt>
-              <dd>{settings.sshKey?.activePrivateKeyPath ?? "No key found"}</dd>
-            </div>
-            <div>
-              <dt>Managed key</dt>
+              <dt>Saved key</dt>
               <dd>{settings.sshKey?.hasManagedKey ? "Saved in app volume" : "Not saved"}</dd>
             </div>
             <div>
-              <dt>Mounted VPS key</dt>
-              <dd>{settings.sshKey?.hasMountedKey ? settings.sshKey.mountedPrivateKeyPath : "Not found"}</dd>
+              <dt>Git access</dt>
+              <dd>{settings.sshKey?.activePrivateKeyPath ? "Ready" : "Add or generate a key"}</dd>
             </div>
           </dl>
           {settings.sshKey?.publicKey ? (
@@ -318,6 +312,9 @@ export const SettingsView = memo(function SettingsView(props: Props) {
               placeholder={"Paste the full private key, starting with -----BEGIN OPENSSH PRIVATE KEY-----"}
             />
             <div className="actions">
+              <Button type="button" variant="secondary" disabled={busy === "ssh-key-generate" || settings.sshKey?.hasManagedKey} onClick={() => void generateSshPrivateKey()} icon={<GitPullRequest size={16} />}>
+                Generate key
+              </Button>
               <Button type="submit" disabled={busy === "ssh-key" || !sshPrivateKey.trim()} icon={<KeyRound size={16} />}>
                 Save SSH key
               </Button>

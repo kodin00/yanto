@@ -58,10 +58,23 @@ export async function saveManagedSshPrivateKey(privateKey: string) {
   }
   await fs.writeFile(publicKeyPath, result.output.trim() ? `${result.output.trim()}\n` : "", "utf8");
 
-  return {
-    privateKeyPath: config.managedSshPrivateKeyPath,
-    publicKey: result.output.trim()
-  };
+  return managedSshKeyStatus();
+}
+
+export async function generateManagedSshPrivateKey() {
+  if (await pathExists(config.managedSshPrivateKeyPath)) {
+    throw new Error("Managed SSH key already exists.");
+  }
+
+  await fs.mkdir(path.dirname(config.managedSshPrivateKeyPath), { recursive: true, mode: 0o700 });
+  const result = await runCommand("ssh-keygen", ["-t", "ed25519", "-N", "", "-C", "yanto-managed", "-f", config.managedSshPrivateKeyPath]);
+  if (result.exitCode !== 0) {
+    await fs.rm(config.managedSshPrivateKeyPath, { force: true });
+    await fs.rm(`${config.managedSshPrivateKeyPath}.pub`, { force: true });
+    throw new Error(`Failed to generate SSH key: ${result.output}`);
+  }
+  await fs.chmod(config.managedSshPrivateKeyPath, 0o600);
+  return managedSshKeyStatus();
 }
 
 export async function managedSshKeyStatus() {

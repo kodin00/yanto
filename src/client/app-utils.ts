@@ -66,6 +66,24 @@ export function githubWebhookEndpoint(project: Project, baseUrl: string) {
   return `${baseUrl.replace(/\/$/, "")}/webhooks/github?id=${project.id}`;
 }
 
+export function githubRepoNameFromUrl(input: string) {
+  const value = input.trim();
+  if (!value) return "";
+
+  const sshMatch = value.match(/^git@github\.com:([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i);
+  if (sshMatch?.[2]) return sshMatch[2];
+
+  try {
+    const url = new URL(value);
+    if (url.hostname.toLowerCase() !== "github.com") return "";
+    const parts = url.pathname.split("/").filter(Boolean);
+    const repo = parts[1];
+    return repo ? repo.replace(/\.git$/i, "") : "";
+  } catch {
+    return "";
+  }
+}
+
 export function slugifyFolderName(input: string) {
   return input
     .trim()

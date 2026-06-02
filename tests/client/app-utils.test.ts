@@ -7,6 +7,7 @@ import {
   durationBetween,
   durationSince,
   endpoint,
+  githubRepoNameFromUrl,
   githubWebhookEndpoint,
   isProtectedYantoContainer,
   normalizeEnvRows,
@@ -146,6 +147,22 @@ describe("githubWebhookEndpoint", () => {
 
   it("strips trailing slash", () => {
     expect(githubWebhookEndpoint(project, "https://example.com/")).toBe("https://example.com/webhooks/github?id=proj-456");
+  });
+});
+
+describe("githubRepoNameFromUrl", () => {
+  it("extracts repo name from GitHub SSH URL", () => {
+    expect(githubRepoNameFromUrl("git@github.com:kodin00/envchecker.git")).toBe("envchecker");
+  });
+
+  it("extracts repo name from GitHub HTTPS URL", () => {
+    expect(githubRepoNameFromUrl("https://github.com/kodin00/envchecker.git")).toBe("envchecker");
+  });
+
+  it("returns empty for unsupported input", () => {
+    expect(githubRepoNameFromUrl("")).toBe("");
+    expect(githubRepoNameFromUrl("https://gitlab.com/kodin00/envchecker.git")).toBe("");
+    expect(githubRepoNameFromUrl("not a url")).toBe("");
   });
 });
 

@@ -1761,6 +1761,16 @@ th {
   color: var(--muted);
 }
 
+.editor-launch-action {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  color: var(--green-dark);
+  background: var(--success-bg);
+  border: 1px solid rgba(45, 111, 79, 0.22);
+}
+
 .editor-modal-body {
   display: grid;
   gap: 12px;
@@ -1901,6 +1911,12 @@ th {
   padding: 10px;
   background: var(--panel-strong);
   border: 1px solid var(--line-light);
+}
+
+.env-row .toggle-field {
+  min-height: 42px;
+  align-self: end;
+  padding: 0 10px;
 }
 
 .env-mode-toggle {

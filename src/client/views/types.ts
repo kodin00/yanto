@@ -1,4 +1,5 @@
 import type { CloudflarePublicSettings, R2PublicSettings, SetupWizardStatus } from "../../shared/types";
+import type { SshKeyStatus } from "../lib/api";
 
 export type View = "dashboard" | "projects" | "deployments" | "containers" | "nodes" | "backups" | "audit" | "settings";
 export type ToastState = { message: string; kind?: "ok" | "error" | "loading" } | null;
@@ -9,14 +10,7 @@ export type SettingsState = {
   hostProjectsRoot: string;
   sshKeysDir: string;
   appBaseUrl: string;
-  sshKey: {
-    hasManagedKey: boolean;
-    hasMountedKey: boolean;
-    managedPrivateKeyPath: string;
-    mountedPrivateKeyPath: string;
-    activePrivateKeyPath: string | null;
-    publicKey: string | null;
-  };
+  sshKey: SshKeyStatus;
   r2: R2PublicSettings;
   cf: CloudflarePublicSettings;
   setupWizard: SetupWizardStatus;

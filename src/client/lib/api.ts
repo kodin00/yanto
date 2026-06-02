@@ -37,6 +37,15 @@ export type CloudflareRoutePayload = {
   nodeId?: string;
 };
 
+export type SshKeyStatus = {
+  hasManagedKey: boolean;
+  hasMountedKey: boolean;
+  managedPrivateKeyPath: string;
+  mountedPrivateKeyPath: string;
+  activePrivateKeyPath: string | null;
+  publicKey: string | null;
+};
+
 function getCsrfToken(): string {
   const match = document.cookie.match(/(?:^|;\s*)yanto_csrf=([^;]*)/);
   return match ? decodeURIComponent(match[1]) : "";
@@ -185,9 +194,13 @@ export const api = {
   cleanupPreview: () => request<{ logs: string }>("/api/system/cleanup/preview"),
   cleanup: () => request<{ logs: string }>("/api/system/cleanup", { method: "POST" }),
   saveSshKey: (privateKey: string) =>
-    request<{ ok: true; sshKey: { privateKeyPath: string; publicKey: string } }>("/api/settings/ssh-key", {
+    request<{ ok: true; sshKey: SshKeyStatus }>("/api/settings/ssh-key", {
       method: "POST",
       body: JSON.stringify({ privateKey })
+    }),
+  generateSshKey: () =>
+    request<{ ok: true; sshKey: SshKeyStatus }>("/api/settings/ssh-key/generate", {
+      method: "POST"
     }),
   saveR2Settings: (payload: R2SettingsPayload) =>
     request<{ ok: true; r2: R2PublicSettings }>("/api/settings/r2", {
@@ -204,14 +217,7 @@ export const api = {
       r2: R2PublicSettings;
       cf: CloudflarePublicSettings;
       setupWizard: SetupWizardStatus;
-      sshKey: {
-        hasManagedKey: boolean;
-        hasMountedKey: boolean;
-        managedPrivateKeyPath: string;
-        mountedPrivateKeyPath: string;
-        activePrivateKeyPath: string | null;
-        publicKey: string | null;
-      };
+      sshKey: SshKeyStatus;
     }>("/api/settings"),
   saveSetupWizard: (action: "completed" | "dismissed") =>
     request<{ ok: true; setupWizard: SetupWizardStatus }>("/api/settings/setup-wizard", {

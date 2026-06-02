@@ -9,7 +9,7 @@ import { cloudflareSettingsInput, r2SettingsInput, setupWizardInput } from "../r
 import { recordAuditLog } from "../services/audit.js";
 import { publicCloudflareSettings, saveCloudflareSettings, validateCloudflareSettings } from "../services/cloudflare.js";
 import { publicR2Settings, publicSetupWizardSettings, saveR2Settings, saveSetupWizardSettings } from "../services/settings.js";
-import { managedSshKeyStatus, saveManagedSshPrivateKey } from "../services/ssh.js";
+import { generateManagedSshPrivateKey, managedSshKeyStatus, saveManagedSshPrivateKey } from "../services/ssh.js";
 
 const router = Router();
 
@@ -72,6 +72,16 @@ router.post(
     const body = z.object({ privateKey: z.string().min(1) }).parse(req.body);
     const sshKey = await saveManagedSshPrivateKey(body.privateKey);
     await recordAuditLog({ actor: actor(req), action: "settings.ssh_key.save", entityType: "settings" });
+    res.json({ ok: true, sshKey });
+  })
+);
+
+router.post(
+  "/api/settings/ssh-key/generate",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const sshKey = await generateManagedSshPrivateKey();
+    await recordAuditLog({ actor: actor(req), action: "settings.ssh_key.generate", entityType: "settings" });
     res.json({ ok: true, sshKey });
   })
 );

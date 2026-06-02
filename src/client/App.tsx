@@ -10,6 +10,7 @@ import {
   FileClock,
   FileText,
   GitBranch,
+  GitPullRequest,
   KeyRound,
   List,
   LogOut,
@@ -39,6 +40,7 @@ import {
   dateTime,
   durationBetween,
   endpoint,
+  githubRepoNameFromUrl,
   githubWebhookEndpoint,
   normalizeEnvRows,
   pageItems,
@@ -570,6 +572,19 @@ export function App() {
     }
   }
 
+  function updateProjectGitUrl(gitUrl: string) {
+    setProjectForm((current) => {
+      const previousRepoName = githubRepoNameFromUrl(current.gitUrl);
+      const nextRepoName = githubRepoNameFromUrl(gitUrl);
+      const shouldAutofillName = Boolean(nextRepoName) && (!current.name.trim() || (Boolean(previousRepoName) && current.name === previousRepoName));
+      return {
+        ...current,
+        gitUrl,
+        name: shouldAutofillName ? nextRepoName : current.name
+      };
+    });
+  }
+
   async function saveProject(event: FormEvent) {
     await persistProjectDetails(event);
   }
@@ -942,6 +957,20 @@ export function App() {
     }
   }
 
+  async function generateSshPrivateKey() {
+    setBusy("ssh-key-generate");
+    setToast({ message: "Generating SSH key...", kind: "loading" });
+    try {
+      const result = await api.generateSshKey();
+      setSettings((current) => ({ ...current, sshKey: { ...current.sshKey, ...result.sshKey } }));
+      setToast({ message: "SSH key generated. Copy the public key to GitHub." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to generate SSH key.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function openSetupWizard(step: SetupStep = "intro") {
     setSetupStep(step);
     setSetupModalOpen(true);
@@ -1202,6 +1231,7 @@ export function App() {
             saveCfSettings={saveCfSettings}
             validateCfSettings={validateCfSettings}
             saveSshPrivateKey={saveSshPrivateKey}
+            generateSshPrivateKey={generateSshPrivateKey}
             setSshPrivateKey={setSshPrivateKey}
             copyText={copyText}
             copyWorkerInstallCommand={copyWorkerInstallCommand}
@@ -1259,19 +1289,17 @@ export function App() {
             {setupStep === "ssh" ? (
               <form className="setup-step form-grid ssh-key-form" onSubmit={saveSshPrivateKey}>
                 <div className="setup-status-row">
-                  <span>Active key</span>
-                  <StatusBadge status={sshReady ? "ready" : "optional"} />
+                  <span>Managed key</span>
+                  <StatusBadge status={settings.sshKey?.hasManagedKey ? "ready" : "optional"} />
                 </div>
-                <dl className="settings-list ssh-status-list">
-                  <div>
-                    <dt>Active key path</dt>
-                    <dd>{settings.sshKey?.activePrivateKeyPath ?? "No key found"}</dd>
+                {settings.sshKey?.publicKey ? (
+                  <div className="token-box ssh-public-key-box">
+                    <span>{settings.sshKey.publicKey}</span>
+                    <button type="button" onClick={() => void copyText(settings.sshKey?.publicKey ?? "")} title="Copy public key" aria-label="Copy public key">
+                      <Copy size={15} />
+                    </button>
                   </div>
-                  <div>
-                    <dt>Mounted VPS key</dt>
-                    <dd>{settings.sshKey?.hasMountedKey ? settings.sshKey.mountedPrivateKeyPath : "Not found"}</dd>
-                  </div>
-                </dl>
+                ) : null}
                 <TextAreaField
                   label="Private key"
                   value={sshPrivateKey}
@@ -1279,6 +1307,9 @@ export function App() {
                   placeholder={"Paste the full private key, starting with -----BEGIN OPENSSH PRIVATE KEY-----"}
                 />
                 <div className="actions">
+                  <Button type="button" variant="secondary" disabled={busy === "ssh-key-generate" || settings.sshKey?.hasManagedKey} onClick={() => void generateSshPrivateKey()} icon={<GitPullRequest size={16} />}>
+                    Generate key
+                  </Button>
                   <Button type="submit" disabled={busy === "ssh-key" || !sshPrivateKey.trim()} icon={<KeyRound size={16} />}>
                     Save SSH key
                   </Button>
@@ -1399,7 +1430,7 @@ export function App() {
               <section className="project-edit-section">
                 <div className="section-kicker">Project</div>
                 <TextField label="Name" value={projectForm.name} onChange={(name) => setProjectForm((current) => ({ ...current, name }))} required />
-                <TextField label="Git SSH URL" value={projectForm.gitUrl} onChange={(gitUrl) => setProjectForm((current) => ({ ...current, gitUrl }))} placeholder="Optional: git@github.com:user/repo.git" />
+                <TextField label="Git SSH URL" value={projectForm.gitUrl} onChange={updateProjectGitUrl} placeholder="Optional: git@github.com:user/repo.git" />
                 <div className="project-edit-pair">
                   <TextField label="Branch" value={projectForm.branch} onChange={(branch) => setProjectForm((current) => ({ ...current, branch }))} required />
                   <TextField label="Compose file" value={projectForm.composeFile} onChange={(composeFile) => setProjectForm((current) => ({ ...current, composeFile }))} placeholder="docker-compose.yml" required />
@@ -1435,7 +1466,9 @@ export function App() {
                       <strong>Compose</strong>
                       <small>{projectCompose.loading ? "Opening..." : "Open editor"}</small>
                     </span>
-                    <StatusBadge status="Open editor" />
+                    <span className="editor-launch-action" aria-hidden="true">
+                      {projectCompose.loading ? <RefreshCw size={15} className="spin" /> : <FileText size={15} />}
+                    </span>
                   </button>
                   <button className="editor-launch-row" type="button" onClick={() => void openEnvEditor()} disabled={projectEnv.loading}>
                     <List size={16} />
@@ -1443,7 +1476,9 @@ export function App() {
                       <strong>Environment</strong>
                       <small>{projectEnv.loading ? "Opening..." : "Open editor"}</small>
                     </span>
-                    <StatusBadge status="Open editor" />
+                    <span className="editor-launch-action" aria-hidden="true">
+                      {projectEnv.loading ? <RefreshCw size={15} className="spin" /> : <List size={15} />}
+                    </span>
                   </button>
                 </section>
 

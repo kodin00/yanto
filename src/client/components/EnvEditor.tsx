@@ -73,7 +73,6 @@ export function EnvEditor({ modal, onChange }: { modal: ProjectEnvState; onChang
                 <TextField label="Key" value={row.key} onChange={(key) => setRows(modal.rows.map((item, rowIndex) => (rowIndex === index ? { ...item, key } : item)))} />
                 <TextField
                   label="Value"
-                  type={row.masked ? "password" : "text"}
                   value={row.value ?? ""}
                   onChange={(value) => setRows(modal.rows.map((item, rowIndex) => (rowIndex === index ? { ...item, value } : item)))}
                 />
@@ -86,13 +85,13 @@ export function EnvEditor({ modal, onChange }: { modal: ProjectEnvState; onChang
           </div>
           <div className="env-add-row">
             <TextField label="New key" value={modal.draftKey} onChange={(draftKey) => onChange({ ...modal, draftKey })} />
-            <TextField label="New value" type="password" value={modal.draftValue} onChange={(draftValue) => onChange({ ...modal, draftValue })} />
+            <TextField label="New value" value={modal.draftValue} onChange={(draftValue) => onChange({ ...modal, draftValue })} />
             <Button
               variant="secondary"
               onClick={() => {
                 const key = modal.draftKey.trim();
                 if (!key) return;
-                setRows(normalizeEnvRows([...modal.rows, { key, value: modal.draftValue, masked: true }]), { draftKey: "", draftValue: "" });
+                setRows(normalizeEnvRows([...modal.rows, { key, value: modal.draftValue, masked: false }]), { draftKey: "", draftValue: "" });
               }}
               icon={<Plus size={15} />}
             >
