@@ -224,7 +224,20 @@ describe("api client", () => {
       await api.deployProject("p1");
 
       expect(fetchMock).toHaveBeenCalledWith("/api/projects/p1/deploy", expect.objectContaining({
-        method: "POST"
+        method: "POST",
+        body: "{}"
+      }));
+    });
+
+    it("deployProject can include pending env variables", async () => {
+      const fetchMock = mockFetch({ deployment: {}, reused: false });
+      const payload = { envVariables: [{ key: "APP_PORT", value: "3000" }] };
+
+      await api.deployProject("p1", payload);
+
+      expect(fetchMock).toHaveBeenCalledWith("/api/projects/p1/deploy", expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify(payload)
       }));
     });
 
@@ -284,6 +297,16 @@ describe("api client", () => {
       await api.containers();
 
       expect(fetchMock).toHaveBeenCalledWith("/api/containers", expect.objectContaining({
+        credentials: "include"
+      }));
+    });
+
+    it("deployments requests the expanded history limit", async () => {
+      const fetchMock = mockFetch([]);
+
+      await api.deployments();
+
+      expect(fetchMock).toHaveBeenCalledWith("/api/deployments?limit=500", expect.objectContaining({
         credentials: "include"
       }));
     });

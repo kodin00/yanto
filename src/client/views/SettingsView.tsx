@@ -300,6 +300,10 @@ export const SettingsView = memo(function SettingsView(props: Props) {
             <h2>Git SSH key</h2>
             <KeyRound size={19} />
           </div>
+          <div className={`credential-status ${settings.sshKey?.activePrivateKeyPath ? "saved" : ""}`}>
+            <KeyRound size={15} />
+            <span>{settings.sshKey?.activePrivateKeyPath ? "SSH key saved" : "SSH key not saved"}</span>
+          </div>
           <dl className="settings-list ssh-status-list">
             <div>
               <dt>Saved key</dt>

@@ -3,7 +3,7 @@ import { db } from "../db/index.js";
 import { deploymentNodes, deployments, projects, type DeploymentRow, type ProjectRow } from "../db/schema.js";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
-import { runProjectDeployment, type DeploymentMetadata } from "./deployment-runner.js";
+import { runProjectDeployment, type DeploymentMetadata, type PendingDeploymentEnv } from "./deployment-runner.js";
 import { createId } from "./tokens.js";
 import { deploymentEvents } from "./deployment-events.js";
 
@@ -66,12 +66,12 @@ export async function finishDeployment(deploymentId: string, status: "success" |
   }
 }
 
-async function runLocalDeployment(project: ProjectRow, deployment: DeploymentRow) {
+async function runLocalDeployment(project: ProjectRow, deployment: DeploymentRow, pendingEnv?: PendingDeploymentEnv) {
   try {
     await runProjectDeployment(project, deployment, {
       appendLog: (chunk) => appendDeploymentLog(deployment.id, chunk),
       updateMetadata: (metadata) => updateDeploymentMetadata(deployment.id, metadata)
-    });
+    }, pendingEnv);
     await finishDeployment(deployment.id, "success", 0);
     logger.info("deployment succeeded", { projectId: project.id, deploymentId: deployment.id, nodeId: deployment.nodeId });
   } catch (error) {
@@ -87,6 +87,7 @@ async function runLocalDeployment(project: ProjectRow, deployment: DeploymentRow
 export type StartDeploymentOptions = {
   targetRef?: string;
   rollbackFromDeploymentId?: string;
+  pendingEnv?: PendingDeploymentEnv;
 };
 
 export async function startDeployment(projectId: string, trigger: "manual" | "webhook" | "github" | "rollback", options: StartDeploymentOptions = {}) {
@@ -116,6 +117,9 @@ export async function startDeployment(projectId: string, trigger: "manual" | "we
     if (!node) {
       throw new Error("Project target node not found.");
     }
+    if (options.pendingEnv && !(node.role === "master" && node.id === config.localNodeId)) {
+      throw new Error("Writing environment variables during deployment is only supported on the local master node.");
+    }
 
     const [deployment] = await tx
       .insert(deployments)
@@ -138,7 +142,7 @@ export async function startDeployment(projectId: string, trigger: "manual" | "we
   if (!result.reused && result.project && result.node) {
     if (result.node.role === "master" && result.node.id === config.localNodeId) {
       activeDeployments.set(projectId, result.deployment);
-      void runLocalDeployment(result.project, result.deployment);
+      void runLocalDeployment(result.project, result.deployment, options.pendingEnv);
     } else {
       await appendDeploymentLog(result.deployment.id, `Queued deployment for node ${result.node.name} (${result.node.id}).\n`);
     }
@@ -146,7 +150,7 @@ export async function startDeployment(projectId: string, trigger: "manual" | "we
   return { deployment: result.deployment, reused: result.reused };
 }
 
-export async function latestDeployments(limit = 20) {
+export async function latestDeployments(limit = 500) {
   return db
     .select({
       id: deployments.id,

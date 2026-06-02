@@ -9,8 +9,10 @@ const router = Router();
 router.get(
   "/api/deployments",
   requireAuth,
-  asyncRoute(async (_req, res) => {
-    res.json(await latestDeployments());
+  asyncRoute(async (req, res) => {
+    const requestedLimit = Number(req.query.limit ?? 500);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 500) : 500;
+    res.json(await latestDeployments(limit));
   })
 );
 

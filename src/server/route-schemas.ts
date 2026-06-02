@@ -15,7 +15,10 @@ export const projectInput = z.object({
 });
 
 export const deploymentInput = z.object({
-  targetRef: z.string().optional()
+  targetRef: z.string().optional(),
+  envContent: z.string().optional(),
+  envVariables: z.array(z.object({ key: z.string(), value: z.string().nullable().optional(), masked: z.boolean().optional() })).optional(),
+  envFile: z.string().min(1).optional()
 });
 
 export const rollbackInput = z.object({

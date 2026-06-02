@@ -158,7 +158,7 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
                     onClick={() =>
                       setConfirm({
                         title: "Remove project",
-                        body: "This removes the project record and deployment logs. The project folder is left untouched.",
+                        body: "This removes the project record, deployment logs, and the project folder from disk.",
                         label: "Remove",
                         danger: true,
                         loadingMessage: `Removing ${project.name}...`,

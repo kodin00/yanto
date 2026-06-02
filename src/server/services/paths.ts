@@ -63,3 +63,7 @@ export async function pathExists(target: string) {
 export async function ensureProjectsRoot() {
   await fs.mkdir(config.projectsRoot, { recursive: true });
 }
+
+export async function removeProjectDirectory(folderName: string) {
+  await fs.rm(projectPath(folderName), { recursive: true, force: true });
+}

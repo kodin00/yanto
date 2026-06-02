@@ -166,6 +166,12 @@ function cfRouteServiceTarget(form: CfRouteForm) {
   return `${parsed.protocol === "https" ? "https" : form.protocol}://${parsed.localTarget}`;
 }
 
+function projectWithoutSecret(project: Project | ProjectWithDeployToken): Project {
+  const copy: Partial<ProjectWithDeployToken> = { ...project };
+  delete copy.deployToken;
+  return copy as Project;
+}
+
 export function App() {
   const [user, setUser] = useState<string | null>(null);
   const [login, setLogin] = useState({ username: "admin", password: "" });
@@ -528,6 +534,20 @@ export function App() {
     setCfForm((current) => ({ ...current, ...patch }));
   }
 
+  function updateSavedProjectLocally(savedProject: Project | ProjectWithDeployToken) {
+    const publicSavedProject = projectWithoutSecret(savedProject);
+    setProjects((current) => {
+      const existing = current.find((project) => project.id === publicSavedProject.id);
+      const nextProject = {
+        ...existing,
+        ...publicSavedProject,
+        containerCount: publicSavedProject.containerCount ?? existing?.containerCount ?? 0,
+        cloudflareRoutes: publicSavedProject.cloudflareRoutes ?? existing?.cloudflareRoutes ?? []
+      };
+      return existing ? current.map((project) => (project.id === nextProject.id ? nextProject : project)) : [nextProject, ...current];
+    });
+  }
+
   async function persistProjectDetails(event?: FormEvent, after?: "deploy" | "restart") {
     event?.preventDefault();
     if (!projectModal) return;
@@ -543,7 +563,14 @@ export function App() {
       }
 
       const envRows = projectEnvPayload();
-      if (projectEnv.opened && projectEnv.available && !projectEnv.loading && (projectModal !== "new" || envRows.length || projectEnv.content.trim())) {
+      const shouldSaveEnv = projectEnv.opened && projectEnv.available && !projectEnv.loading && (!creatingProject || envRows.length || projectEnv.content.trim());
+      const pendingDeployEnv =
+        shouldSaveEnv && creatingProject && after === "deploy"
+          ? projectEnv.mode === "text"
+            ? { envContent: projectEnv.content }
+            : { envVariables: envRows }
+          : undefined;
+      if (shouldSaveEnv && !pendingDeployEnv) {
         if (projectEnv.mode === "text") {
           await api.updateProjectEnvContent(savedProject.id, projectEnv.content);
         } else {
@@ -554,11 +581,16 @@ export function App() {
         await api.restartProject(savedProject.id);
       }
       if (after === "deploy") {
-        await api.deployProject(savedProject.id);
+        const result = await api.deployProject(savedProject.id, pendingDeployEnv);
+        setDeployments((current) => [
+          { ...result.deployment, projectName: savedProject.name },
+          ...current.filter((deployment) => deployment.id !== result.deployment.id)
+        ]);
       }
       setProjectModal(null);
       setProjectEditorModal(null);
-      await refreshProjects();
+      updateSavedProjectLocally(savedProject);
+      void refreshProjects().catch(() => undefined);
       if (creatingProject && "deployToken" in savedProject) {
         setCreatedProjectSecret({
           projectName: savedProject.name,

@@ -13,6 +13,9 @@ export type ProjectEnvContent = {
   envFile: string;
   content: string;
 };
+export type DeploymentEnvPayload =
+  | { envContent: string; envFile?: string }
+  | { envVariables: ProjectEnvVariable[]; envFile?: string };
 export type ProjectComposeContent = {
   composeFile: string;
   content: string;
@@ -134,7 +137,11 @@ export const api = {
       body: JSON.stringify(payload)
     }),
   deleteProject: (id: string) => request<void>(`/api/projects/${id}`, { method: "DELETE" }),
-  deployProject: (id: string) => request<{ deployment: Deployment; reused: boolean }>(`/api/projects/${id}/deploy`, { method: "POST" }),
+  deployProject: (id: string, payload?: DeploymentEnvPayload) =>
+    request<{ deployment: Deployment; reused: boolean }>(`/api/projects/${id}/deploy`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {})
+    }),
   stopProject: (id: string) => request<{ ok: true }>(`/api/projects/${id}/stop`, { method: "POST" }),
   restartProject: (id: string) => request<{ ok: true }>(`/api/projects/${id}/restart`, { method: "POST" }),
   rollbackProject: (id: string, deploymentId: string) =>
@@ -155,7 +162,7 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ content })
     }),
-  deployments: () => request<Deployment[]>("/api/deployments"),
+  deployments: (limit = 500) => request<Deployment[]>(`/api/deployments?limit=${limit}`),
   deploymentLogs: (id: string) => request<string>(`/api/deployments/${id}/logs`),
   deploymentLogStream: (id: string) => `/api/deployments/${id}/logs/stream`,
   backups: () => request<BackupRecord[]>("/api/backups"),

@@ -6,6 +6,7 @@ import { recordAuditLog } from "../services/audit.js";
 import { readProjectCompose } from "../services/compose.js";
 import { rollbackTargetForProject, startDeployment } from "../services/deployments.js";
 import { previewEnvContent, previewProjectEnv, readProjectEnv, readProjectEnvVariables, writeProjectEnv, writeProjectEnvVariables } from "../services/project-env.js";
+import type { PendingDeploymentEnv } from "../services/deployment-runner.js";
 import { restartProjectCompose, stopProjectCompose } from "../services/project-runtime.js";
 import { createProject, deleteProject, getProject, listProjectsWithContainerCounts, publicProject, updateProject } from "../services/projects.js";
 import { config } from "../config.js";
@@ -73,7 +74,13 @@ router.post(
       res.status(403).json({ message: "Manual deployments are disabled for this project." });
       return;
     }
-    const result = await startDeployment(projectId, "manual", body);
+    const pendingEnv: PendingDeploymentEnv | undefined =
+      body.envContent !== undefined
+        ? { mode: "text", content: body.envContent, envFile: body.envFile }
+        : body.envVariables
+          ? { mode: "variables", variables: body.envVariables, envFile: body.envFile }
+          : undefined;
+    const result = await startDeployment(projectId, "manual", { targetRef: body.targetRef, pendingEnv });
     await recordAuditLog({
       actor: actor(req),
       action: "deployment.start",

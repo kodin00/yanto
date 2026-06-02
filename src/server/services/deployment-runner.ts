@@ -4,6 +4,7 @@ import type { DeploymentRow, ProjectRow } from "../db/schema.js";
 import { runCommand } from "./commands.js";
 import { autoStartOverrideFile, buildAutoStartOverride } from "./compose.js";
 import { pathExists } from "./paths.js";
+import { writeProjectEnv, writeProjectEnvVariables } from "./project-env.js";
 import { gitSshEnv, resolveGitPrivateKeyPath } from "./ssh.js";
 
 export type DeploymentMetadata = {
@@ -11,6 +12,10 @@ export type DeploymentMetadata = {
   commitMessage?: string | null;
   targetRef?: string | null;
 };
+
+export type PendingDeploymentEnv =
+  | { mode: "text"; content: string; envFile?: string }
+  | { mode: "variables"; variables: { key: string; value?: string | null; masked?: boolean }[]; envFile?: string };
 
 export type DeploymentRunnerCallbacks = {
   appendLog: (chunk: string) => Promise<void>;
@@ -51,6 +56,11 @@ function countLines(output: string) {
     .filter(Boolean).length;
 }
 
+async function commandSucceeds(command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv) {
+  const result = await runCommand(command, args, { cwd, env });
+  return result.exitCode === 0;
+}
+
 async function replaceComposeDeployment(callbacks: DeploymentRunnerCallbacks, composeArgs: string[], cwd: string) {
   const runningContainers = countLines(await runLogged(callbacks, "docker", [...composeArgs, "ps", "-q", "--status", "running"], cwd, undefined, true));
   if (runningContainers > 0) {
@@ -65,16 +75,22 @@ async function replaceComposeDeployment(callbacks: DeploymentRunnerCallbacks, co
 }
 
 async function detectComposeFile(project: ProjectRow) {
-  if (project.composeFile) {
-    return project.composeFile;
+  const configured = project.composeFile || "docker-compose.yml";
+  if (await pathExists(path.join(project.localPath, configured))) {
+    return configured;
   }
-  if (await pathExists(`${project.localPath}/compose.yml`)) {
-    return "compose.yml";
+  if (configured !== "docker-compose.yml" || project.composeContent?.trim()) {
+    return configured;
   }
-  return "docker-compose.yml";
+  for (const candidate of ["compose.yml", "compose.yaml", "docker-compose.yaml"]) {
+    if (await pathExists(path.join(project.localPath, candidate))) {
+      return candidate;
+    }
+  }
+  return configured;
 }
 
-export async function runProjectDeployment(project: ProjectRow, deployment: DeploymentRow, callbacks: DeploymentRunnerCallbacks) {
+export async function runProjectDeployment(project: ProjectRow, deployment: DeploymentRow, callbacks: DeploymentRunnerCallbacks, pendingEnv?: PendingDeploymentEnv) {
   const privateKeyPath = await resolveGitPrivateKeyPath();
   const env = gitSshEnv(privateKeyPath);
   await callbacks.appendLog(`Starting deployment for ${project.name}\n`);
@@ -91,7 +107,14 @@ export async function runProjectDeployment(project: ProjectRow, deployment: Depl
     await callbacks.appendLog(`Project folder exists at ${project.localPath}; leaving it in place.\n`);
   }
 
-  const gitDirExists = await pathExists(`${project.localPath}/.git`);
+  let gitDirExists = await pathExists(`${project.localPath}/.git`);
+  if (!gitDirExists && project.gitUrl) {
+    await callbacks.appendLog("Project folder is not a git repository; initializing Git checkout in place.\n");
+    await runLogged(callbacks, "git", ["init"], project.localPath, env);
+    await runLogged(callbacks, "git", ["remote", "add", "origin", project.gitUrl], project.localPath, env);
+    gitDirExists = true;
+  }
+
   if (gitDirExists && project.gitUrl) {
     const targetRef = deployment.targetRef?.trim();
     if (targetRef) {
@@ -100,8 +123,12 @@ export async function runProjectDeployment(project: ProjectRow, deployment: Depl
       await runLogged(callbacks, "git", ["checkout", targetRef], project.localPath, env);
     } else {
       await runLogged(callbacks, "git", ["fetch", "origin", project.branch], project.localPath, env);
-      await runLogged(callbacks, "git", ["checkout", project.branch], project.localPath, env);
-      await runLogged(callbacks, "git", ["pull", "--ff-only", "origin", project.branch], project.localPath, env);
+      if (await commandSucceeds("git", ["rev-parse", "--verify", project.branch], project.localPath, env)) {
+        await runLogged(callbacks, "git", ["checkout", project.branch], project.localPath, env);
+        await runLogged(callbacks, "git", ["pull", "--ff-only", "origin", project.branch], project.localPath, env);
+      } else {
+        await runLogged(callbacks, "git", ["checkout", "-B", project.branch, `origin/${project.branch}`], project.localPath, env);
+      }
     }
   } else {
     await callbacks.appendLog("Project folder is not a git repository; skipping git pull.\n");
@@ -114,6 +141,15 @@ export async function runProjectDeployment(project: ProjectRow, deployment: Depl
     await callbacks.appendLog(`Using commit ${commitSha}${commitMessage ? ` (${commitMessage})` : ""}.\n`);
   }
 
+  if (pendingEnv) {
+    if (pendingEnv.mode === "text") {
+      await writeProjectEnv(project, pendingEnv.content, pendingEnv.envFile);
+    } else {
+      await writeProjectEnvVariables(project, pendingEnv.variables, pendingEnv.envFile);
+    }
+    await callbacks.appendLog(`Wrote ${pendingEnv.envFile ?? project.envFile} after source checkout.\n`);
+  }
+
   const composeFile = await detectComposeFile(project);
   if (project.composeContent?.trim()) {
     const composePath = path.join(project.localPath, composeFile);
@@ -121,7 +157,13 @@ export async function runProjectDeployment(project: ProjectRow, deployment: Depl
     await fs.writeFile(composePath, project.composeContent, "utf8");
     await callbacks.appendLog(`Wrote compose file ${composeFile} from saved editor content.\n`);
   }
-  await fs.access(`${project.localPath}/${composeFile}`);
+  try {
+    await fs.access(path.join(project.localPath, composeFile));
+  } catch {
+    throw new Error(
+      `Compose file ${composeFile} was not found at ${path.join(project.localPath, composeFile)}. Set the project compose file to the repo's actual compose path or paste compose content in the project editor.`
+    );
+  }
 
   const composeArgs = ["compose", "-f", composeFile];
   const restartOverride = autoStartOverrideFile();

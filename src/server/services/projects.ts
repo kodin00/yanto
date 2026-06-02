@@ -3,7 +3,7 @@ import { db } from "../db/index.js";
 import { cloudflareRoutes, projects } from "../db/schema.js";
 import { createDeployToken, createId } from "./tokens.js";
 import { listContainers } from "./docker.js";
-import { ensureProjectsRoot, normalizeComposeFile, normalizeEnvFile, projectPath, slugifyFolderName } from "./paths.js";
+import { ensureProjectsRoot, normalizeComposeFile, normalizeEnvFile, projectPath, removeProjectDirectory, slugifyFolderName } from "./paths.js";
 import { config } from "../config.js";
 import { assertDeployableNode } from "./nodes.js";
 
@@ -127,7 +127,12 @@ export async function updateProject(id: string, input: Partial<CreateProjectInpu
 }
 
 export async function deleteProject(id: string) {
+  const current = await getProject(id);
+  if (!current) {
+    return;
+  }
   await db.delete(projects).where(eq(projects.id, id));
+  await removeProjectDirectory(current.folderName);
 }
 
 export async function getProject(id: string) {
