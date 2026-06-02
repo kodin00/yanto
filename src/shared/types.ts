@@ -126,6 +126,11 @@ export type SetupWizardStatus = {
   updatedAt: string | null;
 };
 
+export type MultiNodePublicSettings = {
+  enabled: boolean;
+  releaseStage: "beta";
+};
+
 export type CloudflareTunnel = {
   id: string;
   nodeId: string;

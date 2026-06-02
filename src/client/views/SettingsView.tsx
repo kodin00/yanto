@@ -19,6 +19,7 @@ type Props = {
   updateCfForm: (patch: Partial<CfFormState>) => void;
   saveR2Settings: (event: FormEvent) => void;
   saveCfSettings: (event: FormEvent) => void;
+  saveMultiNodeSettings: (enabled: boolean) => void;
   validateCfSettings: () => void;
   saveSshPrivateKey: (event: FormEvent) => void;
   generateSshPrivateKey: () => void;
@@ -51,6 +52,7 @@ export const SettingsView = memo(function SettingsView(props: Props) {
     updateCfForm,
     saveR2Settings,
     saveCfSettings,
+    saveMultiNodeSettings,
     validateCfSettings,
     saveSshPrivateKey,
     generateSshPrivateKey,
@@ -116,9 +118,12 @@ export const SettingsView = memo(function SettingsView(props: Props) {
         <section className="panel runtime-settings-panel">
           <div className="panel-head">
             <h2>Runtime</h2>
-            <Button variant="secondary" onClick={() => openSetupWizard()} icon={<Settings size={16} />}>
-              Setup
-            </Button>
+            <div className="runtime-head-actions">
+              <StatusBadge status={settings.multiNode.releaseStage} label="Beta" />
+              <Button variant="secondary" onClick={() => openSetupWizard()} icon={<Settings size={16} />}>
+                Setup
+              </Button>
+            </div>
           </div>
           <dl className="settings-list">
             <div>
@@ -134,6 +139,13 @@ export const SettingsView = memo(function SettingsView(props: Props) {
               <dd>{settings.appBaseUrl}</dd>
             </div>
           </dl>
+          <ToggleField
+            label="Multi-node"
+            value={settings.multiNode.enabled}
+            onChange={saveMultiNodeSettings}
+            description="Opt in to worker nodes, node targeting, and worker install commands."
+            disabled={busy === "multi-node-settings"}
+          />
         </section>
 
         <section className="panel webhook-settings compact-settings-panel">
@@ -163,15 +175,17 @@ export const SettingsView = memo(function SettingsView(props: Props) {
           </div>
         </section>
 
-        <section className="panel webhook-settings compact-settings-panel">
-          <div className="panel-head">
-            <h2>Worker install</h2>
-            <Server size={19} />
-          </div>
-          <Button variant="secondary" onClick={() => void copyWorkerInstallCommand()} icon={<Copy size={16} />}>
-            Copy worker command
-          </Button>
-        </section>
+        {settings.multiNode.enabled ? (
+          <section className="panel webhook-settings compact-settings-panel">
+            <div className="panel-head">
+              <h2>Worker install</h2>
+              <Server size={19} />
+            </div>
+            <Button variant="secondary" onClick={() => void copyWorkerInstallCommand()} icon={<Copy size={16} />}>
+              Copy worker command
+            </Button>
+          </section>
+        ) : null}
 
         <section className="panel cleanup-settings-panel">
           <div className="panel-head">

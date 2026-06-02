@@ -1,4 +1,4 @@
-import type { AuditLog, Backup, CloudflarePublicSettings, CloudflareRoute, CloudflareTunnel, CloudflareTunnelStatus, ContainerInfo, Deployment, DeploymentNode, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, SetupWizardStatus, SystemUsage } from "../../shared/types";
+import type { AuditLog, Backup, CloudflarePublicSettings, CloudflareRoute, CloudflareTunnel, CloudflareTunnelStatus, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, SetupWizardStatus, SystemUsage } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -28,6 +28,10 @@ export type CloudflareSettingsPayload = {
   accountId?: string;
   zoneId?: string;
   apiToken?: string;
+};
+
+export type MultiNodeSettingsPayload = {
+  enabled: boolean;
 };
 
 export type CloudflareRoutePayload = {
@@ -217,12 +221,18 @@ export const api = {
       r2: R2PublicSettings;
       cf: CloudflarePublicSettings;
       setupWizard: SetupWizardStatus;
+      multiNode: MultiNodePublicSettings;
       sshKey: SshKeyStatus;
     }>("/api/settings"),
   saveSetupWizard: (action: "completed" | "dismissed") =>
     request<{ ok: true; setupWizard: SetupWizardStatus }>("/api/settings/setup-wizard", {
       method: "POST",
       body: JSON.stringify({ action })
+    }),
+  saveMultiNodeSettings: (payload: MultiNodeSettingsPayload) =>
+    request<{ ok: true; multiNode: MultiNodePublicSettings }>("/api/settings/multi-node", {
+      method: "POST",
+      body: JSON.stringify(payload)
     }),
   saveCloudflareSettings: (payload: CloudflareSettingsPayload) =>
     request<{ ok: true; cf: CloudflarePublicSettings }>("/api/settings/cloudflare", {

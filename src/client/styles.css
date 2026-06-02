@@ -681,6 +681,12 @@ a.button {
   margin-bottom: 16px;
 }
 
+.runtime-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .panel h2 {
   font-size: 20px;
   letter-spacing: -0.02em;
@@ -1334,6 +1340,11 @@ th {
 .status.warning {
   background: var(--idle-bg);
   color: var(--amber);
+}
+
+.status.beta {
+  background: var(--info-bg);
+  color: var(--cyan);
 }
 
 .status.enabled {

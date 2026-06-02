@@ -248,6 +248,36 @@ describe("api client", () => {
       }));
     });
 
+    it("settings includes multi-node settings in response shape", async () => {
+      mockFetch({
+        projectsRoot: "/projects",
+        hostProjectsRoot: "~/projects",
+        sshKeysDir: "/data/ssh",
+        appBaseUrl: "http://localhost:8080",
+        projectCount: 0,
+        r2: {},
+        cf: {},
+        setupWizard: {},
+        sshKey: {},
+        multiNode: { enabled: false, releaseStage: "beta" }
+      });
+
+      const result = await api.settings();
+
+      expect(result.multiNode).toEqual({ enabled: false, releaseStage: "beta" });
+    });
+
+    it("saveMultiNodeSettings sends POST to settings endpoint", async () => {
+      const fetchMock = mockFetch({ ok: true, multiNode: { enabled: true, releaseStage: "beta" } });
+
+      await api.saveMultiNodeSettings({ enabled: true });
+
+      expect(fetchMock).toHaveBeenCalledWith("/api/settings/multi-node", expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ enabled: true })
+      }));
+    });
+
     it("containers sends GET to /api/containers", async () => {
       const fetchMock = mockFetch([]);
 

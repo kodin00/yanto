@@ -5,10 +5,10 @@ import { config } from "../config.js";
 import { db } from "../db/index.js";
 import { projects } from "../db/schema.js";
 import { asyncRoute, actor } from "../http-utils.js";
-import { cloudflareSettingsInput, r2SettingsInput, setupWizardInput } from "../route-schemas.js";
+import { cloudflareSettingsInput, multiNodeSettingsInput, r2SettingsInput, setupWizardInput } from "../route-schemas.js";
 import { recordAuditLog } from "../services/audit.js";
 import { publicCloudflareSettings, saveCloudflareSettings, validateCloudflareSettings } from "../services/cloudflare.js";
-import { publicR2Settings, publicSetupWizardSettings, saveR2Settings, saveSetupWizardSettings } from "../services/settings.js";
+import { publicMultiNodeSettings, publicR2Settings, publicSetupWizardSettings, saveMultiNodeSettings, saveR2Settings, saveSetupWizardSettings } from "../services/settings.js";
 import { generateManagedSshPrivateKey, managedSshKeyStatus, saveManagedSshPrivateKey } from "../services/ssh.js";
 
 const router = Router();
@@ -17,7 +17,14 @@ router.get(
   "/api/settings",
   requireAuth,
   asyncRoute(async (_req, res) => {
-    const [count, sshKey, r2, cf, setupWizard] = await Promise.all([db.select().from(projects), managedSshKeyStatus(), publicR2Settings(), publicCloudflareSettings(), publicSetupWizardSettings()]);
+    const [count, sshKey, r2, cf, setupWizard, multiNode] = await Promise.all([
+      db.select().from(projects),
+      managedSshKeyStatus(),
+      publicR2Settings(),
+      publicCloudflareSettings(),
+      publicSetupWizardSettings(),
+      publicMultiNodeSettings()
+    ]);
     res.json({
       projectsRoot: config.projectsRoot,
       hostProjectsRoot: config.hostProjectsRoot,
@@ -27,7 +34,8 @@ router.get(
       sshKey,
       r2,
       cf,
-      setupWizard
+      setupWizard,
+      multiNode
     });
   })
 );
@@ -94,6 +102,17 @@ router.post(
     const setupWizard = await saveSetupWizardSettings(body.action);
     await recordAuditLog({ actor: actor(req), action: `settings.setup_wizard.${body.action}`, entityType: "settings" });
     res.json({ ok: true, setupWizard });
+  })
+);
+
+router.post(
+  "/api/settings/multi-node",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const body = multiNodeSettingsInput.parse(req.body ?? {});
+    const multiNode = await saveMultiNodeSettings(body);
+    await recordAuditLog({ actor: actor(req), action: "settings.multi_node.save", entityType: "settings", metadata: { enabled: multiNode.enabled, releaseStage: multiNode.releaseStage } });
+    res.json({ ok: true, multiNode });
   })
 );
 

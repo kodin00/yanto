@@ -1,4 +1,4 @@
-import type { CloudflarePublicSettings, R2PublicSettings, SetupWizardStatus } from "../../shared/types";
+import type { CloudflarePublicSettings, MultiNodePublicSettings, R2PublicSettings, SetupWizardStatus } from "../../shared/types";
 import type { SshKeyStatus } from "../lib/api";
 
 export type View = "dashboard" | "projects" | "deployments" | "containers" | "nodes" | "backups" | "audit" | "settings";
@@ -14,6 +14,7 @@ export type SettingsState = {
   r2: R2PublicSettings;
   cf: CloudflarePublicSettings;
   setupWizard: SetupWizardStatus;
+  multiNode: MultiNodePublicSettings;
 };
 
 export type R2FormState = {

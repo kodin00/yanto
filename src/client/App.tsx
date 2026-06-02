@@ -34,7 +34,7 @@ const DeploymentsView = lazy(() => import("./views/DeploymentsView").then(m => (
 const NodesView = lazy(() => import("./views/NodesView").then(m => ({ default: m.NodesView })));
 const ProjectsView = lazy(() => import("./views/ProjectsView").then(m => ({ default: m.ProjectsView })));
 const SettingsView = lazy(() => import("./views/SettingsView").then(m => ({ default: m.SettingsView })));
-import type { CloudflarePublicSettings, CloudflareRoute, ContainerInfo, Deployment, DeploymentNode, Project, ProjectWithDeployToken, R2PublicSettings, SetupWizardStatus, SystemUsage } from "../shared/types";
+import type { CloudflarePublicSettings, CloudflareRoute, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, Project, ProjectWithDeployToken, R2PublicSettings, SetupWizardStatus, SystemUsage } from "../shared/types";
 import {
   cloudflareServiceUrl,
   dateTime,
@@ -111,6 +111,11 @@ const emptySetupWizardStatus: SetupWizardStatus = {
   updatedAt: null
 };
 
+const emptyMultiNodeSettings: MultiNodePublicSettings = {
+  enabled: false,
+  releaseStage: "beta"
+};
+
 const setupSteps: SetupStep[] = ["intro", "ssh", "cloudflare", "r2"];
 
 const emptyProjectEnvState: ProjectEnvState = {
@@ -174,7 +179,7 @@ export function App() {
   const [postgresTargets, setPostgresTargets] = useState<PostgresTarget[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
   const [usage, setUsage] = useState<SystemUsage | null>(null);
-  const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: "", sshKey: emptySshKeySettings, r2: emptyR2Settings, cf: emptyCfSettings, setupWizard: emptySetupWizardStatus });
+  const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: "", sshKey: emptySshKeySettings, r2: emptyR2Settings, cf: emptyCfSettings, setupWizard: emptySetupWizardStatus, multiNode: emptyMultiNodeSettings });
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [r2Form, setR2Form] = useState({ enabled: false, accountId: "", bucket: "", accessKeyId: "", secretAccessKey: "", prefix: "postgres-dumps" });
   const [r2FormDirty, setR2FormDirty] = useState(false);
@@ -442,6 +447,7 @@ export function App() {
     }
     return map;
   }, [containers]);
+  const multiNodeEnabled = settings.multiNode?.enabled ?? false;
   const nodeOptions = useMemo(() => (nodes.length ? nodes : [{ id: "node_master_local", name: "Master", role: "master", status: "online" } as DeploymentNode]).map((node) => ({
     label: `${node.name} (${node.role})`,
     value: node.id
@@ -470,6 +476,12 @@ export function App() {
   useEffect(() => {
     setDeploymentPage((page) => Math.min(page, totalPages(deployments)));
   }, [deployments]);
+
+  useEffect(() => {
+    if (!multiNodeEnabled && view === "nodes") {
+      setView("settings");
+    }
+  }, [multiNodeEnabled, view]);
 
   useEffect(() => {
     setBackupPage((page) => Math.min(page, totalPages(backups)));
@@ -845,6 +857,20 @@ export function App() {
     }
   }
 
+  async function saveMultiNodeSettings(enabled: boolean) {
+    setBusy("multi-node-settings");
+    setToast({ message: "Saving multi-node setting...", kind: "loading" });
+    try {
+      const result = await api.saveMultiNodeSettings({ enabled });
+      setSettings((current) => ({ ...current, multiNode: result.multiNode }));
+      setToast({ message: result.multiNode.enabled ? "Multi-node beta enabled." : "Multi-node beta disabled." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to save multi-node setting.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function validateCfSettings() {
     setBusy("cf-validate");
     setToast({ message: "Validating Cloudflare credentials...", kind: "loading" });
@@ -1077,7 +1103,7 @@ export function App() {
             ["projects", GitBranch, "Projects"],
             ["deployments", Boxes, "Deployments"],
             ["containers", Container, "Containers"],
-            ["nodes", Server, "Nodes"],
+            ...(multiNodeEnabled ? [["nodes", Server, "Nodes"] as const] : []),
             ["backups", Archive, "Backups"],
             ["audit", FileClock, "Audit"],
             ["settings", Settings, "Settings"]
@@ -1210,7 +1236,7 @@ export function App() {
           />
         ) : null}
 
-        {view === "nodes" ? (
+        {view === "nodes" && multiNodeEnabled ? (
           <NodesView nodes={nodes} />
         ) : null}
 
@@ -1229,6 +1255,7 @@ export function App() {
             updateCfForm={updateCfForm}
             saveR2Settings={saveR2Settings}
             saveCfSettings={saveCfSettings}
+            saveMultiNodeSettings={saveMultiNodeSettings}
             validateCfSettings={validateCfSettings}
             saveSshPrivateKey={saveSshPrivateKey}
             generateSshPrivateKey={generateSshPrivateKey}
@@ -1436,7 +1463,9 @@ export function App() {
                   <TextField label="Compose file" value={projectForm.composeFile} onChange={(composeFile) => setProjectForm((current) => ({ ...current, composeFile }))} placeholder="docker-compose.yml" required />
                 </div>
                 <TextField label="Folder name" value={projectForm.folderName} onChange={(folderName) => setProjectForm((current) => ({ ...current, folderName }))} placeholder={slugifyFolderName(projectForm.name) || "Auto from project name"} />
-                <CustomSelect label="Deployment node" value={projectForm.targetNodeId} options={nodeOptions} onChange={(targetNodeId) => setProjectForm((current) => ({ ...current, targetNodeId }))} />
+                {multiNodeEnabled ? (
+                  <CustomSelect label="Deployment node" value={projectForm.targetNodeId} options={nodeOptions} onChange={(targetNodeId) => setProjectForm((current) => ({ ...current, targetNodeId }))} />
+                ) : null}
                 <ToggleField
                   label="Auto start after restart"
                   value={projectForm.autoStart}

@@ -19,6 +19,7 @@ export type StoredR2Settings = Required<R2SettingsInput>;
 const r2SettingsKey = "cloudflare.r2";
 const workerJoinTokenKey = "worker.join_token";
 const setupWizardKey = "setup.wizard";
+const multiNodeSettingsKey = "feature.multi_node";
 const emptyR2Settings: StoredR2Settings = {
   enabled: false,
   accountId: "",
@@ -38,6 +39,14 @@ const emptySetupWizardSettings: SetupWizardSettings = {
   completedAt: null,
   dismissedAt: null,
   updatedAt: null
+};
+
+type MultiNodeSettings = {
+  enabled: boolean;
+};
+
+const emptyMultiNodeSettings: MultiNodeSettings = {
+  enabled: false
 };
 
 function parseR2Settings(value: string | undefined): StoredR2Settings {
@@ -146,6 +155,41 @@ export async function saveSetupWizardSettings(action: "completed" | "dismissed")
   });
 
   return result;
+}
+
+function parseMultiNodeSettings(value: string | undefined): MultiNodeSettings {
+  if (!value) return emptyMultiNodeSettings;
+  try {
+    const parsed = JSON.parse(value) as Partial<MultiNodeSettings>;
+    return { enabled: Boolean(parsed.enabled) };
+  } catch {
+    return emptyMultiNodeSettings;
+  }
+}
+
+export async function publicMultiNodeSettings() {
+  const [row] = await db.select().from(appSettings).where(eq(appSettings.key, multiNodeSettingsKey)).limit(1);
+  const settings = parseMultiNodeSettings(row?.value);
+  return {
+    enabled: settings.enabled,
+    releaseStage: "beta" as const
+  };
+}
+
+export async function saveMultiNodeSettings(input: Partial<MultiNodeSettings>) {
+  const next: MultiNodeSettings = {
+    enabled: Boolean(input.enabled)
+  };
+
+  await db
+    .insert(appSettings)
+    .values({ key: multiNodeSettingsKey, value: JSON.stringify(next), updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: appSettings.key,
+      set: { value: JSON.stringify(next), updatedAt: new Date() }
+    });
+
+  return publicMultiNodeSettings();
 }
 
 export async function getWorkerJoinToken() {
