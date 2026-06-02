@@ -197,6 +197,7 @@ export function App() {
   const [cleanupLogTitle, setCleanupLogTitle] = useState("Cleanup preview");
   const [cleanupPreviewed, setCleanupPreviewed] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [viewLoading, setViewLoading] = useState<Partial<Record<View, boolean>>>({});
   const [toast, setToast] = useState<ToastState>(null);
   const [projectModal, setProjectModal] = useState<Project | "new" | null>(null);
   const [projectForm, setProjectForm] = useState(emptyProject);
@@ -204,6 +205,7 @@ export function App() {
   const [projectCompose, setProjectCompose] = useState<ProjectComposeState>(emptyProjectComposeState);
   const [projectEditorModal, setProjectEditorModal] = useState<"compose" | "env" | null>(null);
   const [cfRoutesByProject, setCfRoutesByProject] = useState<Record<string, CloudflareRoute[]>>({});
+  const [cfRouteEditorOpen, setCfRouteEditorOpen] = useState(false);
   const [rollbackModal, setRollbackModal] = useState<RollbackModalState | null>(null);
   const [logModal, setLogModal] = useState<LogModalState | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
@@ -233,27 +235,42 @@ export function App() {
   }, []);
 
   const refreshProjects = useCallback(async () => {
-    const [projectRows, deploymentRows, containerRows] = await Promise.all([
-      api.projects(),
-      api.deployments(),
-      fetchContainerRows()
-    ]);
-    setProjects(projectRows);
-    setDeployments(deploymentRows);
-    if (containerRows) setContainers(containerRows);
+    setViewLoading((current) => ({ ...current, projects: true }));
+    try {
+      const [projectRows, deploymentRows, containerRows] = await Promise.all([
+        api.projects(),
+        api.deployments(),
+        fetchContainerRows()
+      ]);
+      setProjects(projectRows);
+      setDeployments(deploymentRows);
+      if (containerRows) setContainers(containerRows);
+    } finally {
+      setViewLoading((current) => ({ ...current, projects: false }));
+    }
   }, [fetchContainerRows]);
 
   const refreshDeployments = useCallback(async () => {
-    setDeployments(await api.deployments());
+    setViewLoading((current) => ({ ...current, deployments: true }));
+    try {
+      setDeployments(await api.deployments());
+    } finally {
+      setViewLoading((current) => ({ ...current, deployments: false }));
+    }
   }, []);
 
   const refreshBackups = useCallback(async () => {
-    const [backupRows, postgresRows] = await Promise.all([
-      api.backups().catch(() => []),
-      api.postgresBackupTargets().catch(() => [])
-    ]);
-    setBackups(backupRows);
-    setPostgresTargets(postgresRows);
+    setViewLoading((current) => ({ ...current, backups: true }));
+    try {
+      const [backupRows, postgresRows] = await Promise.all([
+        api.backups().catch(() => []),
+        api.postgresBackupTargets().catch(() => [])
+      ]);
+      setBackups(backupRows);
+      setPostgresTargets(postgresRows);
+    } finally {
+      setViewLoading((current) => ({ ...current, backups: false }));
+    }
   }, []);
 
   const refreshSettings = useCallback(async () => {
@@ -262,8 +279,13 @@ export function App() {
   }, []);
 
   const refreshContainers = useCallback(async () => {
-    const containerRows = await fetchContainerRows();
-    if (containerRows) setContainers(containerRows);
+    setViewLoading((current) => ({ ...current, containers: true }));
+    try {
+      const containerRows = await fetchContainerRows();
+      if (containerRows) setContainers(containerRows);
+    } finally {
+      setViewLoading((current) => ({ ...current, containers: false }));
+    }
   }, [fetchContainerRows]);
 
   const loadView = useCallback(async (targetView: View) => {
@@ -331,29 +353,42 @@ export function App() {
     setSystemLogs(logRows);
   }, [fetchContainerRows]);
 
+  const loadViewWithState = useCallback(async (targetView: View, showLoading = true) => {
+    if (showLoading) {
+      setViewLoading((current) => ({ ...current, [targetView]: true }));
+    }
+    try {
+      await loadView(targetView);
+    } finally {
+      if (showLoading) {
+        setViewLoading((current) => ({ ...current, [targetView]: false }));
+      }
+    }
+  }, [loadView]);
+
   useEffect(() => {
     api
       .me()
       .then((result) => {
         setUser(result.username);
-        return loadView("dashboard");
+        return loadViewWithState("dashboard", false);
       })
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
-  }, [loadView]);
+  }, [loadViewWithState]);
 
   useEffect(() => {
     if (!user) return;
     const timer = window.setInterval(() => {
-      void loadView(view).catch(() => undefined);
+      void loadViewWithState(view, false).catch(() => undefined);
     }, 30000);
     return () => window.clearInterval(timer);
-  }, [loadView, user, view]);
+  }, [loadViewWithState, user, view]);
 
   useEffect(() => {
     if (!user) return;
-    void loadView(view).catch(() => undefined);
-  }, [loadView, user, view]);
+    void loadViewWithState(view).catch(() => undefined);
+  }, [loadViewWithState, user, view]);
 
   useEffect(() => {
     if (r2FormDirty) return;
@@ -504,7 +539,7 @@ export function App() {
     try {
       const result = await api.login(login.username, login.password);
       setUser(result.username);
-      await loadView("dashboard");
+      await loadViewWithState("dashboard", false);
       setToast({ message: "Signed in." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to sign in.", kind: "error" });
@@ -654,6 +689,41 @@ export function App() {
     }
   }
 
+  async function retryDeployment(deployment: Deployment) {
+    setBusy(`deploy:${deployment.projectId}`);
+    setToast({ message: `Retrying deployment for ${deployment.projectName ?? deployment.projectId}...`, kind: "loading" });
+    try {
+      const result = await api.deployProject(deployment.projectId);
+      setToast({ message: result.reused ? "Deployment is already running." : "Deployment retry started." });
+      setLogModal({
+        title: `${deployment.projectName ?? deployment.projectId} deployment`,
+        logs: "",
+        streamPath: api.deploymentLogStream(result.deployment.id),
+        live: true,
+        status: result.deployment.status
+      });
+      await refreshDeployments();
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to retry deployment.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function copyDeployToken(project: Project) {
+    setBusy(`token:${project.id}`);
+    setToast({ message: `Copying deploy secret for ${project.name}...`, kind: "loading" });
+    try {
+      const { deployToken } = await api.projectDeployToken(project.id);
+      await copyText(deployToken);
+      setToast({ message: "Project deploy secret copied." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to copy deploy secret.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function openDeploymentLogs(deployment: Deployment) {
     setLogModal({
       title: `${deployment.projectName ?? deployment.projectId} deployment`,
@@ -676,6 +746,7 @@ export function App() {
 
   function openProject(project?: Project) {
     setProjectEditorModal(null);
+    setCfRouteEditorOpen(false);
     if (project) {
       setProjectForm({
         name: project.name,
@@ -693,7 +764,7 @@ export function App() {
       setProjectCompose(emptyProjectComposeState);
       const projectRoutes = project.cloudflareRoutes ?? [];
       const detectedServiceTarget = cloudflareServiceUrl(project, containersByProjectFolder.get(project.folderName) ?? []);
-      setCfRouteForm(buildCfRouteForm("", projectRoutes[0]?.serviceTarget || detectedServiceTarget, projectRoutes[0]?.noTlsVerify ?? false));
+      setCfRouteForm(buildCfRouteForm(projectRoutes[0]?.hostname ?? "", projectRoutes[0]?.serviceTarget || detectedServiceTarget, projectRoutes[0]?.noTlsVerify ?? false));
       setCfRoutes(projectRoutes);
       setProjectModal(project);
       void api.projectCfRoutes(project.id).catch(() => [])
@@ -701,7 +772,7 @@ export function App() {
           setCfRoutes(routes);
           setCfRoutesByProject((current) => ({ ...current, [project.id]: routes }));
           if (routes.length) {
-            setCfRouteForm(buildCfRouteForm("", routes[0].serviceTarget, routes[0].noTlsVerify));
+            setCfRouteForm(buildCfRouteForm(routes[0].hostname, routes[0].serviceTarget, routes[0].noTlsVerify));
           }
         })
         .catch((error) => {
@@ -929,12 +1000,13 @@ export function App() {
         noTlsVerify: serviceTarget.startsWith("https://") ? cfRouteForm.noTlsVerify : false
       };
       const route = await api.publishCfRoute(projectId, payload);
-      setCfRoutes((current) => [...current, route]);
-      setCfRoutesByProject((current) => ({ ...current, [projectId]: [...(current[projectId] ?? []), route] }));
-      setProjects((current) => current.map((project) => (project.id === projectId ? { ...project, cloudflareRoutes: [...(project.cloudflareRoutes ?? []), route] } : project)));
+      setCfRoutes([route]);
+      setCfRoutesByProject((current) => ({ ...current, [projectId]: [route] }));
+      setProjects((current) => current.map((project) => (project.id === projectId ? { ...project, cloudflareRoutes: [route] } : project)));
       const project = projects.find((item) => item.id === projectId);
-      setCfRouteForm(buildCfRouteForm("", project ? cloudflareServiceUrl(project, containersByProjectFolder.get(project.folderName) ?? []) : ""));
-      setToast({ message: `Route published: https://${route.hostname}` });
+      setCfRouteForm(buildCfRouteForm(route.hostname, route.serviceTarget || (project ? cloudflareServiceUrl(project, containersByProjectFolder.get(project.folderName) ?? []) : ""), route.noTlsVerify));
+      setCfRouteEditorOpen(false);
+      setToast({ message: `Hostname saved: https://${route.hostname}` });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to publish route.", kind: "error" });
     } finally {
@@ -1073,7 +1145,7 @@ export function App() {
     setBusy("refresh-view");
     setToast({ message: `Refreshing ${view}...`, kind: "loading" });
     try {
-      await loadView(view);
+      await loadViewWithState(view);
       setToast({ message: "View refreshed." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to refresh view.", kind: "error" });
@@ -1180,7 +1252,7 @@ export function App() {
             <h1>{view[0].toUpperCase() + view.slice(1)}</h1>
           </div>
           <Button variant="secondary" disabled={busy === "refresh-view"} onClick={() => void refreshCurrentView()} icon={<RefreshCw size={16} className={busy === "refresh-view" ? "spin" : ""} />}>
-            Refresh
+            {busy === "refresh-view" ? "Refreshing" : "Refresh"}
           </Button>
         </header>
 
@@ -1212,11 +1284,13 @@ export function App() {
             latestDeploymentByProject={latestDeploymentByProject}
             settings={settings}
             busy={busy}
+            loading={viewLoading.projects}
             projectPage={projectPage}
             openProject={openProject}
             openRollback={openRollback}
             deploy={deploy}
             copyText={copyText}
+            copyDeployToken={copyDeployToken}
             setConfirm={setConfirm}
             refreshProjects={refreshProjects}
             setProjectPage={setProjectPage}
@@ -1228,7 +1302,10 @@ export function App() {
             deployments={deployments}
             visibleDeployments={visibleDeployments}
             deploymentPage={deploymentPage}
+            busy={busy}
+            loading={viewLoading.deployments}
             openDeploymentLogs={openDeploymentLogs}
+            retryDeployment={retryDeployment}
             setDeploymentPage={setDeploymentPage}
           />
         ) : null}
@@ -1239,6 +1316,7 @@ export function App() {
             visibleBackups={visibleBackups}
             backups={backups}
             busy={busy}
+            loading={viewLoading.backups}
             r2Ready={r2Ready}
             backupPage={backupPage}
             dumpPostgresTarget={dumpPostgresTarget}
@@ -1262,6 +1340,7 @@ export function App() {
         {view === "containers" ? (
           <ContainersView
             containers={containers}
+            loading={viewLoading.containers}
             openContainerLogs={openContainerLogs}
             setConfirm={setConfirm}
             refreshContainers={refreshContainers}
@@ -1548,7 +1627,7 @@ export function App() {
                   <div className="cf-route-head">
                     <div>
                       <div className="section-kicker">Cloudflare Tunnel</div>
-                      <p className="muted">{cfSettingsReady ? "Publish a public hostname to this project's local service." : "Set Cloudflare Tunnel settings first."}</p>
+                      <p className="muted">{cfSettingsReady ? "One public hostname can be attached to this project." : "Set Cloudflare Tunnel settings first."}</p>
                     </div>
                     <StatusBadge status={cfSettingsReady ? (cfRoutes.some((route) => route.enabled) ? "connected" : "idle") : "disabled"} />
                   </div>
@@ -1573,6 +1652,18 @@ export function App() {
                     ))}
                     {!cfRoutes.length ? <p className="muted">No public hostnames configured.</p> : null}
                   </div>
+                  {!cfRouteEditorOpen ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={!cfSettingsReady}
+                      onClick={() => setCfRouteEditorOpen(true)}
+                      icon={<Plus size={15} />}
+                    >
+                      {cfRoutes.length ? "Edit hostname" : "Configure hostname"}
+                    </Button>
+                  ) : null}
+                  {cfRouteEditorOpen ? (
                   <div className="cf-route-add-form compact">
                     <div className="cf-route-add-row">
                       <TextField label="Hostname" value={cfRouteForm.hostname} onChange={(hostname) => setCfRouteForm((current) => ({ ...current, hostname }))} placeholder="app.example.com" disabled={!cfSettingsReady} />
@@ -1604,21 +1695,25 @@ export function App() {
                       {cfRouteForm.protocol === "https" ? (
                         <ToggleField label="No TLS verify" value={cfRouteForm.noTlsVerify} onChange={(noTlsVerify) => setCfRouteForm((current) => ({ ...current, noTlsVerify }))} disabled={!cfSettingsReady} />
                       ) : null}
-                      <Button disabled={busy === "cf-route-publish" || !cfSettingsReady || !cfRouteForm.hostname || !cfRouteForm.localTarget} variant="secondary" onClick={() => void publishCfRoute(projectModal.id)} icon={<Plus size={15} />}>
-                        Publish
+                      <Button disabled={!cfSettingsReady || !cfRouteForm.hostname || !cfRouteForm.localTarget} loading={busy === "cf-route-publish"} variant="secondary" onClick={() => void publishCfRoute(projectModal.id)} icon={<Plus size={15} />}>
+                        {busy === "cf-route-publish" ? "Saving" : cfRoutes.length ? "Save hostname" : "Publish"}
+                      </Button>
+                      <Button type="button" variant="ghost" onClick={() => setCfRouteEditorOpen(false)}>
+                        Cancel
                       </Button>
                     </div>
                   </div>
+                  ) : null}
                   </section>
                 ) : null}
               </div>
             </div>
             <div className="actions project-edit-actions">
-              <Button type="button" variant="secondary" disabled={busy === "project" || projectEnv.loading || !projectForm.manualDeployEnabled} onClick={() => void persistProjectDetails(undefined, "deploy")} icon={<Play size={15} />}>
-                Save & Deploy
+              <Button type="button" variant="secondary" disabled={projectEnv.loading || !projectForm.manualDeployEnabled} loading={busy === "project"} onClick={() => void persistProjectDetails(undefined, "deploy")} icon={<Play size={15} />}>
+                {busy === "project" ? "Saving" : "Save & Deploy"}
               </Button>
-              <Button type="submit" disabled={busy === "project" || projectEnv.loading}>
-                Save project
+              <Button type="submit" disabled={projectEnv.loading} loading={busy === "project"}>
+                {busy === "project" ? "Saving" : "Save project"}
               </Button>
             </div>
           </form>

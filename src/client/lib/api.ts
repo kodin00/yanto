@@ -137,6 +137,7 @@ export const api = {
       body: JSON.stringify(payload)
     }),
   deleteProject: (id: string) => request<void>(`/api/projects/${id}`, { method: "DELETE" }),
+  projectDeployToken: (id: string) => request<{ deployToken: string }>(`/api/projects/${id}/deploy-token`),
   deployProject: (id: string, payload?: DeploymentEnvPayload) =>
     request<{ deployment: Deployment; reused: boolean }>(`/api/projects/${id}/deploy`, {
       method: "POST",

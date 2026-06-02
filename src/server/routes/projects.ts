@@ -8,7 +8,7 @@ import { rollbackTargetForProject, startDeployment } from "../services/deploymen
 import { previewEnvContent, previewProjectEnv, readProjectEnv, readProjectEnvVariables, writeProjectEnv, writeProjectEnvVariables } from "../services/project-env.js";
 import type { PendingDeploymentEnv } from "../services/deployment-runner.js";
 import { restartProjectCompose, stopProjectCompose } from "../services/project-runtime.js";
-import { createProject, deleteProject, getProject, listProjectsWithContainerCounts, publicProject, updateProject } from "../services/projects.js";
+import { createProject, deleteProject, getProject, getProjectDeployToken, listProjectsWithContainerCounts, publicProject, updateProject } from "../services/projects.js";
 import { config } from "../config.js";
 
 const router = Router();
@@ -45,6 +45,21 @@ router.patch(
     }
     await recordAuditLog({ actor: actor(req), action: "project.update", entityType: "project", entityId: project.id, projectId: project.id });
     res.json(publicProject(project));
+  })
+);
+
+router.get(
+  "/api/projects/:id/deploy-token",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const id = routeParam(req, "id");
+    const deployToken = await getProjectDeployToken(id);
+    if (!deployToken) {
+      res.status(404).json({ message: "Project not found." });
+      return;
+    }
+    await recordAuditLog({ actor: actor(req), action: "project.deploy_token.reveal", entityType: "project", entityId: id, projectId: id });
+    res.json({ deployToken });
   })
 );
 

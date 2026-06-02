@@ -1,4 +1,4 @@
-import { Copy, Play, Plus, Square, Undo2 } from "lucide-react";
+import { Copy, KeyRound, Play, Plus, Square, Undo2 } from "lucide-react";
 import { memo } from "react";
 import type { CloudflareRoute, ContainerInfo, Deployment, Project } from "../../shared/types";
 import { endpoint, githubWebhookEndpoint } from "../app-utils";
@@ -34,11 +34,13 @@ type Props = {
   latestDeploymentByProject: Map<string, Deployment>;
   settings: SettingsState;
   busy: string | null;
+  loading?: boolean;
   projectPage: number;
   openProject: (project?: Project) => void;
   openRollback: (project: Project) => void;
   deploy: (project: Project) => void;
   copyText: (value: string) => Promise<void>;
+  copyDeployToken: (project: Project) => Promise<void>;
   setConfirm: (state: ConfirmState) => void;
   refreshProjects: () => Promise<void>;
   setProjectPage: (page: number) => void;
@@ -53,11 +55,13 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
     latestDeploymentByProject,
     settings,
     busy,
+    loading,
     projectPage,
     openProject,
     openRollback,
     deploy,
     copyText,
+    copyDeployToken,
     setConfirm,
     refreshProjects,
     setProjectPage,
@@ -71,6 +75,7 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
           Add project
         </Button>
       </div>
+      {loading && !visibleProjects.length ? <p className="muted">Loading projects...</p> : null}
       <div className="project-grid">
         {visibleProjects.map((project) => {
           const projectContainers = containersByProjectFolder.get(project.folderName) ?? [];
@@ -95,27 +100,32 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
               }}
             >
               <div className="project-card-main">
-                <div className="project-card-head">
-                  <div>
-                    <h3>{project.name}</h3>
-                    <p>{project.gitUrl || "Compose file project"}</p>
-                  </div>
-                  <div className="project-card-statuses">
-                    <StatusBadge status={deploymentStatus.status} label={deploymentStatus.label} />
-                    <StatusBadge status={containerStatus.status} label={containerStatus.label} />
-                  </div>
+                <div className="project-card-title">
+                  <h3>{project.name}</h3>
+                  <p>{project.gitUrl || "Compose file project"}</p>
+                </div>
+                <div className="project-card-statuses">
+                  <StatusBadge status={deploymentStatus.status} label={deploymentStatus.label} />
+                  <StatusBadge status={containerStatus.status} label={containerStatus.label} />
                 </div>
                 <div className="project-card-meta">
                   <span>{runningCount}/{projectContainers.length || project.containerCount || 0} running</span>
-                  {primaryRoute ? <span className={primaryRoute.enabled ? "route-live" : ""}>{primaryRoute.enabled ? "Tunnel" : "Tunnel off"}: {primaryRoute.hostname}</span> : null}
+                  <span>{project.folderName}</span>
                 </div>
-                {primaryRoute ? (
-                  <a className="project-domain" href={`https://${primaryRoute.hostname}`} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()}>
-                    https://{primaryRoute.hostname}
-                  </a>
-                ) : settings.cf?.hasApiToken ? (
-                  <span className="project-domain muted">No tunnel domain</span>
-                ) : null}
+                <div className="project-route-summary">
+                  {primaryRoute ? (
+                    <>
+                      <span className={primaryRoute.enabled ? "route-live" : ""}>{primaryRoute.enabled ? "Hostname live" : "Hostname off"}</span>
+                      <a href={`https://${primaryRoute.hostname}`} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()}>
+                        https://{primaryRoute.hostname}
+                      </a>
+                    </>
+                  ) : settings.cf?.hasApiToken ? (
+                    <span className="muted">No hostname configured</span>
+                  ) : (
+                    <span className="muted">Cloudflare not configured</span>
+                  )}
+                </div>
               </div>
               <div className="project-card-side" onClick={(event) => event.stopPropagation()}>
                 <div className="project-copy-actions">
@@ -125,13 +135,16 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
                   <Button variant="ghost" onClick={() => void copyText(githubWebhookEndpoint(project, settings.appBaseUrl))} icon={<Copy size={14} />}>
                     Webhook
                   </Button>
+                  <Button variant="ghost" loading={busy === `token:${project.id}`} onClick={() => void copyDeployToken(project)} icon={<KeyRound size={14} />}>
+                    Secret
+                  </Button>
                 </div>
                 <div className="actions" onClick={(event) => event.stopPropagation()}>
                   <Button variant="secondary" onClick={() => openRollback(project)} icon={<Undo2 size={15} />}>
                     Rollback
                   </Button>
-                  <Button disabled={busy === `deploy:${project.id}` || !project.manualDeployEnabled} onClick={() => void deploy(project)} icon={<Play size={15} />}>
-                    Deploy
+                  <Button disabled={!project.manualDeployEnabled} loading={busy === `deploy:${project.id}`} onClick={() => void deploy(project)} icon={<Play size={15} />}>
+                    {busy === `deploy:${project.id}` ? "Deploying" : "Deploy"}
                   </Button>
                   <Button
                     variant="secondary"

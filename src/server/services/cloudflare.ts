@@ -334,20 +334,45 @@ export async function publishProjectRoute(projectId: string, hostname: string, s
   const targetNodeId = nodeId ?? project.targetNodeId;
   const tunnel = await ensureTunnelForNode(targetNodeId);
   const settings = await getStoredCloudflareSettings();
+  const [existingRoute] = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.projectId, projectId)).limit(1);
+  const normalizedNoTlsVerify = serviceTarget.startsWith("https://") ? noTlsVerify : false;
 
-  const routeId = createId("cfr");
-  await db
-    .insert(cloudflareRoutes)
-    .values({
-      id: routeId,
-      tunnelId: tunnel.id,
-      projectId,
-      hostname,
-      serviceTarget,
-      noTlsVerify: serviceTarget.startsWith("https://") ? noTlsVerify : false,
-      enabled: true
-    })
-    .returning();
+  if (existingRoute && existingRoute.hostname !== hostname) {
+    const [existingTunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, existingRoute.tunnelId)).limit(1);
+    if (existingTunnel) {
+      await deleteTunnelDnsRecord(settings, existingTunnel.cfTunnelId, existingRoute.hostname, existingRoute.cfDnsRecordId);
+    }
+  }
+
+  let routeId = existingRoute?.id ?? createId("cfr");
+  if (existingRoute) {
+    await db
+      .update(cloudflareRoutes)
+      .set({
+        tunnelId: tunnel.id,
+        hostname,
+        serviceTarget,
+        noTlsVerify: normalizedNoTlsVerify,
+        enabled: true,
+        cfDnsRecordId: null,
+        updatedAt: new Date()
+      })
+      .where(eq(cloudflareRoutes.id, existingRoute.id));
+  } else {
+    const [created] = await db
+      .insert(cloudflareRoutes)
+      .values({
+        id: routeId,
+        tunnelId: tunnel.id,
+        projectId,
+        hostname,
+        serviceTarget,
+        noTlsVerify: normalizedNoTlsVerify,
+        enabled: true
+      })
+      .returning();
+    routeId = created.id;
+  }
 
   const dnsRecordId = await upsertTunnelDnsRecord(settings, tunnel.cfTunnelId, hostname);
   if (dnsRecordId) {
@@ -358,6 +383,10 @@ export async function publishProjectRoute(projectId: string, hostname: string, s
   }
 
   await putTunnelConfig(tunnel);
+  if (existingRoute?.tunnelId && existingRoute.tunnelId !== tunnel.id) {
+    const [previousTunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, existingRoute.tunnelId)).limit(1);
+    if (previousTunnel) await putTunnelConfig(decryptTunnelRow(previousTunnel));
+  }
   await ensureCloudflaredRunning(tunnel);
   await connectCloudflaredToProjectNetwork(tunnel, project);
 

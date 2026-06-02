@@ -218,6 +218,17 @@ describe("api client", () => {
       }));
     });
 
+    it("projectDeployToken sends GET to /api/projects/:id/deploy-token", async () => {
+      const fetchMock = mockFetch({ deployToken: "secret-token" });
+
+      const result = await api.projectDeployToken("p1");
+
+      expect(result.deployToken).toBe("secret-token");
+      expect(fetchMock).toHaveBeenCalledWith("/api/projects/p1/deploy-token", expect.objectContaining({
+        credentials: "include"
+      }));
+    });
+
     it("deployProject sends POST to /api/projects/:id/deploy", async () => {
       const fetchMock = mockFetch({ deployment: {}, reused: false });
 

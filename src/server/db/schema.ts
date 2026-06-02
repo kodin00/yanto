@@ -1,4 +1,4 @@
-import { bigint, boolean, index, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { bigint, boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const deploymentNodes = pgTable(
   "deployment_nodes",
@@ -121,7 +121,7 @@ export const cloudflareTunnels = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
   },
-  (table) => [index("cloudflare_tunnels_node_id_idx").on(table.nodeId), index("cloudflare_tunnels_cf_tunnel_id_idx").on(table.cfTunnelId)]
+  (table) => [uniqueIndex("cloudflare_tunnels_node_id_idx").on(table.nodeId), index("cloudflare_tunnels_cf_tunnel_id_idx").on(table.cfTunnelId)]
 );
 
 export const cloudflareRoutes = pgTable(
@@ -141,7 +141,7 @@ export const cloudflareRoutes = pgTable(
   },
   (table) => [
     index("cloudflare_routes_tunnel_id_idx").on(table.tunnelId),
-    index("cloudflare_routes_project_id_idx").on(table.projectId),
+    uniqueIndex("cloudflare_routes_project_id_unique_idx").on(table.projectId),
     index("cloudflare_routes_hostname_idx").on(table.hostname)
   ]
 );

@@ -469,6 +469,7 @@ a.button {
 .backup-layout {
   display: grid;
   gap: 16px;
+  grid-template-columns: 1fr;
 }
 
 .backup-layout > .panel {
@@ -865,10 +866,10 @@ a.button {
 .project-card {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
-  align-items: center;
-  padding: 13px 14px;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, auto);
+  gap: 18px;
+  align-items: stretch;
+  padding: 15px;
   border: 0;
   border-radius: 0;
   background: var(--panel-strong);
@@ -887,39 +888,31 @@ a.button {
 .project-card-side {
   min-width: 0;
   display: grid;
-  gap: 10px;
+  gap: 9px;
   align-content: start;
 }
 
-.project-card-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.project-card-head > div {
+.project-card-title {
   min-width: 0;
+  display: grid;
+  gap: 3px;
 }
 
 .project-card-side {
+  align-content: space-between;
   justify-items: end;
 }
 
 .project-card-statuses {
-  flex: 0 0 auto;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: max-content;
+  justify-content: start;
   gap: 6px;
-}
-
-.project-card-head .status {
-  flex: 0 0 auto;
 }
 
 .project-card h3,
 .project-card p,
+.project-route-summary a,
 .endpoint-box span,
 .token-box span,
 dd {
@@ -955,13 +948,35 @@ dd {
   white-space: nowrap;
 }
 
-.project-card-meta .route-live {
+.project-route-summary {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.project-route-summary > span:first-child {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  background: var(--field);
+  border: 1px solid var(--line-light);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.project-route-summary .route-live {
   color: var(--green-dark);
   background: var(--route-bg);
   border-color: rgba(45, 111, 79, 0.22);
 }
 
-.project-domain {
+.project-route-summary a {
   width: fit-content;
   max-width: 100%;
   color: var(--cyan);
@@ -973,7 +988,7 @@ dd {
   white-space: nowrap;
 }
 
-.project-domain:hover {
+.project-route-summary a:hover {
   text-decoration: underline;
 }
 
@@ -1159,6 +1174,66 @@ summary {
 .container-groups summary small {
   color: var(--muted);
   white-space: nowrap;
+}
+
+.container-list {
+  display: grid;
+  gap: 1px;
+  background: var(--line-light);
+  border-top: 1px solid var(--line-light);
+}
+
+.container-row-card {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px;
+  background: var(--panel-strong);
+}
+
+.container-row-main {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.container-row-title {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.container-row-title strong,
+.container-row-title span,
+.container-row-ports {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.container-row-title span,
+.container-row-ports,
+.container-row-meta span:not(.status) {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.container-row-meta {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.container-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 details pre {
@@ -2274,6 +2349,14 @@ th {
 
   .project-card-side {
     justify-items: start;
+  }
+
+  .container-row-card {
+    grid-template-columns: 1fr;
+  }
+
+  .container-row-actions {
+    justify-content: flex-start;
   }
 
   .project-copy-actions {

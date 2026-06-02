@@ -9,12 +9,13 @@ type ButtonProps = {
   variant?: "primary" | "secondary" | "danger" | "ghost";
   disabled?: boolean;
   icon?: ReactNode;
+  loading?: boolean;
 };
 
-export function Button({ children, onClick, type = "button", variant = "primary", disabled, icon }: ButtonProps) {
+export function Button({ children, onClick, type = "button", variant = "primary", disabled, icon, loading }: ButtonProps) {
   return (
-    <button className={`button ${variant}`} type={type} onClick={onClick} disabled={disabled}>
-      {icon}
+    <button className={`button ${variant}`} type={type} onClick={onClick} disabled={disabled || loading}>
+      {loading ? <Loader2 size={15} className="spin" /> : icon}
       <span>{children}</span>
     </button>
   );

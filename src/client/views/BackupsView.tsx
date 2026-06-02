@@ -12,6 +12,7 @@ type Props = {
   visibleBackups: Backup[];
   backups: Backup[];
   busy: string | null;
+  loading?: boolean;
   r2Ready: boolean;
   backupPage: number;
   dumpPostgresTarget: (containerId?: string) => Promise<void>;
@@ -28,6 +29,7 @@ export const BackupsView = memo(function BackupsView(props: Props) {
     visibleBackups,
     backups,
     busy,
+    loading,
     r2Ready,
     backupPage,
     dumpPostgresTarget,
@@ -45,12 +47,12 @@ export const BackupsView = memo(function BackupsView(props: Props) {
           <h2>Postgres targets</h2>
           <div className="actions">
             <span className="count">{postgresTargets.length} detected</span>
-            <Button disabled={busy === "backup:yanto"} onClick={() => void dumpPostgresTarget()} icon={<Archive size={16} />}>
-              Dump Yanto DB
+            <Button loading={busy === "backup:yanto"} onClick={() => void dumpPostgresTarget()} icon={<Archive size={16} />}>
+              {busy === "backup:yanto" ? "Dumping" : "Dump Yanto DB"}
             </Button>
           </div>
         </div>
-        <PostgresTargetTable targets={postgresTargets} busy={busy} onDump={dumpPostgresTarget} onRestore={restorePostgresTarget} />
+        <PostgresTargetTable targets={postgresTargets} busy={busy} loading={loading} onDump={dumpPostgresTarget} onRestore={restorePostgresTarget} />
       </section>
       <section className="panel">
         <div className="panel-head">
@@ -60,6 +62,7 @@ export const BackupsView = memo(function BackupsView(props: Props) {
         <BackupTable
           backups={visibleBackups}
           busy={busy}
+          loading={loading}
           r2Ready={r2Ready}
           onUploadR2={uploadBackupR2}
           onDelete={(backup) =>

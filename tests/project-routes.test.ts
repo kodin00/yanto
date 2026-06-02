@@ -1,0 +1,110 @@
+import express, { type NextFunction, type Request, type Response } from "express";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const projectMocks = vi.hoisted(() => ({
+  getProjectDeployToken: vi.fn(),
+  listProjectsWithContainerCounts: vi.fn(),
+  publicProject: vi.fn((project) => project),
+  createProject: vi.fn(),
+  updateProject: vi.fn(),
+  deleteProject: vi.fn(),
+  getProject: vi.fn()
+}));
+
+vi.mock("../src/server/auth.js", () => ({
+  currentUser: () => ({ username: "admin" }),
+  requireAuth: (req: Request, res: Response, next: NextFunction) => {
+    if (req.header("authorization") === "ok") {
+      next();
+      return;
+    }
+    res.status(401).json({ message: "Authentication required." });
+  }
+}));
+
+vi.mock("../src/server/services/projects.js", () => projectMocks);
+
+vi.mock("../src/server/services/audit.js", () => ({
+  recordAuditLog: vi.fn()
+}));
+
+vi.mock("../src/server/services/compose.js", () => ({
+  readProjectCompose: vi.fn()
+}));
+
+vi.mock("../src/server/services/deployments.js", () => ({
+  rollbackTargetForProject: vi.fn(),
+  startDeployment: vi.fn()
+}));
+
+vi.mock("../src/server/services/project-env.js", () => ({
+  previewEnvContent: vi.fn(),
+  previewProjectEnv: vi.fn(),
+  readProjectEnv: vi.fn(),
+  readProjectEnvVariables: vi.fn(),
+  writeProjectEnv: vi.fn(),
+  writeProjectEnvVariables: vi.fn()
+}));
+
+vi.mock("../src/server/services/project-runtime.js", () => ({
+  restartProjectCompose: vi.fn(),
+  stopProjectCompose: vi.fn()
+}));
+
+const { default: projectsRouter } = await import("../src/server/routes/projects.js");
+
+function createApp() {
+  const app = express();
+  app.use(express.json());
+  app.use(projectsRouter);
+  return app;
+}
+
+async function request(path: string, authorization?: string) {
+  const server = createApp().listen(0);
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Server did not start.");
+    const response = await fetch(`http://127.0.0.1:${address.port}${path}`, {
+      headers: authorization ? { authorization } : undefined
+    });
+    return { status: response.status, body: await response.json() as unknown };
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+describe("project routes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("reveals deploy token for an authenticated project", async () => {
+    projectMocks.getProjectDeployToken.mockResolvedValue("token-1");
+
+    const response = await request("/api/projects/p1/deploy-token", "ok");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ deployToken: "token-1" });
+  });
+
+  it("returns 404 when deploy token project is missing", async () => {
+    projectMocks.getProjectDeployToken.mockResolvedValue(undefined);
+
+    const response = await request("/api/projects/missing/deploy-token", "ok");
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({ message: "Project not found." });
+  });
+
+  it("blocks unauthenticated deploy token reveal", async () => {
+    const response = await request("/api/projects/p1/deploy-token");
+
+    expect(response.status).toBe(401);
+    expect(response.body).toEqual({ message: "Authentication required." });
+  });
+});

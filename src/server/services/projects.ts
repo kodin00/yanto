@@ -139,3 +139,8 @@ export async function getProject(id: string) {
   const [project] = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
   return project;
 }
+
+export async function getProjectDeployToken(id: string) {
+  const [project] = await db.select({ deployToken: projects.deployToken }).from(projects).where(eq(projects.id, id)).limit(1);
+  return project?.deployToken;
+}

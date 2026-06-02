@@ -5,18 +5,25 @@ import { Button, IconButton, StatusBadge } from "./components/ui";
 import { api, type AuditLogEntry, type BackupRecord, type PostgresTarget } from "./lib/api";
 
 type ConfirmState = { title: string; body: string; label: string; danger?: boolean; action: () => Promise<void> };
+type LoadingConfirmState = ConfirmState & { loadingMessage?: string; successMessage?: string };
 
 export function PostgresTargetTable({
   targets,
   busy,
+  loading,
   onDump,
   onRestore
 }: {
   targets: PostgresTarget[];
   busy: string | null;
+  loading?: boolean;
   onDump: (containerId: string) => Promise<void>;
   onRestore: (target: PostgresTarget, file: File) => Promise<void>;
 }) {
+  if (loading && !targets.length) {
+    return <p className="muted">Loading Postgres targets...</p>;
+  }
+
   if (!targets.length) {
     return <p className="muted">No likely Postgres containers detected yet.</p>;
   }
@@ -55,8 +62,8 @@ export function PostgresTargetTable({
                   <StatusBadge status={running ? "postgres" : target.state} />
                 </td>
                 <td className="table-actions">
-                  <Button disabled={!running || busy === `backup:${target.containerId}`} onClick={() => void onDump(target.containerId)} icon={<Archive size={15} />}>
-                    Dump
+                  <Button disabled={!running} loading={busy === `backup:${target.containerId}`} onClick={() => void onDump(target.containerId)} icon={<Archive size={15} />}>
+                    {busy === `backup:${target.containerId}` ? "Dumping" : "Dump"}
                   </Button>
                   <label className={`button secondary file-button ${!running || busy === `restore:${target.containerId}` ? "disabled" : ""}`}>
                     <Upload size={15} />
@@ -87,16 +94,22 @@ export function PostgresTargetTable({
 export function BackupTable({
   backups,
   busy,
+  loading,
   r2Ready,
   onDelete,
   onUploadR2
 }: {
   backups: BackupRecord[];
   busy: string | null;
+  loading?: boolean;
   r2Ready: boolean;
   onDelete: (backup: BackupRecord) => void;
   onUploadR2: (backup: BackupRecord) => Promise<void>;
 }) {
+  if (loading && !backups.length) {
+    return <p className="muted">Loading backups...</p>;
+  }
+
   if (!backups.length) {
     return <p className="muted">No backups recorded yet.</p>;
   }
@@ -108,7 +121,6 @@ export function BackupTable({
           <tr>
             <th>Backup</th>
             <th>Source</th>
-            <th>Status</th>
             <th>Size</th>
             <th>Created</th>
             <th>Duration</th>
@@ -120,9 +132,6 @@ export function BackupTable({
             <tr key={backup.id}>
               <td>{backup.filename || backup.id}</td>
               <td>{backup.note ?? backup.kind}</td>
-              <td>
-                <StatusBadge status={backup.status} />
-              </td>
               <td>{backup.fileSizeBytes ? bytes(backup.fileSizeBytes) : "-"}</td>
               <td>{dateTime(backup.createdAt)}</td>
               <td>{durationBetween(backup.createdAt, backup.finishedAt)}</td>
@@ -131,10 +140,10 @@ export function BackupTable({
                   <Download size={15} />
                   <span>Download</span>
                 </a>
-                <Button disabled={backup.status !== "success" || !r2Ready || busy === `r2:${backup.id}`} variant="secondary" onClick={() => void onUploadR2(backup)} icon={<Upload size={15} />}>
+                <Button disabled={backup.status !== "success" || !r2Ready} loading={busy === `r2:${backup.id}`} variant="secondary" onClick={() => void onUploadR2(backup)} icon={<Upload size={15} />}>
                   {busy === `r2:${backup.id}` ? "Uploading" : "R2"}
                 </Button>
-                <IconButton label="Remove backup" variant="danger" onClick={() => onDelete(backup)}>
+                <IconButton label="Remove backup" variant="danger" disabled={Boolean(busy?.startsWith(`r2:${backup.id}`))} onClick={() => onDelete(backup)}>
                   <Trash2 size={15} />
                 </IconButton>
               </td>
@@ -189,13 +198,15 @@ export function AuditTable({ entries }: { entries: AuditLogEntry[] }) {
 
 export function ContainerGroups({
   containers,
+  loading,
   onLogs,
   onConfirm,
   onReload
 }: {
   containers: ContainerInfo[];
+  loading?: boolean;
   onLogs: (container: ContainerInfo) => void;
-  onConfirm: (confirm: ConfirmState) => void;
+  onConfirm: (confirm: LoadingConfirmState) => void;
   onReload: () => Promise<void>;
 }) {
   const groups = Array.from(
@@ -205,6 +216,10 @@ export function ContainerGroups({
       return map;
     }, new Map<string, ContainerInfo[]>())
   ).sort(([a], [b]) => a.localeCompare(b));
+
+  if (loading && !groups.length) {
+    return <p className="muted">Loading containers...</p>;
+  }
 
   if (!groups.length) {
     return <p className="muted">No containers found yet.</p>;
@@ -220,110 +235,101 @@ export function ContainerGroups({
               {rows.filter((container) => container.state === "running").length} / {rows.length} running
             </small>
           </summary>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Image</th>
-                  <th>Role</th>
-                  <th>Status</th>
-                  <th>Uptime</th>
-                  <th>Ports</th>
-                  <th>CPU</th>
-                  <th>Memory</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((container) => {
-                  const protectedContainer = isProtectedYantoContainer(container);
-                  const running = container.state === "running";
-                  return (
-                    <tr key={container.id}>
-                      <td>{container.name}</td>
-                      <td>{container.image}</td>
-                      <td>{container.isPostgresCandidate ? <StatusBadge status="postgres" /> : "-"}</td>
-                      <td>
-                        <StatusBadge status={container.state} />
-                      </td>
-                      <td title={dateTime(container.createdAt)}>{durationSince(container.createdAt)}</td>
-                      <td className="ports-cell">{container.ports || "-"}</td>
-                      <td>{container.cpuPercent}</td>
-                      <td>
-                        {usedMemoryMb(container.memoryUsage)} ({container.memoryPercent})
-                      </td>
-                      <td className="action-cell">
-                        {protectedContainer ? (
-                          <span className="protected-label">Protected</span>
-                        ) : (
-                          <div className="table-actions icon-actions">
-                            <IconButton label="View logs" variant="secondary" onClick={() => void onLogs(container)}>
-                              <ScrollText size={15} />
-                            </IconButton>
-                            <IconButton
-                              label="Restart container"
-                              variant="secondary"
-                              onClick={() =>
-                                onConfirm({
-                                  title: "Restart container",
-                                  body: `Restart ${container.name}?`,
-                                  label: "Restart",
-                                  action: async () => {
-                                    await api.restartContainer(container.id);
-                                    await onReload();
-                                  }
-                                })
+          <div className="container-list">
+            {rows.map((container) => {
+              const protectedContainer = isProtectedYantoContainer(container);
+              const running = container.state === "running";
+              return (
+                <article className="container-row-card" key={container.id}>
+                  <div className="container-row-main">
+                    <div className="container-row-title">
+                      <strong>{container.name}</strong>
+                      <span>{container.image}</span>
+                    </div>
+                    <div className="container-row-meta">
+                      <StatusBadge status={container.state} />
+                      {container.isPostgresCandidate ? <StatusBadge status="postgres" /> : null}
+                      <span title={dateTime(container.createdAt)}>Uptime {durationSince(container.createdAt)}</span>
+                      <span>CPU {container.cpuPercent}</span>
+                      <span>Memory {usedMemoryMb(container.memoryUsage)} ({container.memoryPercent})</span>
+                    </div>
+                    <div className="container-row-ports">{container.ports || "No published ports"}</div>
+                  </div>
+                  <div className="container-row-actions">
+                    {protectedContainer ? (
+                      <span className="protected-label">Protected</span>
+                    ) : (
+                      <>
+                        <IconButton label="View logs" variant="secondary" onClick={() => void onLogs(container)}>
+                          <ScrollText size={15} />
+                        </IconButton>
+                        <IconButton
+                          label="Restart container"
+                          variant="secondary"
+                          onClick={() =>
+                            onConfirm({
+                              title: "Restart container",
+                              body: `Restart ${container.name}?`,
+                              label: "Restart",
+                              loadingMessage: `Restarting ${container.name}...`,
+                              successMessage: "Container restarted.",
+                              action: async () => {
+                                await api.restartContainer(container.id);
+                                await onReload();
                               }
-                            >
-                              <RotateCw size={15} />
-                            </IconButton>
-                            {running ? (
-                              <IconButton
-                                label="Stop container"
-                                variant="danger"
-                                onClick={() =>
-                                  onConfirm({
-                                    title: "Stop container",
-                                    body: `Stop ${container.name}?`,
-                                    label: "Stop",
-                                    danger: true,
-                                    action: async () => {
-                                      await api.stopContainer(container.id);
-                                      await onReload();
-                                    }
-                                  })
+                            })
+                          }
+                        >
+                          <RotateCw size={15} />
+                        </IconButton>
+                        {running ? (
+                          <IconButton
+                            label="Stop container"
+                            variant="danger"
+                            onClick={() =>
+                              onConfirm({
+                                title: "Stop container",
+                                body: `Stop ${container.name}?`,
+                                label: "Stop",
+                                danger: true,
+                                loadingMessage: `Stopping ${container.name}...`,
+                                successMessage: "Container stopped.",
+                                action: async () => {
+                                  await api.stopContainer(container.id);
+                                  await onReload();
                                 }
-                              >
-                                <Square size={15} />
-                              </IconButton>
-                            ) : (
-                              <IconButton
-                                label="Start container"
-                                variant="secondary"
-                                onClick={() =>
-                                  onConfirm({
-                                    title: "Start container",
-                                    body: `Start ${container.name}?`,
-                                    label: "Start",
-                                    action: async () => {
-                                      await api.startContainer(container.id);
-                                      await onReload();
-                                    }
-                                  })
+                              })
+                            }
+                          >
+                            <Square size={15} />
+                          </IconButton>
+                        ) : (
+                          <IconButton
+                            label="Start container"
+                            variant="secondary"
+                            onClick={() =>
+                              onConfirm({
+                                title: "Start container",
+                                body: `Start ${container.name}?`,
+                                label: "Start",
+                                loadingMessage: `Starting ${container.name}...`,
+                                successMessage: "Container started.",
+                                action: async () => {
+                                  await api.startContainer(container.id);
+                                  await onReload();
                                 }
-                              >
-                                <Play size={15} />
-                              </IconButton>
-                            )}
-                          </div>
+                              })
+                            }
+                          >
+                            <Play size={15} />
+                          </IconButton>
                         )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      </>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
           </div>
         </details>
       ))}
@@ -331,7 +337,25 @@ export function ContainerGroups({
   );
 }
 
-export function DeploymentTable({ deployments, onLogs, compact }: { deployments: Deployment[]; onLogs: (deployment: Deployment) => void; compact?: boolean }) {
+export function DeploymentTable({
+  deployments,
+  busy,
+  loading,
+  onLogs,
+  onRetry,
+  compact
+}: {
+  deployments: Deployment[];
+  busy?: string | null;
+  loading?: boolean;
+  onLogs: (deployment: Deployment) => void;
+  onRetry?: (deployment: Deployment) => void;
+  compact?: boolean;
+}) {
+  if (loading && !deployments.length) {
+    return <p className="muted">Loading deployments...</p>;
+  }
+
   if (!deployments.length) {
     return <p className="muted">No deployments recorded yet.</p>;
   }
@@ -364,6 +388,11 @@ export function DeploymentTable({ deployments, onLogs, compact }: { deployments:
               <td>{durationBetween(deployment.startedAt, deployment.finishedAt)}</td>
               {!compact ? <td>{deploymentChanges(deployment)}</td> : null}
               <td className="table-actions">
+                {!compact && deployment.status === "failed" && onRetry ? (
+                  <Button variant="secondary" loading={busy === `deploy:${deployment.projectId}`} onClick={() => onRetry(deployment)} icon={<RotateCw size={15} />}>
+                    Retry
+                  </Button>
+                ) : null}
                 <Button variant="secondary" onClick={() => onLogs(deployment)}>
                   Logs
                 </Button>
