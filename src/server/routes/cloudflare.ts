@@ -1,21 +1,25 @@
 import { Router } from "express";
 import { requireAuth } from "../auth.js";
 import { asyncRoute, actor, routeParam } from "../http-utils.js";
-import { cloudflareRouteInput } from "../route-schemas.js";
+import { cloudflareDnsRecordInput, cloudflareRouteInput } from "../route-schemas.js";
 import { recordAuditLog } from "../services/audit.js";
 import {
+  createDnsRecord,
+  deleteDnsRecord,
   deleteProjectRoute,
   disableProjectRoute,
   enableProjectRoute,
   getCloudflaredStatus,
   getTunnelForNode,
   getTunnelHealth,
+  listDnsRecords,
   listRoutesForProject,
   listTunnels,
   publishProjectRoute,
   restartCloudflared,
   startCloudflared,
-  stopCloudflared
+  stopCloudflared,
+  updateDnsRecord
 } from "../services/cloudflare.js";
 
 const router = Router();
@@ -25,6 +29,47 @@ router.get(
   requireAuth,
   asyncRoute(async (_req, res) => {
     res.json(await listTunnels());
+  })
+);
+
+router.get(
+  "/api/cloudflare/dns-records",
+  requireAuth,
+  asyncRoute(async (_req, res) => {
+    res.json(await listDnsRecords());
+  })
+);
+
+router.post(
+  "/api/cloudflare/dns-records",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const body = cloudflareDnsRecordInput.parse(req.body);
+    const record = await createDnsRecord(body);
+    await recordAuditLog({ actor: actor(req), action: "cloudflare.dns.create", entityType: "cloudflare_dns_record", entityId: record.id, metadata: { type: record.type, name: record.name } });
+    res.status(201).json(record);
+  })
+);
+
+router.patch(
+  "/api/cloudflare/dns-records/:id",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const body = cloudflareDnsRecordInput.parse(req.body);
+    const record = await updateDnsRecord(routeParam(req, "id"), body);
+    await recordAuditLog({ actor: actor(req), action: "cloudflare.dns.update", entityType: "cloudflare_dns_record", entityId: record.id, metadata: { type: record.type, name: record.name } });
+    res.json(record);
+  })
+);
+
+router.delete(
+  "/api/cloudflare/dns-records/:id",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const id = routeParam(req, "id");
+    await deleteDnsRecord(id);
+    await recordAuditLog({ actor: actor(req), action: "cloudflare.dns.delete", entityType: "cloudflare_dns_record", entityId: id });
+    res.status(204).end();
   })
 );
 

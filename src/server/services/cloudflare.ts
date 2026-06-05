@@ -10,6 +10,7 @@ import { runCommand } from "./commands.js";
 import { getProject } from "./projects.js";
 import { encrypt, decrypt, isEncrypted } from "./crypto.js";
 import { normalizeString } from "./utils.js";
+import type { CloudflareDnsRecord, CloudflareDnsRecordType } from "../../shared/types.js";
 
 // --- Cloudflare Settings (app_settings key: "cloudflare.tunnel") ---
 
@@ -281,6 +282,104 @@ export async function putTunnelConfig(tunnel: CloudflareTunnelRow): Promise<void
 }
 
 type CfDnsRecord = { id: string };
+
+type CfDnsRecordResult = {
+  id: string;
+  type: string;
+  name: string;
+  content: string;
+  ttl: number;
+  proxiable?: boolean;
+  proxied?: boolean;
+  priority?: number | null;
+  comment?: string | null;
+  created_on?: string;
+  modified_on?: string;
+};
+
+type CloudflareDnsRecordInput = {
+  type: CloudflareDnsRecordType;
+  name: string;
+  content: string;
+  ttl?: number;
+  proxied?: boolean;
+  priority?: number | null;
+  comment?: string | null;
+};
+
+function toPublicDnsRecord(record: CfDnsRecordResult): CloudflareDnsRecord {
+  return {
+    id: record.id,
+    type: record.type,
+    name: record.name,
+    content: record.content,
+    ttl: record.ttl,
+    proxiable: Boolean(record.proxiable),
+    proxied: Boolean(record.proxied),
+    priority: record.priority ?? null,
+    comment: record.comment ?? null,
+    createdOn: record.created_on ?? null,
+    modifiedOn: record.modified_on ?? null
+  };
+}
+
+function ensureDnsSettings(settings: CloudflareSettings) {
+  if (!settings.zoneId) {
+    throw new Error("Cloudflare Zone ID is not configured.");
+  }
+  if (!settings.apiToken) {
+    throw new Error("Cloudflare API token is not configured.");
+  }
+}
+
+function dnsRecordPayload(input: CloudflareDnsRecordInput) {
+  const proxied = ["A", "AAAA", "CNAME"].includes(input.type) ? Boolean(input.proxied) : false;
+  return {
+    type: input.type,
+    name: normalizeString(input.name),
+    content: normalizeString(input.content),
+    ttl: input.ttl ?? 1,
+    proxied,
+    ...(input.type === "MX" && input.priority != null ? { priority: input.priority } : {}),
+    ...(input.comment ? { comment: normalizeString(input.comment) } : {})
+  };
+}
+
+export async function listDnsRecords(): Promise<CloudflareDnsRecord[]> {
+  const settings = await getStoredCloudflareSettings();
+  ensureDnsSettings(settings);
+  const records = await cfFetch<CfDnsRecordResult[]>(
+    settings,
+    `/zones/${settings.zoneId}/dns_records?per_page=200&order=type&direction=asc`
+  );
+  return records.map(toPublicDnsRecord);
+}
+
+export async function createDnsRecord(input: CloudflareDnsRecordInput): Promise<CloudflareDnsRecord> {
+  const settings = await getStoredCloudflareSettings();
+  ensureDnsSettings(settings);
+  const created = await cfFetch<CfDnsRecordResult>(settings, `/zones/${settings.zoneId}/dns_records`, {
+    method: "POST",
+    body: JSON.stringify(dnsRecordPayload(input))
+  });
+  return toPublicDnsRecord(created);
+}
+
+export async function updateDnsRecord(recordId: string, input: CloudflareDnsRecordInput): Promise<CloudflareDnsRecord> {
+  const settings = await getStoredCloudflareSettings();
+  ensureDnsSettings(settings);
+  const updated = await cfFetch<CfDnsRecordResult>(settings, `/zones/${settings.zoneId}/dns_records/${recordId}`, {
+    method: "PATCH",
+    body: JSON.stringify(dnsRecordPayload(input))
+  });
+  return toPublicDnsRecord(updated);
+}
+
+export async function deleteDnsRecord(recordId: string): Promise<void> {
+  const settings = await getStoredCloudflareSettings();
+  ensureDnsSettings(settings);
+  await cfFetch<{ id: string }>(settings, `/zones/${settings.zoneId}/dns_records/${recordId}`, { method: "DELETE" });
+}
 
 export async function upsertTunnelDnsRecord(settings: CloudflareSettings, tunnelCfId: string, hostname: string): Promise<string | null> {
   if (!settings.zoneId) return null;

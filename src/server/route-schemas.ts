@@ -70,6 +70,16 @@ export const cloudflareRouteInput = z.object({
   nodeId: z.string().min(1).optional()
 });
 
+export const cloudflareDnsRecordInput = z.object({
+  type: z.enum(["A", "AAAA", "CNAME", "TXT", "MX", "NS"]),
+  name: z.string().min(1).max(255),
+  content: z.string().min(1).max(4096),
+  ttl: z.number().int().min(1).max(2_147_483_647).optional().default(1),
+  proxied: z.boolean().optional().default(false),
+  priority: z.number().int().min(0).max(65_535).nullable().optional(),
+  comment: z.string().max(500).nullable().optional()
+});
+
 export const workerRegisterInput = z.object({
   joinToken: z.string().min(1),
   name: z.string().optional(),

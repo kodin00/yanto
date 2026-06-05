@@ -1,0 +1,201 @@
+import { Cloud, Copy, Edit3, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { memo, useMemo, useState } from "react";
+import type { FormEvent } from "react";
+import type { CloudflareDnsRecord, CloudflareDnsRecordType } from "../../shared/types";
+import { Pagination } from "../components/Pagination";
+import { Button, CustomSelect, IconButton, StatusBadge, TextField, ToggleField } from "../components/ui";
+import type { CloudflareDnsRecordPayload } from "../lib/api";
+import type { ConfirmState, SettingsState } from "./types";
+
+const editableTypes: CloudflareDnsRecordType[] = ["A", "AAAA", "CNAME", "TXT", "MX", "NS"];
+const proxiedTypes = new Set<CloudflareDnsRecordType>(["A", "AAAA", "CNAME"]);
+
+type DnsFormState = {
+  id: string | null;
+  type: CloudflareDnsRecordType;
+  name: string;
+  content: string;
+  ttl: string;
+  proxied: boolean;
+  priority: string;
+  comment: string;
+};
+
+const emptyForm: DnsFormState = {
+  id: null,
+  type: "A",
+  name: "",
+  content: "",
+  ttl: "1",
+  proxied: false,
+  priority: "",
+  comment: ""
+};
+
+type Props = {
+  records: CloudflareDnsRecord[];
+  visibleRecords: CloudflareDnsRecord[];
+  settings: SettingsState;
+  busy: string | null;
+  loading?: boolean;
+  page: number;
+  createRecord: (payload: CloudflareDnsRecordPayload) => Promise<void>;
+  updateRecord: (id: string, payload: CloudflareDnsRecordPayload) => Promise<void>;
+  deleteRecord: (record: CloudflareDnsRecord) => Promise<void>;
+  copyText: (value: string) => Promise<void>;
+  setConfirm: (state: ConfirmState) => void;
+  setPage: (page: number) => void;
+  openSettings: () => void;
+};
+
+function editableType(type: string): type is CloudflareDnsRecordType {
+  return editableTypes.includes(type as CloudflareDnsRecordType);
+}
+
+function recordForm(record: CloudflareDnsRecord): DnsFormState {
+  return {
+    id: record.id,
+    type: editableType(record.type) ? record.type : "A",
+    name: record.name,
+    content: record.content,
+    ttl: String(record.ttl || 1),
+    proxied: record.proxied,
+    priority: record.priority == null ? "" : String(record.priority),
+    comment: record.comment ?? ""
+  };
+}
+
+function payloadFromForm(form: DnsFormState): CloudflareDnsRecordPayload {
+  return {
+    type: form.type,
+    name: form.name.trim(),
+    content: form.content.trim(),
+    ttl: Number(form.ttl || 1),
+    proxied: proxiedTypes.has(form.type) ? form.proxied : false,
+    priority: form.type === "MX" && form.priority ? Number(form.priority) : null,
+    comment: form.comment.trim() || null
+  };
+}
+
+export const DnsView = memo(function DnsView(props: Props) {
+  const { records, visibleRecords, settings, busy, loading, page, createRecord, updateRecord, deleteRecord, copyText, setConfirm, setPage, openSettings } = props;
+  const [form, setForm] = useState<DnsFormState>(emptyForm);
+  const ready = Boolean(settings.cf?.zoneId && settings.cf.hasApiToken);
+  const canProxy = proxiedTypes.has(form.type);
+  const saving = busy === "dns-save";
+  const typeOptions = useMemo(() => editableTypes.map((type) => ({ label: type, value: type })), []);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const payload = payloadFromForm(form);
+    if (form.id) {
+      await updateRecord(form.id, payload);
+    } else {
+      await createRecord(payload);
+    }
+    setForm(emptyForm);
+  }
+
+  return (
+    <section className="dns-layout">
+      <section className="panel dns-editor-panel">
+        <div className="panel-head">
+          <h2>{form.id ? "Edit DNS record" : "Add DNS record"}</h2>
+          <Cloud size={19} />
+        </div>
+        {!ready ? (
+          <div className="dns-not-ready">
+            <p className="muted">Cloudflare Zone ID and API token are required before DNS records can be managed.</p>
+            <Button variant="secondary" onClick={openSettings}>
+              Open settings
+            </Button>
+          </div>
+        ) : null}
+        <form className="form-grid dns-record-form" onSubmit={submit} autoComplete="off">
+          <div className="dns-form-grid">
+            <CustomSelect label="Type" value={form.type} options={typeOptions} disabled={!ready || saving} onChange={(type) => setForm((current) => ({ ...current, type, proxied: proxiedTypes.has(type) ? current.proxied : false }))} />
+            <TextField label="Name" value={form.name} onChange={(name) => setForm((current) => ({ ...current, name }))} placeholder="www or example.com" required disabled={!ready || saving} />
+            <TextField label="Content" value={form.content} onChange={(content) => setForm((current) => ({ ...current, content }))} placeholder="Target value" required disabled={!ready || saving} />
+            <TextField label="TTL" value={form.ttl} onChange={(ttl) => setForm((current) => ({ ...current, ttl: ttl.replace(/\D/g, "") || "1" }))} placeholder="1" required disabled={!ready || saving} />
+            {form.type === "MX" ? (
+              <TextField label="Priority" value={form.priority} onChange={(priority) => setForm((current) => ({ ...current, priority: priority.replace(/\D/g, "") }))} placeholder="10" disabled={!ready || saving} />
+            ) : null}
+          </div>
+          <TextField label="Comment" value={form.comment} onChange={(comment) => setForm((current) => ({ ...current, comment }))} placeholder="Optional note" disabled={!ready || saving} />
+          <ToggleField label="Proxied" value={canProxy && form.proxied} onChange={(proxied) => setForm((current) => ({ ...current, proxied }))} disabled={!ready || saving || !canProxy} description={canProxy ? "Routes traffic through Cloudflare." : "Only A, AAAA, and CNAME records can be proxied."} />
+          <div className="actions">
+            {form.id ? (
+              <Button type="button" variant="ghost" disabled={saving} onClick={() => setForm(emptyForm)}>
+                Cancel
+              </Button>
+            ) : null}
+            <Button type="submit" disabled={!ready || saving || !form.name.trim() || !form.content.trim()} loading={saving} icon={<Plus size={16} />}>
+              {form.id ? "Save record" : "Create record"}
+            </Button>
+          </div>
+        </form>
+      </section>
+
+      <section className="panel dns-records-panel">
+        <div className="panel-head">
+          <h2>DNS records</h2>
+          <span className="count">{loading ? "Loading" : `${records.length} records`}</span>
+        </div>
+        <div className="table-wrap dns-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Name</th>
+                <th>Content</th>
+                <th>TTL</th>
+                <th>Proxy</th>
+                <th>Updated</th>
+                <th className="action-cell">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleRecords.map((record) => (
+                <tr key={record.id}>
+                  <td><StatusBadge status={record.type} /></td>
+                  <td className="dns-name-cell">{record.name}</td>
+                  <td className="dns-content-cell">{record.content}</td>
+                  <td>{record.ttl === 1 ? "Auto" : record.ttl}</td>
+                  <td>{record.proxiable ? <StatusBadge status={record.proxied ? "proxied" : "dns-only"} label={record.proxied ? "Proxied" : "DNS only"} /> : <span className="muted">N/A</span>}</td>
+                  <td>{record.modifiedOn ? new Date(record.modifiedOn).toLocaleString() : "Unknown"}</td>
+                  <td className="action-cell">
+                    <div className="table-actions icon-actions">
+                      <IconButton label="Copy content" onClick={() => void copyText(record.content)}><Copy size={14} /></IconButton>
+                      <IconButton label="Edit record" disabled={!editableType(record.type)} onClick={() => setForm(recordForm(record))}><Edit3 size={14} /></IconButton>
+                      <IconButton
+                        label="Delete record"
+                        variant="danger"
+                        onClick={() => setConfirm({
+                          title: "Delete DNS record",
+                          body: `Delete ${record.type} record for ${record.name}?`,
+                          label: "Delete",
+                          danger: true,
+                          loadingMessage: "Deleting DNS record...",
+                          successMessage: "DNS record deleted.",
+                          action: () => deleteRecord(record)
+                        })}
+                      >
+                        {busy === `dns-delete:${record.id}` ? <RefreshCw size={14} className="spin" /> : <Trash2 size={14} />}
+                      </IconButton>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {!visibleRecords.length ? (
+                <tr>
+                  <td colSpan={7}>{loading ? "Loading DNS records..." : ready ? "No DNS records found." : "Configure Cloudflare settings first."}</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+        <Pagination label="DNS records" page={page} totalItems={records.length} onPageChange={setPage} />
+      </section>
+    </section>
+  );
+});

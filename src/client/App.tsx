@@ -11,6 +11,7 @@ import {
   FileText,
   GitBranch,
   GitPullRequest,
+  Globe2,
   KeyRound,
   List,
   LogOut,
@@ -31,10 +32,11 @@ const AuditView = lazy(() => import("./views/AuditView").then(m => ({ default: m
 const BackupsView = lazy(() => import("./views/BackupsView").then(m => ({ default: m.BackupsView })));
 const ContainersView = lazy(() => import("./views/ContainersView").then(m => ({ default: m.ContainersView })));
 const DeploymentsView = lazy(() => import("./views/DeploymentsView").then(m => ({ default: m.DeploymentsView })));
+const DnsView = lazy(() => import("./views/DnsView").then(m => ({ default: m.DnsView })));
 const NodesView = lazy(() => import("./views/NodesView").then(m => ({ default: m.NodesView })));
 const ProjectsView = lazy(() => import("./views/ProjectsView").then(m => ({ default: m.ProjectsView })));
 const SettingsView = lazy(() => import("./views/SettingsView").then(m => ({ default: m.SettingsView })));
-import type { CloudflarePublicSettings, CloudflareRoute, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, Project, ProjectWithDeployToken, R2PublicSettings, SetupWizardStatus, SystemUsage } from "../shared/types";
+import type { CloudflareDnsRecord, CloudflarePublicSettings, CloudflareRoute, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, Project, ProjectWithDeployToken, R2PublicSettings, SetupWizardStatus, SystemUsage } from "../shared/types";
 import {
   cloudflareServiceUrl,
   dateTime,
@@ -50,9 +52,9 @@ import {
 import { Button, ConfirmDialog, CustomSelect, IconButton, LoadingInline, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast, ToggleField } from "./components/ui";
 import { EnvEditor, type ProjectEnvState } from "./components/EnvEditor";
 import { YantoBootLoader } from "./components/YantoBootLoader";
-import { api, type AuditLogEntry, type BackupRecord, type CloudflareRoutePayload, type PostgresTarget } from "./lib/api";
+import { api, type AuditLogEntry, type BackupRecord, type CloudflareDnsRecordPayload, type CloudflareRoutePayload, type PostgresTarget } from "./lib/api";
 
-type View = "dashboard" | "projects" | "deployments" | "containers" | "nodes" | "backups" | "audit" | "settings";
+type View = "dashboard" | "projects" | "deployments" | "containers" | "nodes" | "backups" | "dns" | "audit" | "settings";
 type ToastState = { message: string; kind?: "ok" | "error" | "loading" } | null;
 type LogModalState = { title: string; logs: string; streamPath?: string; live?: boolean; status?: string };
 type LogStreamPayload = { logs?: string; chunk?: string; status?: string; error?: string; done?: boolean };
@@ -172,6 +174,10 @@ function projectWithoutSecret(project: Project | ProjectWithDeployToken): Projec
   return copy as Project;
 }
 
+function viewTitle(view: View) {
+  return view === "dns" ? "DNS" : view[0].toUpperCase() + view.slice(1);
+}
+
 export function App() {
   const [user, setUser] = useState<string | null>(null);
   const [login, setLogin] = useState({ username: "admin", password: "" });
@@ -182,6 +188,7 @@ export function App() {
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
   const [nodes, setNodes] = useState<DeploymentNode[]>([]);
   const [backups, setBackups] = useState<BackupRecord[]>([]);
+  const [dnsRecords, setDnsRecords] = useState<CloudflareDnsRecord[]>([]);
   const [postgresTargets, setPostgresTargets] = useState<PostgresTarget[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
   const [usage, setUsage] = useState<SystemUsage | null>(null);
@@ -218,6 +225,7 @@ export function App() {
   const [projectPage, setProjectPage] = useState(1);
   const [deploymentPage, setDeploymentPage] = useState(1);
   const [backupPage, setBackupPage] = useState(1);
+  const [dnsPage, setDnsPage] = useState(1);
   const [auditPage, setAuditPage] = useState(1);
 
   useEffect(() => {
@@ -339,6 +347,14 @@ export function App() {
       const [backupRows, postgresRows] = await Promise.all([api.backups().catch(() => []), api.postgresBackupTargets().catch(() => [])]);
       setBackups(backupRows);
       setPostgresTargets(postgresRows);
+      return;
+    }
+
+    if (targetView === "dns") {
+      const [settingRows, records] = await Promise.all([api.settings(), api.cloudflareDnsRecords().catch(() => [])]);
+      setSettings(settingRows);
+      setSettingsLoaded(true);
+      setDnsRecords(records);
       return;
     }
 
@@ -496,6 +512,7 @@ export function App() {
   const visibleProjects = useMemo(() => pageItems(projects, projectPage), [projectPage, projects]);
   const visibleDeployments = useMemo(() => pageItems(deployments, deploymentPage), [deploymentPage, deployments]);
   const visibleBackups = useMemo(() => pageItems(backups, backupPage), [backupPage, backups]);
+  const visibleDnsRecords = useMemo(() => pageItems(dnsRecords, dnsPage), [dnsPage, dnsRecords]);
   const visibleAuditEntries = useMemo(() => pageItems(auditEntries, auditPage), [auditEntries, auditPage]);
   const sshReady = Boolean(settings.sshKey?.activePrivateKeyPath);
   const r2Ready = Boolean(settings.r2?.enabled && settings.r2.accountId && settings.r2.bucket && settings.r2.hasAccessKeyId && settings.r2.hasSecretAccessKey);
@@ -527,6 +544,10 @@ export function App() {
   useEffect(() => {
     setBackupPage((page) => Math.min(page, totalPages(backups)));
   }, [backups]);
+
+  useEffect(() => {
+    setDnsPage((page) => Math.min(page, totalPages(dnsRecords)));
+  }, [dnsRecords]);
 
   useEffect(() => {
     setAuditPage((page) => Math.min(page, totalPages(auditEntries)));
@@ -1052,6 +1073,46 @@ export function App() {
     }
   }
 
+  async function createDnsRecord(payload: CloudflareDnsRecordPayload) {
+    setBusy("dns-save");
+    setToast({ message: "Creating DNS record...", kind: "loading" });
+    try {
+      const record = await api.createCloudflareDnsRecord(payload);
+      setDnsRecords((current) => [record, ...current.filter((item) => item.id !== record.id)]);
+      setToast({ message: "DNS record created." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to create DNS record.", kind: "error" });
+      throw error;
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function updateDnsRecord(recordId: string, payload: CloudflareDnsRecordPayload) {
+    setBusy("dns-save");
+    setToast({ message: "Updating DNS record...", kind: "loading" });
+    try {
+      const record = await api.updateCloudflareDnsRecord(recordId, payload);
+      setDnsRecords((current) => current.map((item) => (item.id === record.id ? record : item)));
+      setToast({ message: "DNS record updated." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to update DNS record.", kind: "error" });
+      throw error;
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function deleteDnsRecord(record: CloudflareDnsRecord) {
+    setBusy(`dns-delete:${record.id}`);
+    try {
+      await api.deleteCloudflareDnsRecord(record.id);
+      setDnsRecords((current) => current.filter((item) => item.id !== record.id));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function previewCleanup() {
     setBusy("cleanup-preview");
     setToast({ message: "Checking cleanup preview...", kind: "loading" });
@@ -1209,6 +1270,7 @@ export function App() {
             ["containers", Container, "Containers"],
             ...(multiNodeEnabled ? [["nodes", Server, "Nodes"] as const] : []),
             ["backups", Archive, "Backups"],
+            ["dns", Globe2, "DNS"],
             ["audit", FileClock, "Audit"],
             ["settings", Settings, "Settings"]
           ].map(([id, Icon, label]) => (
@@ -1249,7 +1311,7 @@ export function App() {
       <main className="main">
         <header className="topbar">
           <div>
-            <h1>{view[0].toUpperCase() + view.slice(1)}</h1>
+            <h1>{viewTitle(view)}</h1>
           </div>
           <Button variant="secondary" disabled={busy === "refresh-view"} onClick={() => void refreshCurrentView()} icon={<RefreshCw size={16} className={busy === "refresh-view" ? "spin" : ""} />}>
             {busy === "refresh-view" ? "Refreshing" : "Refresh"}
@@ -1325,6 +1387,24 @@ export function App() {
             setConfirm={setConfirm}
             refreshBackups={refreshBackups}
             setBackupPage={setBackupPage}
+          />
+        ) : null}
+
+        {view === "dns" ? (
+          <DnsView
+            records={dnsRecords}
+            visibleRecords={visibleDnsRecords}
+            settings={settings}
+            busy={busy}
+            loading={viewLoading.dns}
+            page={dnsPage}
+            createRecord={createDnsRecord}
+            updateRecord={updateDnsRecord}
+            deleteRecord={deleteDnsRecord}
+            copyText={copyText}
+            setConfirm={setConfirm}
+            setPage={setDnsPage}
+            openSettings={() => setView("settings")}
           />
         ) : null}
 

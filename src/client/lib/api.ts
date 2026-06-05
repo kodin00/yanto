@@ -1,4 +1,4 @@
-import type { AuditLog, Backup, CloudflarePublicSettings, CloudflareRoute, CloudflareTunnel, CloudflareTunnelStatus, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, SetupWizardStatus, SystemUsage } from "../../shared/types";
+import type { AuditLog, Backup, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareTunnel, CloudflareTunnelStatus, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, SetupWizardStatus, SystemUsage } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -42,6 +42,16 @@ export type CloudflareRoutePayload = {
   serviceTarget: string;
   noTlsVerify?: boolean;
   nodeId?: string;
+};
+
+export type CloudflareDnsRecordPayload = {
+  type: CloudflareDnsRecordType;
+  name: string;
+  content: string;
+  ttl?: number;
+  proxied?: boolean;
+  priority?: number | null;
+  comment?: string | null;
 };
 
 export type SshKeyStatus = {
@@ -253,6 +263,19 @@ export const api = {
       body: JSON.stringify(payload)
     }),
   cloudflareTunnels: () => request<CloudflareTunnel[]>("/api/cloudflare/tunnels"),
+  cloudflareDnsRecords: () => request<CloudflareDnsRecord[]>("/api/cloudflare/dns-records"),
+  createCloudflareDnsRecord: (payload: CloudflareDnsRecordPayload) =>
+    request<CloudflareDnsRecord>("/api/cloudflare/dns-records", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  updateCloudflareDnsRecord: (id: string, payload: CloudflareDnsRecordPayload) =>
+    request<CloudflareDnsRecord>(`/api/cloudflare/dns-records/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
+  deleteCloudflareDnsRecord: (id: string) =>
+    request<void>(`/api/cloudflare/dns-records/${id}`, { method: "DELETE" }),
   cloudflareTunnelStatus: (nodeId: string) =>
     request<CloudflareTunnelStatus>(`/api/cloudflare/tunnels/node/${nodeId}`),
   startCloudflared: (nodeId: string) =>

@@ -2276,6 +2276,61 @@ th {
   justify-content: center;
 }
 
+.dns-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.dns-editor-panel,
+.dns-records-panel {
+  min-height: 0;
+}
+
+.dns-not-ready {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 12px;
+  background: var(--warning-bg);
+  border: 1px solid var(--line);
+}
+
+.dns-not-ready p {
+  margin: 0;
+}
+
+.dns-record-form {
+  gap: 12px;
+}
+
+.dns-form-grid {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.45fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.dns-form-grid .field:nth-child(3),
+.dns-record-form > .field {
+  grid-column: 1 / -1;
+}
+
+.dns-table-wrap {
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+}
+
+.dns-name-cell,
+.dns-content-cell {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.dns-content-cell {
+  max-width: 360px;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -2309,7 +2364,8 @@ th {
   }
 
   .dashboard-main-grid,
-  .settings-grid {
+  .settings-grid,
+  .dns-layout {
     grid-template-columns: 1fr;
   }
 
@@ -2382,6 +2438,15 @@ th {
   .cf-route-add-row {
     grid-template-columns: 1fr;
     justify-content: flex-start;
+  }
+
+  .dns-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dns-form-grid .field:nth-child(3),
+  .dns-record-form > .field {
+    grid-column: auto;
   }
 
   .setup-banner,

@@ -157,6 +157,22 @@ export type CloudflareRoute = {
   updatedAt: string;
 };
 
+export type CloudflareDnsRecordType = "A" | "AAAA" | "CNAME" | "TXT" | "MX" | "NS";
+
+export type CloudflareDnsRecord = {
+  id: string;
+  type: CloudflareDnsRecordType | string;
+  name: string;
+  content: string;
+  ttl: number;
+  proxiable: boolean;
+  proxied: boolean;
+  priority: number | null;
+  comment: string | null;
+  createdOn: string | null;
+  modifiedOn: string | null;
+};
+
 export type CloudflareTunnelStatus = {
   tunnel: CloudflareTunnel;
   runtime: {
