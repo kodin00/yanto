@@ -1,6 +1,6 @@
 import { Copy, KeyRound, Play, Plus, Square, Undo2 } from "lucide-react";
 import { memo } from "react";
-import type { CloudflareRoute, ContainerInfo, Deployment, Project } from "../../shared/types";
+import type { CloudflareRoute, CloudflareRouteDiagnostic, ContainerInfo, Deployment, Project } from "../../shared/types";
 import { endpoint, githubWebhookEndpoint } from "../app-utils";
 import { Pagination } from "../components/Pagination";
 import { Button, StatusBadge } from "../components/ui";
@@ -31,6 +31,7 @@ type Props = {
   projects: Project[];
   containersByProjectFolder: Map<string, ContainerInfo[]>;
   cfRoutesByProject: Record<string, CloudflareRoute[]>;
+  routeDiagnosticsByRouteId: Record<string, CloudflareRouteDiagnostic>;
   latestDeploymentByProject: Map<string, Deployment>;
   settings: SettingsState;
   busy: string | null;
@@ -52,6 +53,7 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
     projects,
     containersByProjectFolder,
     cfRoutesByProject,
+    routeDiagnosticsByRouteId,
     latestDeploymentByProject,
     settings,
     busy,
@@ -82,6 +84,7 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
           const projectRoutes = cfRoutesByProject[project.id] ?? project.cloudflareRoutes ?? [];
           const activeRoutes = projectRoutes.filter((route) => route.enabled);
           const primaryRoute = activeRoutes[0] ?? projectRoutes[0];
+          const primaryDiagnostic = primaryRoute ? routeDiagnosticsByRouteId[primaryRoute.id] : undefined;
           const runningCount = projectContainers.filter((container) => container.state === "running").length;
           const deploymentStatus = deploymentBadge(latestDeploymentByProject.get(project.id));
           const containerStatus = containerBadge(projectContainers, project.containerCount);
@@ -115,7 +118,14 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
                 <div className="project-route-summary">
                   {primaryRoute ? (
                     <>
-                      <span className={primaryRoute.enabled ? "route-live" : ""}>{primaryRoute.enabled ? "Hostname live" : "Hostname off"}</span>
+                      {primaryDiagnostic ? (
+                        <>
+                          <StatusBadge status={primaryDiagnostic.dnsStatus} label={`DNS ${primaryDiagnostic.dnsStatus}`} />
+                          <StatusBadge status={primaryDiagnostic.tunnelStatus} label={`Tunnel ${primaryDiagnostic.tunnelStatus}`} />
+                        </>
+                      ) : (
+                        <StatusBadge status={primaryRoute.enabled ? "checking" : "disabled"} label={primaryRoute.enabled ? "Checking hostname" : "Route disabled"} />
+                      )}
                       <a href={`https://${primaryRoute.hostname}`} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()}>
                         https://{primaryRoute.hostname}
                       </a>

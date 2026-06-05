@@ -365,6 +365,16 @@ describe("api client", () => {
     it("containerLogStream returns stream URL", () => {
       expect(api.containerLogStream("ct-1")).toBe("/api/containers/ct-1/logs/stream");
     });
+
+    it("cloudflareRouteDiagnostics sends GET to diagnostics endpoint", async () => {
+      const fetchMock = mockFetch([]);
+
+      await api.cloudflareRouteDiagnostics();
+
+      expect(fetchMock).toHaveBeenCalledWith("/api/cloudflare/routes/diagnostics", expect.objectContaining({
+        credentials: "include"
+      }));
+    });
   });
 
   describe("projectEnv normalization", () => {

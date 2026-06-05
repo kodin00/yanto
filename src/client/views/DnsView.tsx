@@ -1,7 +1,7 @@
 import { Cloud, Copy, Edit3, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { memo, useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import type { CloudflareDnsRecord, CloudflareDnsRecordType } from "../../shared/types";
+import type { CloudflareDnsRecord, CloudflareDnsRecordType, CloudflareRouteDiagnostic } from "../../shared/types";
 import { Pagination } from "../components/Pagination";
 import { Button, CustomSelect, IconButton, StatusBadge, TextField, ToggleField } from "../components/ui";
 import type { CloudflareDnsRecordPayload } from "../lib/api";
@@ -35,6 +35,7 @@ const emptyForm: DnsFormState = {
 type Props = {
   records: CloudflareDnsRecord[];
   visibleRecords: CloudflareDnsRecord[];
+  diagnostics: CloudflareRouteDiagnostic[];
   settings: SettingsState;
   busy: string | null;
   loading?: boolean;
@@ -46,6 +47,7 @@ type Props = {
   setConfirm: (state: ConfirmState) => void;
   setPage: (page: number) => void;
   openSettings: () => void;
+  refreshDiagnostics: () => Promise<void>;
 };
 
 function editableType(type: string): type is CloudflareDnsRecordType {
@@ -78,12 +80,17 @@ function payloadFromForm(form: DnsFormState): CloudflareDnsRecordPayload {
 }
 
 export const DnsView = memo(function DnsView(props: Props) {
-  const { records, visibleRecords, settings, busy, loading, page, createRecord, updateRecord, deleteRecord, copyText, setConfirm, setPage, openSettings } = props;
+  const { records, visibleRecords, diagnostics, settings, busy, loading, page, createRecord, updateRecord, deleteRecord, copyText, setConfirm, setPage, openSettings, refreshDiagnostics } = props;
   const [form, setForm] = useState<DnsFormState>(emptyForm);
   const ready = Boolean(settings.cf?.zoneId && settings.cf.hasApiToken);
   const canProxy = proxiedTypes.has(form.type);
   const saving = busy === "dns-save";
   const typeOptions = useMemo(() => editableTypes.map((type) => ({ label: type, value: type })), []);
+  const diagnosticsByHostname = useMemo(() => Object.fromEntries(diagnostics.map((diagnostic) => [diagnostic.hostname.toLowerCase(), diagnostic])), [diagnostics]);
+  const yantoRecordKeys = useMemo(() => new Set(diagnostics.flatMap((diagnostic) => {
+    if (!diagnostic.expectedDnsTarget) return [];
+    return [`${diagnostic.hostname.toLowerCase()}|cname|${diagnostic.expectedDnsTarget.toLowerCase()}`];
+  })), [diagnostics]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -136,6 +143,36 @@ export const DnsView = memo(function DnsView(props: Props) {
         </form>
       </section>
 
+      <div className="dns-main-column">
+      <section className="panel dns-diagnostics-panel">
+        <div className="panel-head">
+          <h2>Diagnostics</h2>
+          <Button variant="secondary" onClick={() => void refreshDiagnostics()} icon={<RefreshCw size={16} />}>
+            Refresh
+          </Button>
+        </div>
+        <div className="dns-diagnostics-list">
+          {diagnostics.map((diagnostic) => (
+            <article key={diagnostic.routeId} className={`dns-diagnostic-card ${diagnostic.dnsStatus !== "ok" || diagnostic.tunnelStatus !== "running" || diagnostic.reachabilityStatus === "failed" ? "attention" : ""}`}>
+              <div>
+                <strong>{diagnostic.hostname}</strong>
+                <span>{diagnostic.projectName ?? diagnostic.projectId}</span>
+              </div>
+              <div className="dns-diagnostic-targets">
+                <span>{diagnostic.expectedDnsTarget ?? "No tunnel target"}</span>
+                <span>{diagnostic.actualDnsRecords[0]?.content ?? "No DNS record"}</span>
+              </div>
+              <div className="dns-diagnostic-statuses">
+                <StatusBadge status={diagnostic.dnsStatus} label={`DNS ${diagnostic.dnsStatus}`} />
+                <StatusBadge status={diagnostic.tunnelStatus} label={`Tunnel ${diagnostic.tunnelStatus}`} />
+                <StatusBadge status={diagnostic.reachabilityStatus} label={`HTTPS ${diagnostic.reachabilityStatus}`} />
+              </div>
+            </article>
+          ))}
+          {!diagnostics.length ? <p className="muted">No Yanto Cloudflare routes to check yet.</p> : null}
+        </div>
+      </section>
+
       <section className="panel dns-records-panel">
         <div className="panel-head">
           <h2>DNS records</h2>
@@ -155,10 +192,19 @@ export const DnsView = memo(function DnsView(props: Props) {
               </tr>
             </thead>
             <tbody>
-              {visibleRecords.map((record) => (
-                <tr key={record.id}>
+              {visibleRecords.map((record) => {
+                const diagnostic = diagnosticsByHostname[record.name.toLowerCase()];
+                const recordKey = `${record.name.toLowerCase()}|${record.type.toLowerCase()}|${record.content.toLowerCase()}`;
+                const yantoManaged = yantoRecordKeys.has(recordKey);
+                const conflict = Boolean(diagnostic && !yantoManaged && ["conflict", "mismatch"].includes(diagnostic.dnsStatus));
+                return (
+                <tr key={record.id} className={conflict ? "dns-record-conflict" : yantoManaged ? "dns-record-yanto" : ""}>
                   <td><StatusBadge status={record.type} /></td>
-                  <td className="dns-name-cell">{record.name}</td>
+                  <td className="dns-name-cell">
+                    <span>{record.name}</span>
+                    {yantoManaged ? <StatusBadge status="yanto" label="Yanto route" /> : null}
+                    {conflict ? <StatusBadge status="conflict" label="Conflict" /> : null}
+                  </td>
                   <td className="dns-content-cell">{record.content}</td>
                   <td>{record.ttl === 1 ? "Auto" : record.ttl}</td>
                   <td>{record.proxiable ? <StatusBadge status={record.proxied ? "proxied" : "dns-only"} label={record.proxied ? "Proxied" : "DNS only"} /> : <span className="muted">N/A</span>}</td>
@@ -185,7 +231,8 @@ export const DnsView = memo(function DnsView(props: Props) {
                     </div>
                   </td>
                 </tr>
-              ))}
+              );
+              })}
               {!visibleRecords.length ? (
                 <tr>
                   <td colSpan={7}>{loading ? "Loading DNS records..." : ready ? "No DNS records found." : "Configure Cloudflare settings first."}</td>
@@ -196,6 +243,7 @@ export const DnsView = memo(function DnsView(props: Props) {
         </div>
         <Pagination label="DNS records" page={page} totalItems={records.length} onPageChange={setPage} />
       </section>
+      </div>
     </section>
   );
 });

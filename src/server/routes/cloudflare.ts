@@ -13,6 +13,7 @@ import {
   getTunnelForNode,
   getTunnelHealth,
   listDnsRecords,
+  listRouteDiagnostics,
   listRoutesForProject,
   listTunnels,
   publishProjectRoute,
@@ -70,6 +71,14 @@ router.delete(
     await deleteDnsRecord(id);
     await recordAuditLog({ actor: actor(req), action: "cloudflare.dns.delete", entityType: "cloudflare_dns_record", entityId: id });
     res.status(204).end();
+  })
+);
+
+router.get(
+  "/api/cloudflare/routes/diagnostics",
+  requireAuth,
+  asyncRoute(async (_req, res) => {
+    res.json(await listRouteDiagnostics());
   })
 );
 

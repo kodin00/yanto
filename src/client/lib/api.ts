@@ -1,4 +1,4 @@
-import type { AuditLog, Backup, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareTunnel, CloudflareTunnelStatus, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../../shared/types";
+import type { AuditLog, Backup, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelStatus, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -268,6 +268,7 @@ export const api = {
       body: JSON.stringify(payload)
     }),
   cloudflareTunnels: () => request<CloudflareTunnel[]>("/api/cloudflare/tunnels"),
+  cloudflareRouteDiagnostics: () => request<CloudflareRouteDiagnostic[]>("/api/cloudflare/routes/diagnostics"),
   cloudflareDnsRecords: () => request<CloudflareDnsRecord[]>("/api/cloudflare/dns-records"),
   createCloudflareDnsRecord: (payload: CloudflareDnsRecordPayload) =>
     request<CloudflareDnsRecord>("/api/cloudflare/dns-records", {

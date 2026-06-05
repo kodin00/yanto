@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { appSettings, cloudflareRoutes, cloudflareTunnels } from "../db/schema.js";
+import { appSettings, cloudflareRoutes, cloudflareTunnels, projects } from "../db/schema.js";
 import type { CloudflareRouteRow, CloudflareTunnelRow, ProjectRow } from "../db/schema.js";
 import { config } from "../config.js";
 import { createId } from "./tokens.js";
@@ -10,7 +10,8 @@ import { runCommand } from "./commands.js";
 import { getProject } from "./projects.js";
 import { encrypt, decrypt, isEncrypted } from "./crypto.js";
 import { normalizeString } from "./utils.js";
-import type { CloudflareDnsRecord, CloudflareDnsRecordType } from "../../shared/types.js";
+import { classifyRouteDiagnostic } from "./cloudflare-diagnostics.js";
+import type { CloudflareDnsRecord, CloudflareDnsRecordType, CloudflareRouteDiagnostic, CloudflareRouteDiagnosticDnsRecord, CloudflareRouteReachabilityStatus } from "../../shared/types.js";
 
 // --- Cloudflare Settings (app_settings key: "cloudflare.tunnel") ---
 
@@ -379,6 +380,121 @@ export async function deleteDnsRecord(recordId: string): Promise<void> {
   const settings = await getStoredCloudflareSettings();
   ensureDnsSettings(settings);
   await cfFetch<{ id: string }>(settings, `/zones/${settings.zoneId}/dns_records/${recordId}`, { method: "DELETE" });
+}
+
+function diagnosticDnsRecord(record: CloudflareDnsRecord): CloudflareRouteDiagnosticDnsRecord {
+  return {
+    id: record.id,
+    type: record.type,
+    name: record.name,
+    content: record.content,
+    proxied: record.proxied
+  };
+}
+
+async function checkHostnameReachability(hostname: string): Promise<CloudflareRouteReachabilityStatus> {
+  const url = `https://${hostname}`;
+  const request = async (method: "HEAD" | "GET") => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3500);
+    try {
+      return await fetch(url, { method, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  try {
+    const head = await request("HEAD");
+    if (head.status === 405) {
+      const get = await request("GET");
+      return get.status < 400 ? "ok" : "failed";
+    }
+    return head.status < 400 ? "ok" : "failed";
+  } catch {
+    return "failed";
+  }
+}
+
+export async function listRouteDiagnostics(): Promise<CloudflareRouteDiagnostic[]> {
+  const checkedAt = new Date().toISOString();
+  const [routes, tunnels, projectRows] = await Promise.all([
+    db.select().from(cloudflareRoutes),
+    listTunnels(),
+    db.select().from(projects)
+  ]);
+  const tunnelById = new Map(tunnels.map((tunnel) => [tunnel.id, tunnel]));
+  const projectById = new Map(projectRows.map((project) => [project.id, project]));
+  const runtimeByNodeId = new Map<string, Promise<{ running: boolean } | null>>();
+  const healthByTunnelId = new Map<string, Promise<{ healthy: boolean } | null>>();
+
+  let dnsRecords: CloudflareDnsRecord[] | null = null;
+  try {
+    dnsRecords = await listDnsRecords();
+  } catch {
+    dnsRecords = null;
+  }
+
+  const runtimeFor = (nodeId: string) => {
+    if (!runtimeByNodeId.has(nodeId)) {
+      runtimeByNodeId.set(nodeId, getCloudflaredStatus(nodeId).catch(() => null));
+    }
+    return runtimeByNodeId.get(nodeId)!;
+  };
+  const healthFor = (tunnel: CloudflareTunnelRow) => {
+    if (!healthByTunnelId.has(tunnel.id)) {
+      healthByTunnelId.set(tunnel.id, getTunnelHealth(tunnel).catch(() => null));
+    }
+    return healthByTunnelId.get(tunnel.id)!;
+  };
+
+  return Promise.all(routes.map(async (route) => {
+    const tunnel = tunnelById.get(route.tunnelId);
+    const project = projectById.get(route.projectId);
+    const expectedDnsTarget = tunnel ? `${tunnel.cfTunnelId}.cfargotunnel.com` : null;
+    const actualDnsRecords = (dnsRecords ?? [])
+      .filter((record) => record.name.toLowerCase() === route.hostname.toLowerCase())
+      .map(diagnosticDnsRecord);
+    const [runtime, health] = tunnel ? await Promise.all([runtimeFor(tunnel.nodeId), healthFor(tunnel)]) : [null, null];
+    const preliminary = classifyRouteDiagnostic({
+      routeEnabled: route.enabled,
+      hostname: route.hostname,
+      expectedDnsTarget,
+      dnsRecords: dnsRecords ? actualDnsRecords : null,
+      tunnelExists: Boolean(tunnel),
+      tunnelRuntimeRunning: runtime ? runtime.running : tunnel ? null : false,
+      tunnelHealthy: health ? health.healthy : tunnel ? null : false,
+      reachabilityStatus: "skipped"
+    });
+    const reachabilityStatus =
+      route.enabled && preliminary.dnsStatus === "ok" && preliminary.tunnelStatus === "running"
+        ? await checkHostnameReachability(route.hostname)
+        : "skipped";
+    const classification = classifyRouteDiagnostic({
+      routeEnabled: route.enabled,
+      hostname: route.hostname,
+      expectedDnsTarget,
+      dnsRecords: dnsRecords ? actualDnsRecords : null,
+      tunnelExists: Boolean(tunnel),
+      tunnelRuntimeRunning: runtime ? runtime.running : tunnel ? null : false,
+      tunnelHealthy: health ? health.healthy : tunnel ? null : false,
+      reachabilityStatus
+    });
+
+    return {
+      routeId: route.id,
+      tunnelId: route.tunnelId,
+      projectId: route.projectId,
+      projectName: project?.name ?? null,
+      hostname: route.hostname,
+      serviceTarget: route.serviceTarget,
+      routeEnabled: route.enabled,
+      expectedDnsTarget,
+      actualDnsRecords,
+      checkedAt,
+      ...classification
+    };
+  }));
 }
 
 export async function upsertTunnelDnsRecord(settings: CloudflareSettings, tunnelCfId: string, hostname: string): Promise<string | null> {

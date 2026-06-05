@@ -198,6 +198,30 @@ export type CloudflareDnsRecord = {
   modifiedOn: string | null;
 };
 
+export type CloudflareRouteDnsStatus = "ok" | "missing" | "mismatch" | "conflict" | "unknown";
+export type CloudflareRouteTunnelStatus = "running" | "stopped" | "missing" | "unhealthy" | "unknown";
+export type CloudflareRouteReachabilityStatus = "ok" | "failed" | "skipped" | "unknown";
+
+export type CloudflareRouteDiagnosticDnsRecord = Pick<CloudflareDnsRecord, "id" | "type" | "name" | "content" | "proxied">;
+
+export type CloudflareRouteDiagnostic = {
+  routeId: string;
+  tunnelId: string;
+  projectId: string;
+  projectName: string | null;
+  hostname: string;
+  serviceTarget: string;
+  routeEnabled: boolean;
+  expectedDnsTarget: string | null;
+  actualDnsRecords: CloudflareRouteDiagnosticDnsRecord[];
+  dnsStatus: CloudflareRouteDnsStatus;
+  tunnelStatus: CloudflareRouteTunnelStatus;
+  reachabilityStatus: CloudflareRouteReachabilityStatus;
+  messages: string[];
+  recommendedFixes: string[];
+  checkedAt: string;
+};
+
 export type CloudflareTunnelStatus = {
   tunnel: CloudflareTunnel;
   runtime: {

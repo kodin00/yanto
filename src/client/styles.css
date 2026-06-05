@@ -1395,14 +1395,20 @@ th {
 }
 
 .status.success,
-.status.ready {
+.status.ready,
+.status.ok,
+.status.yanto {
   background: var(--success-bg);
   color: var(--green-dark);
 }
 
 .status.failed,
 .status.exited,
-.status.dead {
+.status.dead,
+.status.conflict,
+.status.mismatch,
+.status.missing,
+.status.unhealthy {
   background: var(--danger-bg);
   color: var(--red-dark);
 }
@@ -1412,7 +1418,11 @@ th {
   color: var(--amber);
 }
 
-.status.warning {
+.status.warning,
+.status.stopped,
+.status.skipped,
+.status.unknown,
+.status.checking {
   background: var(--idle-bg);
   color: var(--amber);
 }
@@ -2340,6 +2350,11 @@ th {
   align-items: start;
 }
 
+.dns-main-column {
+  display: grid;
+  gap: 18px;
+}
+
 .dns-editor-panel,
 .dns-records-panel {
   min-height: 0;
@@ -2378,14 +2393,80 @@ th {
   border: 1px solid var(--line);
 }
 
+.dns-diagnostics-list {
+  display: grid;
+  gap: 1px;
+  background: var(--line-light);
+  border: 1px solid var(--line-light);
+}
+
+.dns-diagnostic-card {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.9fr) minmax(220px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--panel-strong);
+}
+
+.dns-diagnostic-card.attention,
+.dns-record-conflict {
+  background: var(--warning-bg);
+}
+
+.dns-record-yanto {
+  background: var(--route-bg);
+}
+
+.dns-diagnostic-card > div:first-child,
+.dns-diagnostic-targets {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.dns-diagnostic-card strong,
+.dns-diagnostic-targets span,
+.dns-name-cell span,
+.dns-content-cell {
+  overflow-wrap: anywhere;
+}
+
+.dns-diagnostic-card > div:first-child span,
+.dns-diagnostic-targets span {
+  color: var(--muted);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.dns-diagnostic-statuses {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .dns-name-cell,
 .dns-content-cell {
   font-family: var(--font-mono);
   overflow-wrap: anywhere;
 }
 
+.dns-name-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
 .dns-content-cell {
   max-width: 360px;
+}
+
+.cf-route-diagnostic-message {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 @media (max-width: 900px) {
@@ -2499,6 +2580,14 @@ th {
 
   .dns-form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .dns-diagnostic-card {
+    grid-template-columns: 1fr;
+  }
+
+  .dns-diagnostic-statuses {
+    justify-content: flex-start;
   }
 
   .dns-form-grid .field:nth-child(3),

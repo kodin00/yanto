@@ -36,7 +36,7 @@ const DnsView = lazy(() => import("./views/DnsView").then(m => ({ default: m.Dns
 const NodesView = lazy(() => import("./views/NodesView").then(m => ({ default: m.NodesView })));
 const ProjectsView = lazy(() => import("./views/ProjectsView").then(m => ({ default: m.ProjectsView })));
 const SettingsView = lazy(() => import("./views/SettingsView").then(m => ({ default: m.SettingsView })));
-import type { CloudflareDnsRecord, CloudflarePublicSettings, CloudflareRoute, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../shared/types";
+import type { CloudflareDnsRecord, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../shared/types";
 import {
   cloudflareServiceUrl,
   endpoint,
@@ -191,6 +191,7 @@ export function App() {
   const [nodes, setNodes] = useState<DeploymentNode[]>([]);
   const [backups, setBackups] = useState<BackupRecord[]>([]);
   const [dnsRecords, setDnsRecords] = useState<CloudflareDnsRecord[]>([]);
+  const [routeDiagnostics, setRouteDiagnostics] = useState<CloudflareRouteDiagnostic[]>([]);
   const [postgresTargets, setPostgresTargets] = useState<PostgresTarget[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
   const [usage, setUsage] = useState<SystemUsage | null>(null);
@@ -247,14 +248,16 @@ export function App() {
   const refreshProjects = useCallback(async () => {
     setViewLoading((current) => ({ ...current, projects: true }));
     try {
-      const [projectRows, deploymentRows, containerRows] = await Promise.all([
+      const [projectRows, deploymentRows, containerRows, diagnostics] = await Promise.all([
         api.projects(),
         api.deployments(),
-        fetchContainerRows()
+        fetchContainerRows(),
+        api.cloudflareRouteDiagnostics().catch(() => [])
       ]);
       setProjects(projectRows);
       setDeployments(deploymentRows);
       if (containerRows) setContainers(containerRows);
+      setRouteDiagnostics(diagnostics);
     } finally {
       setViewLoading((current) => ({ ...current, projects: false }));
     }
@@ -288,6 +291,10 @@ export function App() {
     if (settingRows) setSettings(settingRows);
   }, []);
 
+  const refreshRouteDiagnostics = useCallback(async () => {
+    setRouteDiagnostics(await api.cloudflareRouteDiagnostics().catch(() => []));
+  }, []);
+
   const refreshContainers = useCallback(async () => {
     setViewLoading((current) => ({ ...current, containers: true }));
     try {
@@ -319,12 +326,20 @@ export function App() {
     }
 
     if (targetView === "projects") {
-      const [projectRows, deploymentRows, containerRows, nodeRows, settingRows] = await Promise.all([api.projects(), api.deployments(), fetchContainerRows(), api.nodes().catch(() => []), api.settings()]);
+      const [projectRows, deploymentRows, containerRows, nodeRows, settingRows, diagnostics] = await Promise.all([
+        api.projects(),
+        api.deployments(),
+        fetchContainerRows(),
+        api.nodes().catch(() => []),
+        api.settings(),
+        api.cloudflareRouteDiagnostics().catch(() => [])
+      ]);
       setProjects(projectRows);
       setDeployments(deploymentRows);
       if (containerRows) setContainers(containerRows);
       setNodes(nodeRows);
       setSettings(settingRows);
+      setRouteDiagnostics(diagnostics);
       setSettingsLoaded(true);
       return;
     }
@@ -353,10 +368,15 @@ export function App() {
     }
 
     if (targetView === "dns") {
-      const [settingRows, records] = await Promise.all([api.settings(), api.cloudflareDnsRecords().catch(() => [])]);
+      const [settingRows, records, diagnostics] = await Promise.all([
+        api.settings(),
+        api.cloudflareDnsRecords().catch(() => []),
+        api.cloudflareRouteDiagnostics().catch(() => [])
+      ]);
       setSettings(settingRows);
       setSettingsLoaded(true);
       setDnsRecords(records);
+      setRouteDiagnostics(diagnostics);
       return;
     }
 
@@ -516,6 +536,7 @@ export function App() {
   const visibleBackups = useMemo(() => pageItems(backups, backupPage), [backupPage, backups]);
   const visibleDnsRecords = useMemo(() => pageItems(dnsRecords, dnsPage), [dnsPage, dnsRecords]);
   const visibleAuditEntries = useMemo(() => pageItems(auditEntries, auditPage), [auditEntries, auditPage]);
+  const routeDiagnosticsByRouteId = useMemo(() => Object.fromEntries(routeDiagnostics.map((diagnostic) => [diagnostic.routeId, diagnostic])), [routeDiagnostics]);
   const sshReady = Boolean(settings.sshKey?.activePrivateKeyPath);
   const r2Ready = Boolean(settings.r2?.enabled && settings.r2.accountId && settings.r2.bucket && settings.r2.hasAccessKeyId && settings.r2.hasSecretAccessKey);
   const cfSettingsReady = Boolean(settings.cf?.accountId && settings.cf.zoneId && settings.cf.hasApiToken);
@@ -1068,6 +1089,7 @@ export function App() {
       const project = projects.find((item) => item.id === projectId);
       setCfRouteForm(buildCfRouteForm(route.hostname, route.serviceTarget || (project ? cloudflareServiceUrl(project, containersByProjectFolder.get(project.folderName) ?? []) : ""), route.noTlsVerify));
       setCfRouteEditorOpen(false);
+      void refreshRouteDiagnostics();
       setToast({ message: `Hostname saved: https://${route.hostname}` });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to publish route.", kind: "error" });
@@ -1087,6 +1109,7 @@ export function App() {
         [updated.projectId]: (current[updated.projectId] ?? []).map((r) => (r.id === updated.id ? updated : r))
       }));
       setProjects((current) => current.map((project) => (project.id === updated.projectId ? { ...project, cloudflareRoutes: (project.cloudflareRoutes ?? []).map((r) => (r.id === updated.id ? updated : r)) } : project)));
+      void refreshRouteDiagnostics();
       setToast({ message: route.enabled ? "Route disabled." : "Route enabled." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to update route.", kind: "error" });
@@ -1106,6 +1129,7 @@ export function App() {
         setCfRoutesByProject((current) => ({ ...current, [deletedRoute.projectId]: (current[deletedRoute.projectId] ?? []).filter((r) => r.id !== routeId) }));
         setProjects((current) => current.map((project) => (project.id === deletedRoute.projectId ? { ...project, cloudflareRoutes: (project.cloudflareRoutes ?? []).filter((r) => r.id !== routeId) } : project)));
       }
+      void refreshRouteDiagnostics();
       setToast({ message: "Route deleted." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to delete route.", kind: "error" });
@@ -1120,6 +1144,7 @@ export function App() {
     try {
       const record = await api.createCloudflareDnsRecord(payload);
       setDnsRecords((current) => [record, ...current.filter((item) => item.id !== record.id)]);
+      void refreshRouteDiagnostics();
       setToast({ message: "DNS record created." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to create DNS record.", kind: "error" });
@@ -1135,6 +1160,7 @@ export function App() {
     try {
       const record = await api.updateCloudflareDnsRecord(recordId, payload);
       setDnsRecords((current) => current.map((item) => (item.id === record.id ? record : item)));
+      void refreshRouteDiagnostics();
       setToast({ message: "DNS record updated." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to update DNS record.", kind: "error" });
@@ -1149,6 +1175,7 @@ export function App() {
     try {
       await api.deleteCloudflareDnsRecord(record.id);
       setDnsRecords((current) => current.filter((item) => item.id !== record.id));
+      void refreshRouteDiagnostics();
     } finally {
       setBusy(null);
     }
@@ -1388,6 +1415,7 @@ export function App() {
             projects={projects}
             containersByProjectFolder={containersByProjectFolder}
             cfRoutesByProject={cfRoutesByProject}
+            routeDiagnosticsByRouteId={routeDiagnosticsByRouteId}
             latestDeploymentByProject={latestDeploymentByProject}
             settings={settings}
             busy={busy}
@@ -1439,6 +1467,7 @@ export function App() {
           <DnsView
             records={dnsRecords}
             visibleRecords={visibleDnsRecords}
+            diagnostics={routeDiagnostics}
             settings={settings}
             busy={busy}
             loading={viewLoading.dns}
@@ -1450,6 +1479,7 @@ export function App() {
             setConfirm={setConfirm}
             setPage={setDnsPage}
             openSettings={() => setView("settings")}
+            refreshDiagnostics={refreshRouteDiagnostics}
           />
         ) : null}
 
@@ -1765,6 +1795,13 @@ export function App() {
                           </a>
                           <span className="cf-route-service">{route.serviceTarget}{route.noTlsVerify ? " · no TLS verify" : ""}</span>
                           <StatusBadge status={route.enabled ? "enabled" : "disabled"} />
+                          {routeDiagnosticsByRouteId[route.id] ? (
+                            <>
+                              <StatusBadge status={routeDiagnosticsByRouteId[route.id].dnsStatus} label={`DNS ${routeDiagnosticsByRouteId[route.id].dnsStatus}`} />
+                              <StatusBadge status={routeDiagnosticsByRouteId[route.id].tunnelStatus} label={`Tunnel ${routeDiagnosticsByRouteId[route.id].tunnelStatus}`} />
+                              <StatusBadge status={routeDiagnosticsByRouteId[route.id].reachabilityStatus} label={`HTTPS ${routeDiagnosticsByRouteId[route.id].reachabilityStatus}`} />
+                            </>
+                          ) : null}
                         </div>
                         <div className="cf-route-actions">
                           <IconButton label="Copy URL" onClick={() => void copyText(`https://${route.hostname}`)}><Copy size={14} /></IconButton>
@@ -1773,6 +1810,9 @@ export function App() {
                           </Button>
                           <IconButton label="Delete route" disabled={!cfSettingsReady || busy === `cf-route-delete:${route.id}`} onClick={() => void removeCfRoute(route.id)}><Trash2 size={14} /></IconButton>
                         </div>
+                        {routeDiagnosticsByRouteId[route.id]?.messages.length ? (
+                          <p className="cf-route-diagnostic-message">{routeDiagnosticsByRouteId[route.id].messages[0]}</p>
+                        ) : null}
                       </div>
                     ))}
                     {!cfRoutes.length ? <p className="muted">No public hostnames configured.</p> : null}
