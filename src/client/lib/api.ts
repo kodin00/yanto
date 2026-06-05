@@ -1,4 +1,4 @@
-import type { AuditLog, Backup, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareTunnel, CloudflareTunnelStatus, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, SetupWizardStatus, SystemUsage } from "../../shared/types";
+import type { AuditLog, Backup, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareTunnel, CloudflareTunnelStatus, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -155,10 +155,15 @@ export const api = {
     }),
   stopProject: (id: string) => request<{ ok: true }>(`/api/projects/${id}/stop`, { method: "POST" }),
   restartProject: (id: string) => request<{ ok: true }>(`/api/projects/${id}/restart`, { method: "POST" }),
-  rollbackProject: (id: string, deploymentId: string) =>
+  rollbackPreview: (id: string, targetRef: string) =>
+    request<RollbackPreview>(`/api/projects/${id}/rollback/preview`, {
+      method: "POST",
+      body: JSON.stringify({ targetRef })
+    }),
+  rollbackProject: (id: string, targetRef: string) =>
     request<{ deployment: Deployment }>(`/api/projects/${id}/rollback`, {
       method: "POST",
-      body: JSON.stringify({ deploymentId })
+      body: JSON.stringify({ targetRef })
     }),
   projectEnv: async (id: string) => normalizeProjectEnv(await request<unknown>(`/api/projects/${id}/env`)),
   projectEnvContent: (id: string) => request<ProjectEnvContent>(`/api/projects/${id}/env/content`),

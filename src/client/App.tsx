@@ -36,11 +36,9 @@ const DnsView = lazy(() => import("./views/DnsView").then(m => ({ default: m.Dns
 const NodesView = lazy(() => import("./views/NodesView").then(m => ({ default: m.NodesView })));
 const ProjectsView = lazy(() => import("./views/ProjectsView").then(m => ({ default: m.ProjectsView })));
 const SettingsView = lazy(() => import("./views/SettingsView").then(m => ({ default: m.SettingsView })));
-import type { CloudflareDnsRecord, CloudflarePublicSettings, CloudflareRoute, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, Project, ProjectWithDeployToken, R2PublicSettings, SetupWizardStatus, SystemUsage } from "../shared/types";
+import type { CloudflareDnsRecord, CloudflarePublicSettings, CloudflareRoute, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../shared/types";
 import {
   cloudflareServiceUrl,
-  dateTime,
-  durationBetween,
   endpoint,
   githubRepoNameFromUrl,
   githubWebhookEndpoint,
@@ -61,7 +59,7 @@ type LogStreamPayload = { logs?: string; chunk?: string; status?: string; error?
 type CfRouteProtocol = "http" | "https";
 type CfRouteForm = { hostname: string; protocol: CfRouteProtocol; localTarget: string; noTlsVerify: boolean };
 type ProjectComposeState = { open: boolean; loading: boolean; available: boolean; source: "saved" | "file" | "empty" | null; message: string };
-type RollbackModalState = { project: Project; deployments: Deployment[] };
+type RollbackModalState = { project: Project; targetRef: string; preview: RollbackPreview | null; previewError: string | null; previewLoading: boolean };
 type ConfirmState = { title: string; body: string; label: string; danger?: boolean; loadingMessage?: string; successMessage?: string; action: () => Promise<void> };
 type CreatedProjectSecret = { projectName: string; deployUrl: string; webhookUrl: string; deployToken: string };
 type ThemeMode = "light" | "dark";
@@ -176,6 +174,10 @@ function projectWithoutSecret(project: Project | ProjectWithDeployToken): Projec
 
 function viewTitle(view: View) {
   return view === "dns" ? "DNS" : view[0].toUpperCase() + view.slice(1);
+}
+
+function shortSha(sha: string) {
+  return sha.slice(0, 12);
 }
 
 export function App() {
@@ -873,8 +875,47 @@ export function App() {
   }
 
   function openRollback(project: Project) {
-    const projectDeployments = deployments.filter((deployment) => deployment.projectId === project.id && deployment.status === "success");
-    setRollbackModal({ project, deployments: projectDeployments });
+    setRollbackModal({ project, targetRef: "", preview: null, previewError: null, previewLoading: false });
+  }
+
+  function updateRollbackTarget(targetRef: string) {
+    setRollbackModal((current) => current ? { ...current, targetRef, preview: null, previewError: null } : current);
+  }
+
+  async function previewRollback() {
+    if (!rollbackModal) return;
+    const targetRef = rollbackModal.targetRef.trim();
+    setRollbackModal((current) => current ? { ...current, previewLoading: true, previewError: null, preview: null } : current);
+    try {
+      const preview = await api.rollbackPreview(rollbackModal.project.id, targetRef);
+      setRollbackModal((current) => current ? { ...current, targetRef, preview, previewLoading: false, previewError: null } : current);
+    } catch (error) {
+      setRollbackModal((current) => current ? { ...current, preview: null, previewLoading: false, previewError: error instanceof Error ? error.message : "Unable to preview rollback." } : current);
+    }
+  }
+
+  async function startRollback() {
+    if (!rollbackModal) return;
+    const targetRef = rollbackModal.targetRef.trim();
+    setBusy(`rollback:${rollbackModal.project.id}`);
+    setToast({ message: `Starting rollback for ${rollbackModal.project.name}...`, kind: "loading" });
+    try {
+      const result = await api.rollbackProject(rollbackModal.project.id, targetRef);
+      setRollbackModal(null);
+      setToast({ message: "Rollback started." });
+      setLogModal({
+        title: `${rollbackModal.project.name} rollback`,
+        logs: "",
+        streamPath: api.deploymentLogStream(result.deployment.id),
+        live: true,
+        status: result.deployment.status
+      });
+      await refreshDeployments();
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to start rollback.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function copyText(value: string) {
@@ -1252,6 +1293,10 @@ export function App() {
       </main>
     );
   }
+
+  const rollbackTarget = rollbackModal?.targetRef.trim() ?? "";
+  const rollbackPreview = rollbackModal?.preview?.requestedRef === rollbackTarget ? rollbackModal.preview : null;
+  const rollbackBusy = rollbackModal ? busy === `rollback:${rollbackModal.project.id}` : false;
 
   return (
     <div className="app-shell">
@@ -1832,40 +1877,86 @@ export function App() {
       ) : null}
 
       {rollbackModal ? (
-        <Modal title={`Rollback ${rollbackModal.project.name}`} onClose={() => setRollbackModal(null)}>
-          <div className="rollback-list">
-            {rollbackModal.deployments.map((deployment) => (
-              <button
-                type="button"
-                key={deployment.id}
-                onClick={async () => {
-                  setBusy(`rollback:${rollbackModal.project.id}`);
-                  setToast({ message: `Starting rollback for ${rollbackModal.project.name}...`, kind: "loading" });
-                  try {
-                    const result = await api.rollbackProject(rollbackModal.project.id, deployment.id);
-                    setRollbackModal(null);
-                    setToast({ message: "Rollback started." });
-                    setLogModal({
-                      title: `${rollbackModal.project.name} rollback`,
-                      logs: "",
-                      streamPath: api.deploymentLogStream(result.deployment.id),
-                      live: true,
-                      status: result.deployment.status
-                    });
-                    await refreshDeployments();
-                  } catch (error) {
-                    setToast({ message: error instanceof Error ? error.message : "Unable to start rollback.", kind: "error" });
-                  } finally {
-                    setBusy(null);
-                  }
-                }}
-              >
-                <span>{dateTime(deployment.startedAt)}</span>
-                <strong>{durationBetween(deployment.startedAt, deployment.finishedAt)}</strong>
-                <StatusBadge status={deployment.status} />
-              </button>
-            ))}
-            {!rollbackModal.deployments.length ? <p className="muted">No successful deployments are available for rollback yet.</p> : null}
+        <Modal title={`Rollback ${rollbackModal.project.name}`} size="wide" onClose={() => setRollbackModal(null)}>
+          <div className="rollback-panel">
+            <form
+              className="rollback-target-row"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void previewRollback();
+              }}
+            >
+              <TextField
+                label="Commit or tag"
+                value={rollbackModal.targetRef}
+                onChange={updateRollbackTarget}
+                placeholder="v1.2.3 or 9f3a1c2"
+                disabled={rollbackModal.previewLoading || rollbackBusy}
+              />
+              <Button type="submit" variant="secondary" disabled={!rollbackTarget || rollbackModal.previewLoading || rollbackBusy} loading={rollbackModal.previewLoading} icon={<GitBranch size={15} />}>
+                Preview diff
+              </Button>
+            </form>
+
+            {rollbackModal.previewError ? <p className="error-text">{rollbackModal.previewError}</p> : null}
+            {rollbackModal.previewLoading ? <LoadingInline label="Loading rollback diff" /> : null}
+
+            {rollbackPreview ? (
+              <div className="rollback-preview">
+                <div className="rollback-ref-grid">
+                  <div>
+                    <span>Current</span>
+                    <strong>{shortSha(rollbackPreview.current.sha)}</strong>
+                    <p>{rollbackPreview.current.message || "No commit message"}</p>
+                  </div>
+                  <div>
+                    <span>Target</span>
+                    <strong>{shortSha(rollbackPreview.target.sha)}</strong>
+                    <p>{rollbackPreview.target.message || rollbackPreview.requestedRef}</p>
+                  </div>
+                </div>
+                <div className="rollback-stat-grid">
+                  <div>
+                    <span>Leaving behind</span>
+                    <strong>{rollbackPreview.commitsToLeaveBehind}</strong>
+                  </div>
+                  <div>
+                    <span>Applying</span>
+                    <strong>{rollbackPreview.commitsToApply}</strong>
+                  </div>
+                  <div>
+                    <span>Files changed</span>
+                    <strong>{rollbackPreview.filesChanged}</strong>
+                  </div>
+                  <div>
+                    <span>Line diff</span>
+                    <strong>+{rollbackPreview.additions} / -{rollbackPreview.deletions}</strong>
+                  </div>
+                </div>
+                <div className="rollback-files">
+                  {rollbackPreview.files.length ? (
+                    rollbackPreview.files.map((file) => (
+                      <div className="rollback-file-row" key={file.path}>
+                        <span>{file.path}</span>
+                        <strong>{file.binary ? "binary" : `+${file.additions ?? 0} / -${file.deletions ?? 0}`}</strong>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="muted">No file changes between the current checkout and this target.</p>
+                  )}
+                  {rollbackPreview.filesChanged > rollbackPreview.files.length ? <p className="muted">Showing first {rollbackPreview.files.length} files.</p> : null}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="actions">
+              <Button type="button" variant="ghost" onClick={() => setRollbackModal(null)}>
+                Cancel
+              </Button>
+              <Button type="button" disabled={!rollbackPreview || rollbackBusy} loading={rollbackBusy} onClick={() => void startRollback()} icon={<GitBranch size={15} />}>
+                Rollback to ref
+              </Button>
+            </div>
           </div>
         </Modal>
       ) : null}

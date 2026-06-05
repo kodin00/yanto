@@ -44,6 +44,31 @@ export type Deployment = {
   finishedAt: string | null;
 };
 
+export type GitRefSummary = {
+  ref: string;
+  sha: string;
+  message: string;
+};
+
+export type RollbackDiffFile = {
+  path: string;
+  additions: number | null;
+  deletions: number | null;
+  binary: boolean;
+};
+
+export type RollbackPreview = {
+  requestedRef: string;
+  current: GitRefSummary;
+  target: GitRefSummary;
+  commitsToApply: number;
+  commitsToLeaveBehind: number;
+  filesChanged: number;
+  additions: number;
+  deletions: number;
+  files: RollbackDiffFile[];
+};
+
 export type DeploymentNode = {
   id: string;
   name: string;

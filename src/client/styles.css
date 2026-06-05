@@ -1957,7 +1957,7 @@ th {
   padding-top: 4px;
 }
 
-.rollback-list,
+.rollback-panel,
 .env-editor,
 .env-rows,
 .env-diff {
@@ -1965,27 +1965,84 @@ th {
   gap: 10px;
 }
 
-.rollback-list button {
-  min-height: 48px;
+.rollback-target-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
-  align-items: center;
-  padding: 10px 12px;
-  color: var(--ink);
+  align-items: end;
+}
+
+.rollback-preview {
+  display: grid;
+  gap: 12px;
+}
+
+.rollback-ref-grid,
+.rollback-stat-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.rollback-ref-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.rollback-stat-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.rollback-ref-grid > div,
+.rollback-stat-grid > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
   background: var(--panel-strong);
-  border: 1px solid var(--line);
-  text-align: left;
+  border: 1px solid var(--line-light);
 }
 
-.rollback-list button:hover {
-  background: var(--field);
+.rollback-ref-grid span,
+.rollback-stat-grid span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
 }
 
-.rollback-list span,
-.rollback-list strong {
+.rollback-ref-grid strong,
+.rollback-ref-grid p,
+.rollback-stat-grid strong,
+.rollback-file-row span {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rollback-ref-grid p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.rollback-files {
+  display: grid;
+  border: 1px solid var(--line-light);
+  background: var(--panel-strong);
+}
+
+.rollback-file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line-light);
+}
+
+.rollback-file-row:last-child {
+  border-bottom: 0;
+}
+
+.rollback-file-row strong {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
@@ -2520,7 +2577,10 @@ th {
   }
 
   .warning-list div,
-  .rollback-list button {
+  .rollback-target-row,
+  .rollback-ref-grid,
+  .rollback-stat-grid,
+  .rollback-file-row {
     grid-template-columns: 1fr;
   }
 }

@@ -252,6 +252,28 @@ describe("api client", () => {
       }));
     });
 
+    it("rollbackPreview sends targetRef to preview endpoint", async () => {
+      const fetchMock = mockFetch({ requestedRef: "v1.2.3" });
+
+      await api.rollbackPreview("p1", "v1.2.3");
+
+      expect(fetchMock).toHaveBeenCalledWith("/api/projects/p1/rollback/preview", expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ targetRef: "v1.2.3" })
+      }));
+    });
+
+    it("rollbackProject sends targetRef instead of deploymentId", async () => {
+      const fetchMock = mockFetch({ deployment: {} });
+
+      await api.rollbackProject("p1", "v1.2.3");
+
+      expect(fetchMock).toHaveBeenCalledWith("/api/projects/p1/rollback", expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ targetRef: "v1.2.3" })
+      }));
+    });
+
     it("stopProject sends POST to /api/projects/:id/stop", async () => {
       const fetchMock = mockFetch({ ok: true });
 

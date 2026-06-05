@@ -4,7 +4,7 @@ import { asyncRoute, actor, routeParam } from "../http-utils.js";
 import { deploymentInput, envInput, envVariablesInput, projectInput, rollbackInput } from "../route-schemas.js";
 import { recordAuditLog } from "../services/audit.js";
 import { readProjectCompose } from "../services/compose.js";
-import { rollbackTargetForProject, startDeployment } from "../services/deployments.js";
+import { previewRollbackForProject, rollbackTargetForProject, startDeployment } from "../services/deployments.js";
 import { previewEnvContent, previewProjectEnv, readProjectEnv, readProjectEnvVariables, writeProjectEnv, writeProjectEnvVariables } from "../services/project-env.js";
 import type { PendingDeploymentEnv } from "../services/deployment-runner.js";
 import { restartProjectCompose, stopProjectCompose } from "../services/project-runtime.js";
@@ -105,6 +105,16 @@ router.post(
       metadata: { trigger: "manual", targetRef: body.targetRef ?? null, reused: result.reused }
     });
     res.status(result.reused ? 200 : 202).json(result);
+  })
+);
+
+router.post(
+  "/api/projects/:id/rollback/preview",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const body = rollbackInput.parse(req.body ?? {});
+    const preview = await previewRollbackForProject(routeParam(req, "id"), body.targetRef ?? "");
+    res.json(preview);
   })
 );
 

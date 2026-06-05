@@ -3,14 +3,70 @@ import { db } from "../db/index.js";
 import { deploymentNodes, deployments, projects, type DeploymentRow, type ProjectRow } from "../db/schema.js";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
+import type { RollbackDiffFile, RollbackPreview } from "../../shared/types.js";
+import { runCommand } from "./commands.js";
 import { runProjectDeployment, type DeploymentMetadata, type PendingDeploymentEnv } from "./deployment-runner.js";
 import { createId } from "./tokens.js";
 import { deploymentEvents } from "./deployment-events.js";
+import { pathExists } from "./paths.js";
+import { gitSshEnv, resolveGitPrivateKeyPath } from "./ssh.js";
 
 const activeDeployments = new Map<string, DeploymentRow>();
 
 function now() {
   return new Date();
+}
+
+function normalizeRollbackRef(targetRef: string) {
+  const ref = targetRef.trim();
+  if (!ref) {
+    throw new Error("Enter a commit or tag to roll back to.");
+  }
+  if (ref.startsWith("-") || !/^[A-Za-z0-9._/@-]+$/.test(ref)) {
+    throw new Error("Rollback target must be a commit SHA, tag, or Git ref.");
+  }
+  return ref;
+}
+
+async function gitOutput(args: string[], cwd: string, env: NodeJS.ProcessEnv) {
+  const result = await runCommand("git", args, { cwd, env, maxOutputBytes: 256 * 1024 });
+  if (result.exitCode !== 0) {
+    throw new Error(result.output.trim() || `git ${args.join(" ")} failed.`);
+  }
+  return result.output.trim();
+}
+
+async function gitSummary(ref: string, cwd: string, env: NodeJS.ProcessEnv) {
+  const sha = await gitOutput(["rev-parse", "--verify", `${ref}^{commit}`], cwd, env);
+  const message = await gitOutput(["show", "-s", "--format=%s", sha], cwd, env).catch(() => "");
+  return { ref, sha, message };
+}
+
+function parseCount(output: string) {
+  const count = Number.parseInt(output.trim(), 10);
+  return Number.isFinite(count) ? count : 0;
+}
+
+function parseNumstat(output: string) {
+  const files: RollbackDiffFile[] = [];
+  let additions = 0;
+  let deletions = 0;
+  for (const line of output.split("\n")) {
+    if (!line.trim()) continue;
+    const [added, deleted, ...pathParts] = line.split("\t");
+    const binary = added === "-" || deleted === "-";
+    const fileAdditions = binary ? null : Number.parseInt(added, 10);
+    const fileDeletions = binary ? null : Number.parseInt(deleted, 10);
+    if (fileAdditions !== null && Number.isFinite(fileAdditions)) additions += fileAdditions;
+    if (fileDeletions !== null && Number.isFinite(fileDeletions)) deletions += fileDeletions;
+    files.push({
+      path: pathParts.join("\t"),
+      additions: fileAdditions !== null && Number.isFinite(fileAdditions) ? fileAdditions : null,
+      deletions: fileDeletions !== null && Number.isFinite(fileDeletions) ? fileDeletions : null,
+      binary
+    });
+  }
+  return { files, additions, deletions };
 }
 
 export async function appendDeploymentLog(deploymentId: string, chunk: string) {
@@ -187,7 +243,7 @@ export async function findDeploymentForNode(deploymentId: string, nodeId: string
 
 export async function rollbackTargetForProject(projectId: string, deploymentId?: string, targetRef?: string) {
   if (targetRef?.trim()) {
-    return { targetRef: targetRef.trim(), rollbackFromDeploymentId: deploymentId ?? null };
+    return { targetRef: normalizeRollbackRef(targetRef), rollbackFromDeploymentId: deploymentId ?? null };
   }
 
   if (deploymentId) {
@@ -215,6 +271,47 @@ export async function rollbackTargetForProject(projectId: string, deploymentId?:
     throw new Error("No previous successful Git deployment is available to roll back to.");
   }
   return { targetRef: ref, rollbackFromDeploymentId: target.id };
+}
+
+export async function previewRollbackForProject(projectId: string, targetRef: string): Promise<RollbackPreview> {
+  const ref = normalizeRollbackRef(targetRef);
+  const [project] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+  if (!project) {
+    throw new Error("Project not found.");
+  }
+  if (!(await pathExists(`${project.localPath}/.git`))) {
+    throw new Error("Rollback preview needs an existing Git checkout for this project.");
+  }
+
+  const privateKeyPath = await resolveGitPrivateKeyPath();
+  const env = gitSshEnv(privateKeyPath);
+  if (project.gitUrl) {
+    const fetch = await runCommand("git", ["fetch", "--all", "--tags"], { cwd: project.localPath, env, maxOutputBytes: 256 * 1024 });
+    if (fetch.exitCode !== 0) {
+      throw new Error(`Unable to fetch refs before preview: ${fetch.output.trim() || "git fetch failed."}`);
+    }
+  }
+
+  const current = await gitSummary("HEAD", project.localPath, env);
+  const target = await gitSummary(ref, project.localPath, env);
+  const [applyCount, leaveBehindCount, numstat] = await Promise.all([
+    gitOutput(["rev-list", "--count", `${current.sha}..${target.sha}`], project.localPath, env),
+    gitOutput(["rev-list", "--count", `${target.sha}..${current.sha}`], project.localPath, env),
+    gitOutput(["diff", "--numstat", "--find-renames", current.sha, target.sha], project.localPath, env)
+  ]);
+  const diff = parseNumstat(numstat);
+
+  return {
+    requestedRef: ref,
+    current,
+    target,
+    commitsToApply: parseCount(applyCount),
+    commitsToLeaveBehind: parseCount(leaveBehindCount),
+    filesChanged: diff.files.length,
+    additions: diff.additions,
+    deletions: diff.deletions,
+    files: diff.files.slice(0, 40)
+  };
 }
 
 export async function activeDeploymentFor(projectId: string) {
