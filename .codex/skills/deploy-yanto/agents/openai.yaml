@@ -1,0 +1,4 @@
+interface:
+  display_name: "Deploy Yanto"
+  short_description: "Bump and publish Yanto releases"
+  default_prompt: "Use $deploy-yanto to bump Yanto's minor version, commit release changes, and push master."

@@ -51,6 +51,7 @@ import { Button, ConfirmDialog, CustomSelect, IconButton, LoadingInline, LogView
 import { EnvEditor, type ProjectEnvState } from "./components/EnvEditor";
 import { YantoBootLoader } from "./components/YantoBootLoader";
 import { api, type AuditLogEntry, type BackupRecord, type CloudflareDnsRecordPayload, type CloudflareRoutePayload, type PostgresTarget } from "./lib/api";
+import packageJson from "../../package.json";
 
 type View = "dashboard" | "projects" | "deployments" | "containers" | "nodes" | "backups" | "dns" | "audit" | "settings";
 type ToastState = { message: string; kind?: "ok" | "error" | "loading" } | null;
@@ -66,6 +67,7 @@ type ThemeMode = "light" | "dark";
 type SetupStep = "intro" | "ssh" | "cloudflare" | "r2";
 
 const themeStorageKey = "yanto-theme";
+const appVersion = packageJson.version;
 
 const emptyProject = {
   name: "",
@@ -1353,6 +1355,7 @@ export function App() {
           ))}
         </nav>
         <div className="sidebar-footer">
+          <div className="app-version" title={`Yanto version ${appVersion}`}>v{appVersion}</div>
           <button className="theme-toggle" type="button" role="switch" aria-checked={theme === "dark"} aria-label="Toggle dark mode" title="Toggle dark mode" onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}>
             {theme === "dark" ? <Moon size={17} /> : <Sun size={17} />}
             <span className="theme-toggle-text">Dark mode</span>

@@ -293,6 +293,13 @@ button:disabled {
   gap: 10px;
 }
 
+.app-version {
+  color: var(--soft);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .theme-toggle {
   width: 100%;
   min-height: 42px;
@@ -2499,6 +2506,11 @@ th {
     margin-top: 0;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 7px;
+  }
+
+  .app-version {
+    grid-column: 1 / -1;
+    text-align: center;
   }
 
   .dashboard-main-grid,
