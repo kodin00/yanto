@@ -107,21 +107,51 @@ export const appSettings = pgTable("app_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
 });
 
+export const cloudflareClients = pgTable(
+  "cloudflare_clients",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    accountId: text("account_id").notNull(),
+    apiToken: text("api_token").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [uniqueIndex("cloudflare_clients_account_id_idx").on(table.accountId)]
+);
+
 export const cloudflareTunnels = pgTable(
   "cloudflare_tunnels",
   {
     id: text("id").primaryKey(),
+    clientId: text("client_id").notNull().references(() => cloudflareClients.id, { onDelete: "restrict" }),
     nodeId: text("node_id").notNull().references(() => deploymentNodes.id),
     cfAccountId: text("cf_account_id").notNull(),
     cfTunnelId: text("cf_tunnel_id").notNull(),
     tunnelName: text("tunnel_name").notNull(),
     tunnelToken: text("tunnel_token").notNull(),
+    dockerNetworkName: text("docker_network_name").notNull(),
     status: text("status").notNull().default("active"),
     lastHealthCheckAt: timestamp("last_health_check_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
   },
-  (table) => [uniqueIndex("cloudflare_tunnels_node_id_idx").on(table.nodeId), index("cloudflare_tunnels_cf_tunnel_id_idx").on(table.cfTunnelId)]
+  (table) => [index("cloudflare_tunnels_node_id_idx").on(table.nodeId), uniqueIndex("cloudflare_tunnels_cf_tunnel_id_idx").on(table.cfTunnelId), uniqueIndex("cloudflare_tunnels_network_idx").on(table.dockerNetworkName)]
+);
+
+export const cloudflareTunnelAssignments = pgTable(
+  "cloudflare_tunnel_assignments",
+  {
+    id: text("id").primaryKey(),
+    tunnelId: text("tunnel_id").notNull().references(() => cloudflareTunnels.id, { onDelete: "cascade" }),
+    targetType: text("target_type").notNull(),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    composeProject: text("compose_project"),
+    composeService: text("compose_service"),
+    containerName: text("container_name"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [index("cloudflare_assignments_tunnel_idx").on(table.tunnelId), uniqueIndex("cloudflare_assignments_target_idx").on(table.tunnelId, table.targetType, table.composeProject, table.composeService, table.containerName)]
 );
 
 export const cloudflareRoutes = pgTable(
@@ -129,11 +159,17 @@ export const cloudflareRoutes = pgTable(
   {
     id: text("id").primaryKey(),
     tunnelId: text("tunnel_id").notNull().references(() => cloudflareTunnels.id, { onDelete: "cascade" }),
-    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    assignmentId: text("assignment_id").references(() => cloudflareTunnelAssignments.id, { onDelete: "restrict" }),
+    zoneId: text("zone_id").notNull(),
     hostname: text("hostname").notNull(),
     serviceTarget: text("service_target").notNull(),
+    protocol: text("protocol").notNull().default("http"),
+    port: integer("port").notNull().default(80),
     noTlsVerify: boolean("no_tls_verify").notNull().default(false),
     enabled: boolean("enabled").notNull().default(true),
+    syncStatus: text("sync_status").notNull().default("active"),
+    lastError: text("last_error"),
     cfDnsRecordId: text("cf_dns_record_id"),
     lastPublishedAt: timestamp("last_published_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -141,8 +177,8 @@ export const cloudflareRoutes = pgTable(
   },
   (table) => [
     index("cloudflare_routes_tunnel_id_idx").on(table.tunnelId),
-    uniqueIndex("cloudflare_routes_project_id_unique_idx").on(table.projectId),
-    index("cloudflare_routes_hostname_idx").on(table.hostname)
+    index("cloudflare_routes_project_id_idx").on(table.projectId),
+    uniqueIndex("cloudflare_routes_hostname_idx").on(table.zoneId, table.hostname)
   ]
 );
 
@@ -157,7 +193,9 @@ export type NewBackupRow = typeof backups.$inferInsert;
 export type AuditLogRow = typeof auditLogs.$inferSelect;
 export type NewAuditLogRow = typeof auditLogs.$inferInsert;
 export type AppSettingRow = typeof appSettings.$inferSelect;
+export type CloudflareClientRow = typeof cloudflareClients.$inferSelect;
 export type CloudflareTunnelRow = typeof cloudflareTunnels.$inferSelect;
+export type CloudflareTunnelAssignmentRow = typeof cloudflareTunnelAssignments.$inferSelect;
 export type NewCloudflareTunnelRow = typeof cloudflareTunnels.$inferInsert;
 export type CloudflareRouteRow = typeof cloudflareRoutes.$inferSelect;
 export type NewCloudflareRouteRow = typeof cloudflareRoutes.$inferInsert;

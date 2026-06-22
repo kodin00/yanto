@@ -70,6 +70,32 @@ export const cloudflareRouteInput = z.object({
   nodeId: z.string().min(1).optional()
 });
 
+export const cloudflareClientInput = z.object({
+  name: z.string().min(1).max(100),
+  accountId: z.string().min(1).max(64),
+  apiToken: z.string().min(1).optional()
+});
+
+export const cloudflareTunnelInput = z.object({ clientId: z.string().min(1), name: z.string().min(1).max(100) });
+
+export const cloudflareAssignmentInput = z.object({
+  tunnelId: z.string().min(1),
+  projectId: z.string().min(1).optional(),
+  composeProject: z.string().optional(),
+  composeService: z.string().optional(),
+  containerName: z.string().optional()
+});
+
+export const cloudflareHostnameInput = z.object({
+  tunnelId: z.string().min(1),
+  assignmentId: z.string().min(1),
+  zoneId: z.string().min(1),
+  hostname: z.string().min(1).regex(/^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/, "Invalid hostname format"),
+  protocol: z.enum(["http", "https"]),
+  port: z.number().int().min(1).max(65535),
+  noTlsVerify: z.boolean().optional().default(false)
+});
+
 export const cloudflareDnsRecordInput = z.object({
   type: z.enum(["A", "AAAA", "CNAME", "TXT", "MX", "NS"]),
   name: z.string().min(1).max(255),

@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import { config } from "../config.js";
+import { encrypt, isEncrypted } from "../services/crypto.js";
 import * as schema from "./schema.js";
 
 export const pool = new pg.Pool({
@@ -157,32 +158,89 @@ export async function migrate() {
   await pool.query(`CREATE INDEX IF NOT EXISTS audit_logs_project_created_at_idx ON audit_logs(project_id, created_at DESC);`);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS cloudflare_clients (
+      id text PRIMARY KEY,
+      name text NOT NULL,
+      account_id text NOT NULL,
+      api_token text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cloudflare_clients_account_id_idx ON cloudflare_clients(account_id);`);
+
+  const legacySetting = await pool.query<{ value: string }>(`SELECT value FROM app_settings WHERE key = 'cloudflare.tunnel' LIMIT 1`);
+  if (legacySetting.rows[0]) {
+    try {
+      const legacy = JSON.parse(legacySetting.rows[0].value) as { accountId?: string; apiToken?: string };
+      if (legacy.accountId && legacy.apiToken) {
+        const token = isEncrypted(legacy.apiToken) ? legacy.apiToken : encrypt(legacy.apiToken);
+        await pool.query(
+          `INSERT INTO cloudflare_clients (id, name, account_id, api_token) VALUES ('cfc_legacy', 'Default Cloudflare', $1, $2) ON CONFLICT (account_id) DO NOTHING`,
+          [legacy.accountId, token]
+        );
+      }
+    } catch {
+      // Ignore malformed legacy settings; they remain available for manual recovery.
+    }
+  }
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS cloudflare_tunnels (
       id text PRIMARY KEY,
+      client_id text NOT NULL REFERENCES cloudflare_clients(id) ON DELETE RESTRICT,
       node_id text NOT NULL REFERENCES deployment_nodes(id),
       cf_account_id text NOT NULL,
       cf_tunnel_id text NOT NULL,
       tunnel_name text NOT NULL,
       tunnel_token text NOT NULL,
+      docker_network_name text NOT NULL,
       status text NOT NULL DEFAULT 'active',
       last_health_check_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     );
   `);
+  await pool.query(`ALTER TABLE cloudflare_tunnels ADD COLUMN IF NOT EXISTS client_id text REFERENCES cloudflare_clients(id) ON DELETE RESTRICT;`);
+  await pool.query(`ALTER TABLE cloudflare_tunnels ADD COLUMN IF NOT EXISTS docker_network_name text;`);
+  await pool.query(`UPDATE cloudflare_tunnels SET client_id = COALESCE(client_id, (SELECT id FROM cloudflare_clients WHERE account_id = cloudflare_tunnels.cf_account_id LIMIT 1));`);
+  await pool.query(`UPDATE cloudflare_tunnels SET docker_network_name = COALESCE(docker_network_name, 'yanto-cf-' || regexp_replace(lower(id), '[^a-z0-9_.-]', '-', 'g'));`);
+  await pool.query(`DROP INDEX IF EXISTS cloudflare_tunnels_node_id_idx;`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cloudflare_tunnels_node_id_idx ON cloudflare_tunnels(node_id);`);
+  await pool.query(`DROP INDEX IF EXISTS cloudflare_tunnels_cf_tunnel_id_idx;`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cloudflare_tunnels_cf_tunnel_id_idx ON cloudflare_tunnels(cf_tunnel_id);`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cloudflare_tunnels_network_idx ON cloudflare_tunnels(docker_network_name);`);
 
-  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cloudflare_tunnels_node_id_idx ON cloudflare_tunnels(node_id);`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS cloudflare_tunnels_cf_tunnel_id_idx ON cloudflare_tunnels(cf_tunnel_id);`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cloudflare_tunnel_assignments (
+      id text PRIMARY KEY,
+      tunnel_id text NOT NULL REFERENCES cloudflare_tunnels(id) ON DELETE CASCADE,
+      target_type text NOT NULL,
+      project_id text REFERENCES projects(id) ON DELETE CASCADE,
+      compose_project text,
+      compose_service text,
+      container_name text,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cloudflare_assignments_tunnel_idx ON cloudflare_tunnel_assignments(tunnel_id);`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cloudflare_assignments_target_idx ON cloudflare_tunnel_assignments(tunnel_id, target_type, compose_project, compose_service, container_name);`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS cloudflare_routes (
       id text PRIMARY KEY,
       tunnel_id text NOT NULL REFERENCES cloudflare_tunnels(id) ON DELETE CASCADE,
-      project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      project_id text REFERENCES projects(id) ON DELETE CASCADE,
+      assignment_id text REFERENCES cloudflare_tunnel_assignments(id) ON DELETE RESTRICT,
+      zone_id text NOT NULL,
       hostname text NOT NULL,
       service_target text NOT NULL,
+      protocol text NOT NULL DEFAULT 'http',
+      port integer NOT NULL DEFAULT 80,
       no_tls_verify boolean NOT NULL DEFAULT false,
       enabled boolean NOT NULL DEFAULT true,
+      sync_status text NOT NULL DEFAULT 'active',
+      last_error text,
       cf_dns_record_id text,
       last_published_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT now(),
@@ -190,7 +248,15 @@ export async function migrate() {
     );
   `);
 
+  await pool.query(`ALTER TABLE cloudflare_routes ALTER COLUMN project_id DROP NOT NULL;`);
+  await pool.query(`ALTER TABLE cloudflare_routes ADD COLUMN IF NOT EXISTS assignment_id text REFERENCES cloudflare_tunnel_assignments(id) ON DELETE RESTRICT;`);
+  await pool.query(`ALTER TABLE cloudflare_routes ADD COLUMN IF NOT EXISTS zone_id text NOT NULL DEFAULT '';`);
+  await pool.query(`ALTER TABLE cloudflare_routes ADD COLUMN IF NOT EXISTS protocol text NOT NULL DEFAULT 'http';`);
+  await pool.query(`ALTER TABLE cloudflare_routes ADD COLUMN IF NOT EXISTS port integer NOT NULL DEFAULT 80;`);
+  await pool.query(`UPDATE cloudflare_routes SET zone_id = COALESCE(NULLIF(zone_id, ''), (SELECT (value::jsonb ->> 'zoneId') FROM app_settings WHERE key = 'cloudflare.tunnel' LIMIT 1), 'legacy');`);
   await pool.query(`ALTER TABLE cloudflare_routes ADD COLUMN IF NOT EXISTS no_tls_verify boolean NOT NULL DEFAULT false;`);
+  await pool.query(`ALTER TABLE cloudflare_routes ADD COLUMN IF NOT EXISTS sync_status text NOT NULL DEFAULT 'active';`);
+  await pool.query(`ALTER TABLE cloudflare_routes ADD COLUMN IF NOT EXISTS last_error text;`);
   await pool.query(`
     DELETE FROM cloudflare_routes stale
     USING cloudflare_routes keep
@@ -199,6 +265,8 @@ export async function migrate() {
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS cloudflare_routes_tunnel_id_idx ON cloudflare_routes(tunnel_id);`);
   await pool.query(`DROP INDEX IF EXISTS cloudflare_routes_project_id_idx;`);
-  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cloudflare_routes_project_id_unique_idx ON cloudflare_routes(project_id);`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS cloudflare_routes_hostname_idx ON cloudflare_routes(hostname);`);
+  await pool.query(`DROP INDEX IF EXISTS cloudflare_routes_project_id_unique_idx;`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS cloudflare_routes_project_id_idx ON cloudflare_routes(project_id);`);
+  await pool.query(`DROP INDEX IF EXISTS cloudflare_routes_hostname_idx;`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cloudflare_routes_hostname_idx ON cloudflare_routes(zone_id, hostname);`);
 }

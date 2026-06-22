@@ -129,6 +129,8 @@ async function runLocalDeployment(project: ProjectRow, deployment: DeploymentRow
       updateMetadata: (metadata) => updateDeploymentMetadata(deployment.id, metadata)
     }, pendingEnv);
     await finishDeployment(deployment.id, "success", 0);
+    const { reconcileTunnelAssignments } = await import("./cloudflare.js");
+    await reconcileTunnelAssignments();
     logger.info("deployment succeeded", { projectId: project.id, deploymentId: deployment.id, nodeId: deployment.nodeId });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

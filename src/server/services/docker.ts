@@ -50,6 +50,10 @@ function parseLabels(labels: string | undefined) {
   return result;
 }
 
+function createdAtTime(value: string | null) {
+  return value ? Date.parse(value) : 0;
+}
+
 export function normalizeDockerCreatedAt(value: string | undefined) {
   if (!value) return null;
   const parsed = Date.parse(value);
@@ -93,29 +97,31 @@ export async function listContainers(): Promise<ContainerInfo[]> {
   const stats = await runCommand("docker", ["stats", "--no-stream", "--format", "{{json .}}"]);
   const statsById = new Map(parseJsonLines<DockerStatsLine>(stats.output).map((item) => [item.ID, item]));
 
-  const result = parseJsonLines<DockerPsLine>(ps.output).map((container) => {
-    const stat = statsById.get(container.ID);
-    const labels = parseLabels(container.Labels);
-    const composeService = labels.get("com.docker.compose.service") ?? null;
-    const row = {
-      id: container.ID,
-      name: container.Names,
-      image: container.Image,
-      status: container.Status,
-      state: container.State,
-      ports: container.Ports,
-      createdAt: normalizeDockerCreatedAt(container.CreatedAt),
-      cpuPercent: stat?.CPUPerc ?? "0%",
-      memoryUsage: stat?.MemUsage ?? "-",
-      memoryPercent: stat?.MemPerc ?? "0%",
-      composeProject: labels.get("com.docker.compose.project") ?? null,
-      composeService
-    };
-    return {
-      ...row,
-      isPostgresCandidate: isPostgresContainerLike(row)
-    };
-  });
+  const result = parseJsonLines<DockerPsLine>(ps.output)
+    .map((container) => {
+      const stat = statsById.get(container.ID);
+      const labels = parseLabels(container.Labels);
+      const composeService = labels.get("com.docker.compose.service") ?? null;
+      const row = {
+        id: container.ID,
+        name: container.Names,
+        image: container.Image,
+        status: container.Status,
+        state: container.State,
+        ports: container.Ports,
+        createdAt: normalizeDockerCreatedAt(container.CreatedAt),
+        cpuPercent: stat?.CPUPerc ?? "0%",
+        memoryUsage: stat?.MemUsage ?? "-",
+        memoryPercent: stat?.MemPerc ?? "0%",
+        composeProject: labels.get("com.docker.compose.project") ?? null,
+        composeService
+      };
+      return {
+        ...row,
+        isPostgresCandidate: isPostgresContainerLike(row)
+      };
+    })
+    .sort((a, b) => createdAtTime(b.createdAt) - createdAtTime(a.createdAt));
 
   containerCache = result;
   containerCacheTime = now;

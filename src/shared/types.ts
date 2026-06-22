@@ -145,6 +145,17 @@ export type CloudflarePublicSettings = {
   hasApiToken: boolean;
 };
 
+export type CloudflareClient = {
+  id: string;
+  name: string;
+  accountId: string;
+  hasApiToken: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CloudflareZone = { id: string; name: string; status: string };
+
 export type SetupWizardStatus = {
   completedAt: string | null;
   dismissedAt: string | null;
@@ -158,24 +169,43 @@ export type MultiNodePublicSettings = {
 
 export type CloudflareTunnel = {
   id: string;
+  clientId: string;
   nodeId: string;
   cfAccountId: string;
   cfTunnelId: string;
   tunnelName: string;
+  dockerNetworkName: string;
   status: string;
   lastHealthCheckAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
 
+export type CloudflareTunnelAssignment = {
+  id: string;
+  tunnelId: string;
+  targetType: "compose_service" | "container";
+  projectId: string | null;
+  composeProject: string | null;
+  composeService: string | null;
+  containerName: string | null;
+  createdAt: string;
+};
+
 export type CloudflareRoute = {
   id: string;
   tunnelId: string;
-  projectId: string;
+  projectId: string | null;
+  assignmentId: string | null;
+  zoneId: string;
   hostname: string;
   serviceTarget: string;
+  protocol: string;
+  port: number;
   noTlsVerify: boolean;
   enabled: boolean;
+  syncStatus: string;
+  lastError: string | null;
   cfDnsRecordId: string | null;
   lastPublishedAt: string | null;
   createdAt: string;
@@ -207,7 +237,7 @@ export type CloudflareRouteDiagnosticDnsRecord = Pick<CloudflareDnsRecord, "id" 
 export type CloudflareRouteDiagnostic = {
   routeId: string;
   tunnelId: string;
-  projectId: string;
+  projectId: string | null;
   projectName: string | null;
   hostname: string;
   serviceTarget: string;

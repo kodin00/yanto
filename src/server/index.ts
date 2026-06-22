@@ -11,7 +11,7 @@ import { migrate, pool } from "./db/index.js";
 import { logger } from "./logger.js";
 import { ensureLocalMasterNode } from "./services/nodes.js";
 import { recoverInterruptedDeployments } from "./services/deployments.js";
-import { ensureEnabledCloudflaredConnectors } from "./services/cloudflare.js";
+import { ensureEnabledCloudflaredConnectors, reconcileTunnelAssignments } from "./services/cloudflare.js";
 
 import authRouter from "./routes/auth.js";
 import projectsRouter from "./routes/projects.js";
@@ -126,10 +126,12 @@ async function main() {
   const server = app.listen(config.port, () => {
     logger.info("server started", { port: config.port });
     void ensureEnabledCloudflaredConnectors()
-      .then((result) => {
+      .then(async (result) => {
         if (result.started.length || result.failed.length) {
           logger.info("cloudflared connector reconciliation completed", result);
         }
+        const networks = await reconcileTunnelAssignments();
+        logger.info("cloudflared network reconciliation completed", networks);
       })
       .catch((error) => {
         logger.error("cloudflared connector reconciliation failed", { error: error instanceof Error ? error.message : String(error) });

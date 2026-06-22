@@ -2,8 +2,16 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const cloudflareMocks = vi.hoisted(() => ({
+  createCloudflareClient: vi.fn(),
+  createManagedHostname: vi.fn(),
+  createManagedTunnel: vi.fn(),
+  createTunnelAssignment: vi.fn(),
   createDnsRecord: vi.fn(),
   deleteDnsRecord: vi.fn(),
+  deleteCloudflareClient: vi.fn(),
+  deleteManagedHostname: vi.fn(),
+  deleteManagedTunnel: vi.fn(),
+  deleteTunnelAssignment: vi.fn(),
   deleteProjectRoute: vi.fn(),
   disableProjectRoute: vi.fn(),
   enableProjectRoute: vi.fn(),
@@ -11,14 +19,22 @@ const cloudflareMocks = vi.hoisted(() => ({
   getTunnelForNode: vi.fn(),
   getTunnelHealth: vi.fn(),
   listDnsRecords: vi.fn(),
+  listCloudflareClients: vi.fn(),
+  listCloudflareZones: vi.fn(),
+  listManagedHostnames: vi.fn(),
+  listPublicTunnels: vi.fn(),
   listRouteDiagnostics: vi.fn(),
   listRoutesForProject: vi.fn(),
   listTunnels: vi.fn(),
+  listTunnelAssignments: vi.fn(),
   publishProjectRoute: vi.fn(),
   restartCloudflared: vi.fn(),
+  retryManagedHostname: vi.fn(),
   startCloudflared: vi.fn(),
   stopCloudflared: vi.fn(),
-  updateDnsRecord: vi.fn()
+  updateDnsRecord: vi.fn(),
+  updateCloudflareClient: vi.fn(),
+  validateCloudflareClient: vi.fn()
 }));
 
 vi.mock("../src/server/auth.js", () => ({
@@ -97,5 +113,14 @@ describe("cloudflare routes", () => {
 
     expect(response.status).toBe(401);
     expect(response.body).toEqual({ message: "Authentication required." });
+  });
+
+  it("returns only the public tunnel representation", async () => {
+    const tunnels = [{ id: "cft_1", tunnelName: "Acme", dockerNetworkName: "yanto-cf-cft_1" }];
+    cloudflareMocks.listPublicTunnels.mockResolvedValue(tunnels);
+    const response = await request("/api/cloudflare/tunnels", "ok");
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(tunnels);
+    expect(cloudflareMocks.listPublicTunnels).toHaveBeenCalledOnce();
   });
 });

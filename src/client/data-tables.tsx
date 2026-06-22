@@ -209,13 +209,16 @@ export function ContainerGroups({
   onConfirm: (confirm: LoadingConfirmState) => void;
   onReload: () => Promise<void>;
 }) {
+  const createdAtTime = (container: ContainerInfo) => container.createdAt ? Date.parse(container.createdAt) : 0;
   const groups = Array.from(
     containers.reduce((map, container) => {
       const key = container.composeProject || "standalone";
       map.set(key, [...(map.get(key) ?? []), container]);
       return map;
     }, new Map<string, ContainerInfo[]>())
-  ).sort(([a], [b]) => a.localeCompare(b));
+  )
+    .map(([group, rows]) => [group, [...rows].sort((a, b) => createdAtTime(b) - createdAtTime(a))] as const)
+    .sort(([, aRows], [, bRows]) => createdAtTime(bRows[0]) - createdAtTime(aRows[0]));
 
   if (loading && !groups.length) {
     return <p className="muted">Loading containers...</p>;

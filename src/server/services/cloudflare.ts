@@ -2,8 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { appSettings, cloudflareRoutes, cloudflareTunnels, projects } from "../db/schema.js";
-import type { CloudflareRouteRow, CloudflareTunnelRow, ProjectRow } from "../db/schema.js";
+import { appSettings, cloudflareClients, cloudflareRoutes, cloudflareTunnelAssignments, cloudflareTunnels, projects } from "../db/schema.js";
+import type { CloudflareClientRow, CloudflareRouteRow, CloudflareTunnelAssignmentRow, CloudflareTunnelRow, ProjectRow } from "../db/schema.js";
 import { config } from "../config.js";
 import { createId } from "./tokens.js";
 import { runCommand } from "./commands.js";
@@ -11,7 +11,7 @@ import { getProject } from "./projects.js";
 import { encrypt, decrypt, isEncrypted } from "./crypto.js";
 import { normalizeString } from "./utils.js";
 import { classifyRouteDiagnostic } from "./cloudflare-diagnostics.js";
-import type { CloudflareDnsRecord, CloudflareDnsRecordType, CloudflareRouteDiagnostic, CloudflareRouteDiagnosticDnsRecord, CloudflareRouteReachabilityStatus } from "../../shared/types.js";
+import type { CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflareRouteDiagnostic, CloudflareRouteDiagnosticDnsRecord, CloudflareRouteReachabilityStatus, CloudflareZone } from "../../shared/types.js";
 
 // --- Cloudflare Settings (app_settings key: "cloudflare.tunnel") ---
 
@@ -22,6 +22,8 @@ type CloudflareSettings = {
   zoneId: string;
   apiToken: string;
 };
+
+type CloudflareAuth = Pick<CloudflareSettings, "apiToken">;
 
 const emptyCloudflareSettings: CloudflareSettings = {
   accountId: "",
@@ -46,8 +48,12 @@ async function dockerNetworkExists(networkName: string) {
   return result.exitCode === 0;
 }
 
-async function cloudflaredNetworkNames(nodeId: string) {
-  const containerName = `yanto-cloudflared-${nodeId}`;
+function cloudflaredContainerName(tunnelId: string) {
+  return `yanto-cloudflared-${tunnelId}`;
+}
+
+async function cloudflaredNetworkNames(tunnelId: string) {
+  const containerName = cloudflaredContainerName(tunnelId);
   const result = await runCommand("docker", ["inspect", containerName, "--format", "{{json .NetworkSettings.Networks}}"]);
   if (result.exitCode !== 0 || !result.output.trim()) return new Set<string>();
 
@@ -70,7 +76,7 @@ function parseCloudflareSettings(value: string | undefined): CloudflareSettings 
     return {
       accountId: normalizeString(parsed.accountId),
       zoneId: normalizeString(parsed.zoneId),
-      apiToken: normalizeString(parsed.apiToken)
+      apiToken: parsed.apiToken && isEncrypted(parsed.apiToken) ? decrypt(parsed.apiToken) : normalizeString(parsed.apiToken)
     };
   } catch {
     return emptyCloudflareSettings;
@@ -101,11 +107,20 @@ export async function saveCloudflareSettings(input: Partial<CloudflareSettings>)
 
   await db
     .insert(appSettings)
-    .values({ key: cloudflareSettingsKey, value: JSON.stringify(next), updatedAt: new Date() })
+    .values({ key: cloudflareSettingsKey, value: JSON.stringify({ ...next, apiToken: next.apiToken ? encrypt(next.apiToken) : "" }), updatedAt: new Date() })
     .onConflictDoUpdate({
       target: appSettings.key,
-      set: { value: JSON.stringify(next), updatedAt: new Date() }
+      set: { value: JSON.stringify({ ...next, apiToken: next.apiToken ? encrypt(next.apiToken) : "" }), updatedAt: new Date() }
     });
+
+  if (next.accountId && next.apiToken) {
+    await db.insert(cloudflareClients).values({
+      id: createId("cfc"), name: "Default Cloudflare", accountId: next.accountId, apiToken: encrypt(next.apiToken)
+    }).onConflictDoUpdate({
+      target: cloudflareClients.accountId,
+      set: { apiToken: encrypt(next.apiToken), updatedAt: new Date() }
+    });
+  }
 
   return publicCloudflareSettings();
 }
@@ -120,7 +135,7 @@ type CfApiResponse<T> = {
   errors?: { code: number; message: string }[];
 };
 
-async function cfFetch<T>(settings: CloudflareSettings, apiPath: string, init?: RequestInit): Promise<T> {
+async function cfFetch<T>(settings: CloudflareAuth, apiPath: string, init?: RequestInit): Promise<T> {
   if (!settings.apiToken) {
     throw new Error("Cloudflare API token is not configured.");
   }
@@ -180,6 +195,74 @@ export async function validateCloudflareSettings(input: Partial<CloudflareSettin
   return { ok: true, accountName: account.name, zoneName };
 }
 
+function decryptClient(row: CloudflareClientRow): CloudflareClientRow {
+  return { ...row, apiToken: isEncrypted(row.apiToken) ? decrypt(row.apiToken) : row.apiToken };
+}
+
+function publicClient(row: CloudflareClientRow): CloudflareClient {
+  return {
+    id: row.id,
+    name: row.name,
+    accountId: row.accountId,
+    hasApiToken: Boolean(row.apiToken),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString()
+  };
+}
+
+async function requireClient(clientId: string) {
+  const [row] = await db.select().from(cloudflareClients).where(eq(cloudflareClients.id, clientId)).limit(1);
+  if (!row) throw new Error("Cloudflare client not found.");
+  return decryptClient(row);
+}
+
+export async function listCloudflareClients() {
+  return (await db.select().from(cloudflareClients)).map(publicClient);
+}
+
+export async function validateCloudflareClient(input: { accountId: string; apiToken: string }) {
+  const accountId = normalizeString(input.accountId);
+  const apiToken = normalizeString(input.apiToken);
+  if (!accountId || !apiToken) throw new Error("Account ID and API token are required.");
+  await cfFetch<unknown[]>({ apiToken }, `/accounts/${accountId}/cfd_tunnel?per_page=1`);
+  const zones = await cfFetch<{ id: string; name: string; status: string }[]>({ apiToken }, `/zones?account.id=${encodeURIComponent(accountId)}&per_page=50`);
+  return { ok: true, accountName: accountId, zones };
+}
+
+export async function createCloudflareClient(input: { name: string; accountId: string; apiToken: string }) {
+  await validateCloudflareClient(input);
+  const [row] = await db.insert(cloudflareClients).values({
+    id: createId("cfc"),
+    name: normalizeString(input.name),
+    accountId: normalizeString(input.accountId),
+    apiToken: encrypt(normalizeString(input.apiToken))
+  }).returning();
+  return publicClient(row);
+}
+
+export async function updateCloudflareClient(clientId: string, input: { name?: string; accountId?: string; apiToken?: string }) {
+  const current = await requireClient(clientId);
+  const next = {
+    name: normalizeString(input.name) || current.name,
+    accountId: normalizeString(input.accountId) || current.accountId,
+    apiToken: normalizeString(input.apiToken) || current.apiToken
+  };
+  await validateCloudflareClient(next);
+  const [row] = await db.update(cloudflareClients).set({ name: next.name, accountId: next.accountId, apiToken: encrypt(next.apiToken), updatedAt: new Date() }).where(eq(cloudflareClients.id, clientId)).returning();
+  return publicClient(row);
+}
+
+export async function deleteCloudflareClient(clientId: string) {
+  const owned = await db.select({ id: cloudflareTunnels.id }).from(cloudflareTunnels).where(eq(cloudflareTunnels.clientId, clientId)).limit(1);
+  if (owned.length) throw new Error("Delete this client's tunnels first.");
+  await db.delete(cloudflareClients).where(eq(cloudflareClients.id, clientId));
+}
+
+export async function listCloudflareZones(clientId: string): Promise<CloudflareZone[]> {
+  const client = await requireClient(clientId);
+  return cfFetch<CloudflareZone[]>({ apiToken: client.apiToken }, `/zones?account.id=${encodeURIComponent(client.accountId)}&per_page=50`);
+}
+
 // --- Tunnel Management ---
 
 export async function getTunnelForNode(nodeId: string): Promise<CloudflareTunnelRow | undefined> {
@@ -190,6 +273,30 @@ export async function getTunnelForNode(nodeId: string): Promise<CloudflareTunnel
 export async function listTunnels(): Promise<CloudflareTunnelRow[]> {
   const rows = await db.select().from(cloudflareTunnels);
   return rows.map(decryptTunnelRow);
+}
+
+export function publicTunnel(tunnel: CloudflareTunnelRow) {
+  return {
+    id: tunnel.id,
+    clientId: tunnel.clientId,
+    nodeId: tunnel.nodeId,
+    cfAccountId: tunnel.cfAccountId,
+    cfTunnelId: tunnel.cfTunnelId,
+    tunnelName: tunnel.tunnelName,
+    dockerNetworkName: tunnel.dockerNetworkName,
+    status: tunnel.status,
+    lastHealthCheckAt: tunnel.lastHealthCheckAt,
+    createdAt: tunnel.createdAt,
+    updatedAt: tunnel.updatedAt
+  };
+}
+
+export async function listPublicTunnels() {
+  return (await db.select().from(cloudflareTunnels)).map(publicTunnel);
+}
+
+export async function listManagedHostnames() {
+  return db.select().from(cloudflareRoutes);
 }
 
 export async function listTunnelsWithEnabledRoutes(): Promise<CloudflareTunnelRow[]> {
@@ -206,12 +313,12 @@ export async function connectCloudflaredToProjectNetwork(tunnel: CloudflareTunne
   }
 
   await ensureCloudflaredRunning(tunnel);
-  const currentNetworks = await cloudflaredNetworkNames(tunnel.nodeId);
+  const currentNetworks = await cloudflaredNetworkNames(tunnel.id);
   if (currentNetworks.has(networkName)) {
     return true;
   }
 
-  const containerName = `yanto-cloudflared-${tunnel.nodeId}`;
+  const containerName = cloudflaredContainerName(tunnel.id);
   const result = await runCommand("docker", ["network", "connect", networkName, containerName]);
   if (result.exitCode !== 0 && !result.output.toLowerCase().includes("already exists")) {
     throw new Error(result.output.trim() || `Unable to connect cloudflared to Docker network ${networkName}.`);
@@ -219,51 +326,70 @@ export async function connectCloudflaredToProjectNetwork(tunnel: CloudflareTunne
   return true;
 }
 
-export async function ensureTunnelForNode(nodeId: string): Promise<CloudflareTunnelRow> {
-  const existing = await getTunnelForNode(nodeId);
-  if (existing) return existing;
-
-  const settings = await getStoredCloudflareSettings();
-  if (!settings.apiToken || !settings.accountId) {
-    throw new Error("Configure Cloudflare settings before creating a tunnel.");
-  }
-
-  const tunnelName = `yanto-${nodeId}`;
-  type CfTunnelResult = { id: string; name: string };
-  const result = await cfFetch<CfTunnelResult>(settings, `/accounts/${settings.accountId}/cfd_tunnel`, {
+export async function createManagedTunnel(input: { clientId: string; name: string }) {
+  const client = await requireClient(input.clientId);
+  const tunnelName = normalizeString(input.name);
+  if (!tunnelName) throw new Error("Tunnel name is required.");
+  const result = await cfFetch<{ id: string; name: string }>({ apiToken: client.apiToken }, `/accounts/${client.accountId}/cfd_tunnel`, {
     method: "POST",
     body: JSON.stringify({ name: tunnelName, config_src: "cloudflare" })
   });
-
-  type CfTokenResult = string;
-  const token = await cfFetch<CfTokenResult>(settings, `/accounts/${settings.accountId}/cfd_tunnel/${result.id}/token`);
-
+  const token = await cfFetch<string>({ apiToken: client.apiToken }, `/accounts/${client.accountId}/cfd_tunnel/${result.id}/token`);
   const id = createId("cft");
+  const dockerNetworkName = `yanto-cf-${id.toLowerCase().replace(/[^a-z0-9_.-]/g, "-")}`;
   try {
-    const [row] = await db
-      .insert(cloudflareTunnels)
-      .values({
-        id,
-        nodeId,
-        cfAccountId: settings.accountId,
-        cfTunnelId: result.id,
-        tunnelName: result.name,
-        tunnelToken: encrypt(token),
-        status: "active"
-      })
-      .returning();
-
-    return decryptTunnelRow(row);
+    await runRequiredDocker(["network", "create", "--label", `yanto.cloudflared.tunnel=${id}`, dockerNetworkName]);
+    const [row] = await db.insert(cloudflareTunnels).values({
+      id,
+      clientId: client.id,
+      nodeId: config.localNodeId,
+      cfAccountId: client.accountId,
+      cfTunnelId: result.id,
+      tunnelName: result.name,
+      tunnelToken: encrypt(token),
+      dockerNetworkName,
+      status: "active"
+    }).returning();
+    const decrypted = decryptTunnelRow(row);
+    await putTunnelConfig(decrypted);
+    await startCloudflared(decrypted);
+    return row;
   } catch (error) {
-    // Unique constraint violation — another concurrent call created the tunnel
-    const concurrent = await getTunnelForNode(nodeId);
-    if (concurrent) return concurrent;
+    await runCommand("docker", ["network", "rm", dockerNetworkName]);
+    await cfFetch({ apiToken: client.apiToken }, `/accounts/${client.accountId}/cfd_tunnel/${result.id}`, { method: "DELETE" }).catch(() => undefined);
     throw error;
   }
 }
 
+export async function deleteManagedTunnel(tunnelId: string, force = false) {
+  const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, tunnelId)).limit(1);
+  if (!tunnel) throw new Error("Tunnel not found.");
+  const [routes, assignments] = await Promise.all([
+    db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.tunnelId, tunnelId)),
+    db.select().from(cloudflareTunnelAssignments).where(eq(cloudflareTunnelAssignments.tunnelId, tunnelId))
+  ]);
+  if (!force && (routes.length || assignments.length)) throw new Error("Remove hostnames and network assignments first, or force delete the tunnel.");
+  const client = await requireClient(tunnel.clientId);
+  if (force) {
+    for (const route of routes) await deleteDnsRecordForRoute(client, route).catch(() => undefined);
+  }
+  await runCommand("docker", ["rm", "-f", cloudflaredContainerName(tunnel.id)]);
+  if (force) await disconnectAllFromNetwork(tunnel.dockerNetworkName);
+  await runCommand("docker", ["network", "rm", tunnel.dockerNetworkName]);
+  await cfFetch({ apiToken: client.apiToken }, `/accounts/${client.accountId}/cfd_tunnel/${tunnel.cfTunnelId}`, { method: "DELETE" });
+  await db.delete(cloudflareTunnels).where(eq(cloudflareTunnels.id, tunnel.id));
+}
+
+export async function ensureTunnelForNode(nodeId: string): Promise<CloudflareTunnelRow> {
+  const existing = await getTunnelForNode(nodeId);
+  if (existing) return existing;
+  const [client] = await db.select().from(cloudflareClients).limit(1);
+  if (!client) throw new Error("Add a Cloudflare client before creating a tunnel.");
+  return decryptTunnelRow(await createManagedTunnel({ clientId: client.id, name: `yanto-${nodeId}` }));
+}
+
 export async function putTunnelConfig(tunnel: CloudflareTunnelRow): Promise<void> {
-  const settings = await getStoredCloudflareSettings();
+  const client = await requireClient(tunnel.clientId);
   const routes = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.tunnelId, tunnel.id));
 
   const enabledRoutes = routes.filter((r) => r.enabled);
@@ -276,10 +402,173 @@ export async function putTunnelConfig(tunnel: CloudflareTunnelRow): Promise<void
     { service: "http_status:404" }
   ];
 
-  await cfFetch(settings, `/accounts/${settings.accountId}/cfd_tunnel/${tunnel.cfTunnelId}/configurations`, {
+  await cfFetch({ apiToken: client.apiToken }, `/accounts/${client.accountId}/cfd_tunnel/${tunnel.cfTunnelId}/configurations`, {
     method: "PUT",
     body: JSON.stringify({ config: { ingress } })
   });
+}
+
+function assignmentHost(assignment: CloudflareTunnelAssignmentRow) {
+  if (assignment.targetType === "compose_service") {
+    return `${assignment.composeProject}-${assignment.composeService}`.toLowerCase().replace(/[^a-z0-9_.-]/g, "-");
+  }
+  return assignment.containerName ?? "";
+}
+
+async function assignmentContainerIds(assignment: CloudflareTunnelAssignmentRow) {
+  const args = ["ps", "-a", "--format", "{{.ID}}"];
+  if (assignment.targetType === "compose_service") {
+    args.splice(2, 0, "--filter", `label=com.docker.compose.project=${assignment.composeProject}`, "--filter", `label=com.docker.compose.service=${assignment.composeService}`);
+  } else {
+    args.splice(2, 0, "--filter", `name=^/${assignment.containerName}$`);
+  }
+  const result = await runCommand("docker", args);
+  return result.output.trim().split("\n").filter(Boolean);
+}
+
+async function connectAssignment(tunnel: CloudflareTunnelRow, assignment: CloudflareTunnelAssignmentRow) {
+  const ids = await assignmentContainerIds(assignment);
+  for (const id of ids) {
+    const args = ["network", "connect"];
+    if (assignment.targetType === "compose_service") args.push("--alias", assignmentHost(assignment));
+    args.push(tunnel.dockerNetworkName, id);
+    const result = await runCommand("docker", args);
+    if (result.exitCode !== 0 && !result.output.toLowerCase().includes("already exists")) throw new Error(result.output.trim() || "Unable to attach container to tunnel network.");
+  }
+  return ids.length;
+}
+
+async function disconnectAssignment(tunnel: CloudflareTunnelRow, assignment: CloudflareTunnelAssignmentRow) {
+  for (const id of await assignmentContainerIds(assignment)) await runCommand("docker", ["network", "disconnect", tunnel.dockerNetworkName, id]);
+}
+
+async function disconnectAllFromNetwork(networkName: string) {
+  const result = await runCommand("docker", ["network", "inspect", networkName, "--format", "{{range $id, $_ := .Containers}}{{$id}} {{end}}"]);
+  for (const id of result.output.trim().split(/\s+/).filter(Boolean)) await runCommand("docker", ["network", "disconnect", "-f", networkName, id]);
+}
+
+export async function listTunnelAssignments(tunnelId?: string) {
+  return tunnelId
+    ? db.select().from(cloudflareTunnelAssignments).where(eq(cloudflareTunnelAssignments.tunnelId, tunnelId))
+    : db.select().from(cloudflareTunnelAssignments);
+}
+
+export async function createTunnelAssignment(input: { tunnelId: string; projectId?: string; composeProject?: string; composeService?: string; containerName?: string }) {
+  const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, input.tunnelId)).limit(1);
+  if (!tunnel) throw new Error("Tunnel not found.");
+  const composeProject = normalizeString(input.composeProject);
+  const composeService = normalizeString(input.composeService);
+  const containerName = normalizeString(input.containerName);
+  const targetType = composeProject && composeService ? "compose_service" : "container";
+  if (targetType === "container" && !containerName) throw new Error("Choose a Compose service or container.");
+  const [assignment] = await db.insert(cloudflareTunnelAssignments).values({
+    id: createId("cfa"), tunnelId: tunnel.id, targetType, projectId: input.projectId || null,
+    composeProject: composeProject || null, composeService: composeService || null, containerName: containerName || null
+  }).returning();
+  try {
+    await connectAssignment(tunnel, assignment);
+    return assignment;
+  } catch (error) {
+    await db.delete(cloudflareTunnelAssignments).where(eq(cloudflareTunnelAssignments.id, assignment.id));
+    throw error;
+  }
+}
+
+export async function deleteTunnelAssignment(assignmentId: string) {
+  const [assignment] = await db.select().from(cloudflareTunnelAssignments).where(eq(cloudflareTunnelAssignments.id, assignmentId)).limit(1);
+  if (!assignment) throw new Error("Network assignment not found.");
+  const route = await db.select({ id: cloudflareRoutes.id }).from(cloudflareRoutes).where(eq(cloudflareRoutes.assignmentId, assignmentId)).limit(1);
+  if (route.length) throw new Error("Remove hostnames using this assignment first.");
+  const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, assignment.tunnelId)).limit(1);
+  if (tunnel) await disconnectAssignment(tunnel, assignment);
+  await db.delete(cloudflareTunnelAssignments).where(eq(cloudflareTunnelAssignments.id, assignmentId));
+}
+
+export async function reconcileTunnelAssignments() {
+  const tunnels = await listTunnels();
+  const assignments = await db.select().from(cloudflareTunnelAssignments);
+  let connected = 0;
+  for (const tunnel of tunnels) {
+    if (!(await dockerNetworkExists(tunnel.dockerNetworkName))) await runRequiredDocker(["network", "create", "--label", `yanto.cloudflared.tunnel=${tunnel.id}`, tunnel.dockerNetworkName]);
+    await ensureCloudflaredRunning(tunnel);
+    for (const assignment of assignments.filter((item) => item.tunnelId === tunnel.id)) connected += await connectAssignment(tunnel, assignment);
+  }
+  return { connected };
+}
+
+async function upsertDnsRecordForRoute(client: CloudflareClientRow, tunnel: CloudflareTunnelRow, route: CloudflareRouteRow) {
+  const records = await cfFetch<{ id: string; type: string; name: string; content: string }[]>({ apiToken: client.apiToken }, `/zones/${route.zoneId}/dns_records?type=CNAME&name=${encodeURIComponent(route.hostname)}`);
+  const target = `${tunnel.cfTunnelId}.cfargotunnel.com`;
+  const existing = records.find((record) => record.type === "CNAME" && record.name === route.hostname);
+  if (existing) {
+    if (existing.content !== target) await cfFetch({ apiToken: client.apiToken }, `/zones/${route.zoneId}/dns_records/${existing.id}`, { method: "PUT", body: JSON.stringify({ type: "CNAME", name: route.hostname, content: target, proxied: true }) });
+    return existing.id;
+  }
+  const created = await cfFetch<{ id: string }>({ apiToken: client.apiToken }, `/zones/${route.zoneId}/dns_records`, { method: "POST", body: JSON.stringify({ type: "CNAME", name: route.hostname, content: target, proxied: true }) });
+  return created.id;
+}
+
+async function deleteDnsRecordForRoute(client: CloudflareClientRow, route: CloudflareRouteRow) {
+  if (route.cfDnsRecordId) await cfFetch({ apiToken: client.apiToken }, `/zones/${route.zoneId}/dns_records/${route.cfDnsRecordId}`, { method: "DELETE" });
+}
+
+export async function createManagedHostname(input: { tunnelId: string; assignmentId: string; zoneId: string; hostname: string; protocol: "http" | "https"; port: number; noTlsVerify?: boolean }) {
+  const [[tunnel], [assignment]] = await Promise.all([
+    db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, input.tunnelId)).limit(1),
+    db.select().from(cloudflareTunnelAssignments).where(eq(cloudflareTunnelAssignments.id, input.assignmentId)).limit(1)
+  ]);
+  if (!tunnel || !assignment || assignment.tunnelId !== tunnel.id) throw new Error("The hostname target must be assigned to this tunnel.");
+  if (!(await assignmentContainerIds(assignment)).length) throw new Error("The assigned target container is not available.");
+  const hostname = normalizeString(input.hostname).toLowerCase();
+  const serviceTarget = `${input.protocol}://${assignmentHost(assignment)}:${input.port}`;
+  const [route] = await db.insert(cloudflareRoutes).values({
+    id: createId("cfr"), tunnelId: tunnel.id, projectId: assignment.projectId, assignmentId: assignment.id,
+    zoneId: input.zoneId, hostname, serviceTarget, protocol: input.protocol, port: input.port,
+    noTlsVerify: input.protocol === "https" && Boolean(input.noTlsVerify), enabled: true
+  }).returning();
+  const client = await requireClient(tunnel.clientId);
+  try {
+    await putTunnelConfig(tunnel);
+    const cfDnsRecordId = await upsertDnsRecordForRoute(client, tunnel, route);
+    const [updated] = await db.update(cloudflareRoutes).set({ cfDnsRecordId, syncStatus: "active", lastError: null, lastPublishedAt: new Date(), updatedAt: new Date() }).where(eq(cloudflareRoutes.id, route.id)).returning();
+    return updated;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Cloudflare synchronization failed.";
+    await db.update(cloudflareRoutes).set({ enabled: false, syncStatus: "error", lastError: message, updatedAt: new Date() }).where(eq(cloudflareRoutes.id, route.id));
+    await putTunnelConfig(tunnel).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function retryManagedHostname(routeId: string) {
+  const [route] = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.id, routeId)).limit(1);
+  if (!route) throw new Error("Hostname not found.");
+  const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, route.tunnelId)).limit(1);
+  if (!tunnel) throw new Error("Tunnel not found.");
+  const client = await requireClient(tunnel.clientId);
+  await db.update(cloudflareRoutes).set({ enabled: true, syncStatus: "pending", lastError: null, updatedAt: new Date() }).where(eq(cloudflareRoutes.id, route.id));
+  try {
+    await putTunnelConfig(tunnel);
+    const cfDnsRecordId = await upsertDnsRecordForRoute(client, tunnel, route);
+    const [updated] = await db.update(cloudflareRoutes).set({ cfDnsRecordId, syncStatus: "active", lastError: null, lastPublishedAt: new Date(), updatedAt: new Date() }).where(eq(cloudflareRoutes.id, route.id)).returning();
+    return updated;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Cloudflare synchronization failed.";
+    await db.update(cloudflareRoutes).set({ enabled: false, syncStatus: "error", lastError: message, updatedAt: new Date() }).where(eq(cloudflareRoutes.id, route.id));
+    await putTunnelConfig(tunnel).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function deleteManagedHostname(routeId: string) {
+  const [route] = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.id, routeId)).limit(1);
+  if (!route) throw new Error("Hostname not found.");
+  const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, route.tunnelId)).limit(1);
+  if (!tunnel) throw new Error("Tunnel not found.");
+  const client = await requireClient(tunnel.clientId);
+  await deleteDnsRecordForRoute(client, route);
+  await db.delete(cloudflareRoutes).where(eq(cloudflareRoutes.id, route.id));
+  await putTunnelConfig(tunnel);
 }
 
 type CfDnsRecord = { id: string };
@@ -435,11 +724,11 @@ export async function listRouteDiagnostics(): Promise<CloudflareRouteDiagnostic[
     dnsRecords = null;
   }
 
-  const runtimeFor = (nodeId: string) => {
-    if (!runtimeByNodeId.has(nodeId)) {
-      runtimeByNodeId.set(nodeId, getCloudflaredStatus(nodeId).catch(() => null));
+  const runtimeFor = (tunnelId: string) => {
+    if (!runtimeByNodeId.has(tunnelId)) {
+      runtimeByNodeId.set(tunnelId, getCloudflaredStatus(tunnelId).catch(() => null));
     }
-    return runtimeByNodeId.get(nodeId)!;
+    return runtimeByNodeId.get(tunnelId)!;
   };
   const healthFor = (tunnel: CloudflareTunnelRow) => {
     if (!healthByTunnelId.has(tunnel.id)) {
@@ -450,12 +739,12 @@ export async function listRouteDiagnostics(): Promise<CloudflareRouteDiagnostic[
 
   return Promise.all(routes.map(async (route) => {
     const tunnel = tunnelById.get(route.tunnelId);
-    const project = projectById.get(route.projectId);
+    const project = route.projectId ? projectById.get(route.projectId) : undefined;
     const expectedDnsTarget = tunnel ? `${tunnel.cfTunnelId}.cfargotunnel.com` : null;
     const actualDnsRecords = (dnsRecords ?? [])
       .filter((record) => record.name.toLowerCase() === route.hostname.toLowerCase())
       .map(diagnosticDnsRecord);
-    const [runtime, health] = tunnel ? await Promise.all([runtimeFor(tunnel.nodeId), healthFor(tunnel)]) : [null, null];
+    const [runtime, health] = tunnel ? await Promise.all([runtimeFor(tunnel.id), healthFor(tunnel)]) : [null, null];
     const preliminary = classifyRouteDiagnostic({
       routeEnabled: route.enabled,
       hostname: route.hostname,
@@ -580,8 +869,12 @@ export async function publishProjectRoute(projectId: string, hostname: string, s
         id: routeId,
         tunnelId: tunnel.id,
         projectId,
+        assignmentId: null,
+        zoneId: settings.zoneId || "legacy",
         hostname,
         serviceTarget,
+        protocol: serviceTarget.startsWith("https://") ? "https" : "http",
+        port: Number(serviceTarget.match(/:(\d+)$/)?.[1] ?? 80),
         noTlsVerify: normalizedNoTlsVerify,
         enabled: true
       })
@@ -629,7 +922,7 @@ export async function enableProjectRoute(routeId: string): Promise<CloudflareRou
   await db.update(cloudflareRoutes).set({ enabled: true, updatedAt: new Date() }).where(eq(cloudflareRoutes.id, routeId));
 
   const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, route.tunnelId)).limit(1);
-  const project = await getProject(route.projectId);
+  const project = route.projectId ? await getProject(route.projectId) : undefined;
   if (tunnel) {
     const decrypted = decryptTunnelRow(tunnel);
     await putTunnelConfig(decrypted);
@@ -659,24 +952,28 @@ export async function deleteProjectRoute(routeId: string): Promise<void> {
 // --- Runtime (cloudflared Docker container) ---
 
 export async function startCloudflared(tunnel: CloudflareTunnelRow): Promise<void> {
-  const containerName = `yanto-cloudflared-${tunnel.nodeId}`;
+  const containerName = cloudflaredContainerName(tunnel.id);
+  const legacyContainerName = `yanto-cloudflared-${tunnel.nodeId}`;
 
   // Remove stale container if it exists (ignore error if it doesn't)
   try {
     await runCommand("docker", ["rm", "-f", containerName]);
+    if (legacyContainerName !== containerName) await runCommand("docker", ["rm", "-f", legacyContainerName]);
   } catch {
     // container doesn't exist, that's fine
   }
 
   await fs.promises.mkdir(config.cloudflaredDir, { recursive: true, mode: 0o700 });
-  const envPath = path.join(config.cloudflaredDir, `${tunnel.nodeId}.env`);
+  if (!(await dockerNetworkExists(tunnel.dockerNetworkName))) await runRequiredDocker(["network", "create", "--label", `yanto.cloudflared.tunnel=${tunnel.id}`, tunnel.dockerNetworkName]);
+  const envPath = path.join(config.cloudflaredDir, `${tunnel.id}.env`);
   await fs.promises.writeFile(envPath, `TUNNEL_TOKEN=${tunnel.tunnelToken}\n`, { mode: 0o600 });
 
   await runRequiredDocker([
     "run", "-d",
     "--name", containerName,
     "--restart", "unless-stopped",
-    "--label", `yanto.cloudflared.node=${tunnel.nodeId}`,
+    "--label", `yanto.cloudflared.tunnel=${tunnel.id}`,
+    "--network", tunnel.dockerNetworkName,
     "--env-file", envPath,
     "cloudflare/cloudflared:latest",
     "tunnel", "--no-autoupdate", "run"
@@ -686,18 +983,19 @@ export async function startCloudflared(tunnel: CloudflareTunnelRow): Promise<voi
 }
 
 export async function stopCloudflared(nodeId: string): Promise<void> {
-  const containerName = `yanto-cloudflared-${nodeId}`;
+  const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, nodeId)).limit(1);
+  const resolved = tunnel ?? (await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.nodeId, nodeId)).limit(1))[0];
+  if (!resolved) throw new Error("Tunnel not found.");
+  const containerName = cloudflaredContainerName(resolved.id);
   await runRequiredDocker(["stop", containerName]);
   await runRequiredDocker(["rm", containerName]);
 
-  const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.nodeId, nodeId)).limit(1);
-  if (tunnel) {
-    await db.update(cloudflareTunnels).set({ status: "stopped", updatedAt: new Date() }).where(eq(cloudflareTunnels.id, tunnel.id));
-  }
+  await db.update(cloudflareTunnels).set({ status: "stopped", updatedAt: new Date() }).where(eq(cloudflareTunnels.id, resolved.id));
 }
 
 export async function restartCloudflared(nodeId: string): Promise<void> {
-  const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.nodeId, nodeId)).limit(1);
+  const [byId] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, nodeId)).limit(1);
+  const tunnel = byId ?? (await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.nodeId, nodeId)).limit(1))[0];
   if (!tunnel) throw new Error("No tunnel found for this node.");
 
   try {
@@ -709,7 +1007,10 @@ export async function restartCloudflared(nodeId: string): Promise<void> {
 }
 
 export async function getCloudflaredStatus(nodeId: string): Promise<{ running: boolean; containerId?: string; status?: string }> {
-  const containerName = `yanto-cloudflared-${nodeId}`;
+  const [byId] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, nodeId)).limit(1);
+  const tunnel = byId ?? (await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.nodeId, nodeId)).limit(1))[0];
+  if (!tunnel) return { running: false };
+  const containerName = cloudflaredContainerName(tunnel.id);
   const result = await runCommand("docker", ["ps", "-a", "--filter", `name=${containerName}`, "--format", "{{json .}}"]);
 
   if (!result.output.trim()) {
@@ -730,7 +1031,7 @@ export async function getCloudflaredStatus(nodeId: string): Promise<{ running: b
 }
 
 export async function ensureCloudflaredRunning(tunnel: CloudflareTunnelRow): Promise<void> {
-  const runtime = await getCloudflaredStatus(tunnel.nodeId);
+  const runtime = await getCloudflaredStatus(tunnel.id);
   if (!runtime.running) {
     await startCloudflared(tunnel);
   }
@@ -744,7 +1045,7 @@ export async function ensureEnabledCloudflaredConnectors(): Promise<{ started: s
 
   for (const tunnel of tunnels) {
     try {
-      const runtime = await getCloudflaredStatus(tunnel.nodeId);
+      const runtime = await getCloudflaredStatus(tunnel.id);
       if (!runtime.running) {
         await startCloudflared(tunnel);
         started.push(tunnel.nodeId);
@@ -752,7 +1053,7 @@ export async function ensureEnabledCloudflaredConnectors(): Promise<{ started: s
 
       const enabledRoutes = routes.filter((route) => route.enabled && route.tunnelId === tunnel.id);
       for (const route of enabledRoutes) {
-        const project = await getProject(route.projectId);
+        const project = route.projectId ? await getProject(route.projectId) : undefined;
         if (project) await connectCloudflaredToProjectNetwork(tunnel, project);
       }
     } catch (error) {
@@ -765,12 +1066,12 @@ export async function ensureEnabledCloudflaredConnectors(): Promise<{ started: s
 
 export async function getTunnelHealth(tunnel: CloudflareTunnelRow): Promise<{ healthy: boolean; connectors?: number; status?: string }> {
   try {
-    const settings = await getStoredCloudflareSettings();
-    type CfHealthResult = { status: string; conns: { id: string; connected_at: string }[] };
-    const result = await cfFetch<CfHealthResult>(settings, `/accounts/${tunnel.cfAccountId}/cfd_tunnel/${tunnel.cfTunnelId}/health`);
+    const client = await requireClient(tunnel.clientId);
+    type CfHealthResult = { status: string; connections?: unknown[] };
+    const result = await cfFetch<CfHealthResult>({ apiToken: client.apiToken }, `/accounts/${tunnel.cfAccountId}/cfd_tunnel/${tunnel.cfTunnelId}`);
     return {
       healthy: result.status === "healthy",
-      connectors: result.conns?.length ?? 0,
+      connectors: result.connections?.length ?? 0,
       status: result.status
     };
   } catch {

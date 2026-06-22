@@ -47,7 +47,6 @@ type Props = {
   setConfirm: (state: ConfirmState) => void;
   setPage: (page: number) => void;
   openSettings: () => void;
-  refreshDiagnostics: () => Promise<void>;
 };
 
 function editableType(type: string): type is CloudflareDnsRecordType {
@@ -80,7 +79,7 @@ function payloadFromForm(form: DnsFormState): CloudflareDnsRecordPayload {
 }
 
 export const DnsView = memo(function DnsView(props: Props) {
-  const { records, visibleRecords, diagnostics, settings, busy, loading, page, createRecord, updateRecord, deleteRecord, copyText, setConfirm, setPage, openSettings, refreshDiagnostics } = props;
+  const { records, visibleRecords, diagnostics, settings, busy, loading, page, createRecord, updateRecord, deleteRecord, copyText, setConfirm, setPage, openSettings } = props;
   const [form, setForm] = useState<DnsFormState>(emptyForm);
   const ready = Boolean(settings.cf?.zoneId && settings.cf.hasApiToken);
   const canProxy = proxiedTypes.has(form.type);
@@ -143,36 +142,6 @@ export const DnsView = memo(function DnsView(props: Props) {
         </form>
       </section>
 
-      <div className="dns-main-column">
-      <section className="panel dns-diagnostics-panel">
-        <div className="panel-head">
-          <h2>Diagnostics</h2>
-          <Button variant="secondary" onClick={() => void refreshDiagnostics()} icon={<RefreshCw size={16} />}>
-            Refresh
-          </Button>
-        </div>
-        <div className="dns-diagnostics-list">
-          {diagnostics.map((diagnostic) => (
-            <article key={diagnostic.routeId} className={`dns-diagnostic-card ${diagnostic.dnsStatus !== "ok" || diagnostic.tunnelStatus !== "running" || diagnostic.reachabilityStatus === "failed" ? "attention" : ""}`}>
-              <div>
-                <strong>{diagnostic.hostname}</strong>
-                <span>{diagnostic.projectName ?? diagnostic.projectId}</span>
-              </div>
-              <div className="dns-diagnostic-targets">
-                <span>{diagnostic.expectedDnsTarget ?? "No tunnel target"}</span>
-                <span>{diagnostic.actualDnsRecords[0]?.content ?? "No DNS record"}</span>
-              </div>
-              <div className="dns-diagnostic-statuses">
-                <StatusBadge status={diagnostic.dnsStatus} label={`DNS ${diagnostic.dnsStatus}`} />
-                <StatusBadge status={diagnostic.tunnelStatus} label={`Tunnel ${diagnostic.tunnelStatus}`} />
-                <StatusBadge status={diagnostic.reachabilityStatus} label={`HTTPS ${diagnostic.reachabilityStatus}`} />
-              </div>
-            </article>
-          ))}
-          {!diagnostics.length ? <p className="muted">No Yanto Cloudflare routes to check yet.</p> : null}
-        </div>
-      </section>
-
       <section className="panel dns-records-panel">
         <div className="panel-head">
           <h2>DNS records</h2>
@@ -201,9 +170,11 @@ export const DnsView = memo(function DnsView(props: Props) {
                 <tr key={record.id} className={conflict ? "dns-record-conflict" : yantoManaged ? "dns-record-yanto" : ""}>
                   <td><StatusBadge status={record.type} /></td>
                   <td className="dns-name-cell">
-                    <span>{record.name}</span>
-                    {yantoManaged ? <StatusBadge status="yanto" label="Yanto route" /> : null}
-                    {conflict ? <StatusBadge status="conflict" label="Conflict" /> : null}
+                    <div className="dns-name-cell-content">
+                      <span>{record.name}</span>
+                      {yantoManaged ? <StatusBadge status="yanto" label="Yanto route" /> : null}
+                      {conflict ? <StatusBadge status="conflict" label="Conflict" /> : null}
+                    </div>
                   </td>
                   <td className="dns-content-cell">{record.content}</td>
                   <td>{record.ttl === 1 ? "Auto" : record.ttl}</td>
@@ -243,7 +214,6 @@ export const DnsView = memo(function DnsView(props: Props) {
         </div>
         <Pagination label="DNS records" page={page} totalItems={records.length} onPageChange={setPage} />
       </section>
-      </div>
     </section>
   );
 });

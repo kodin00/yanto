@@ -1,4 +1,4 @@
-import type { AuditLog, Backup, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelStatus, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../../shared/types";
+import type { AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -268,6 +268,20 @@ export const api = {
       body: JSON.stringify(payload)
     }),
   cloudflareTunnels: () => request<CloudflareTunnel[]>("/api/cloudflare/tunnels"),
+  cloudflareClients: () => request<CloudflareClient[]>("/api/cloudflare/clients"),
+  createCloudflareClient: (payload: { name: string; accountId: string; apiToken: string }) => request<CloudflareClient>("/api/cloudflare/clients", { method: "POST", body: JSON.stringify(payload) }),
+  updateCloudflareClient: (id: string, payload: Partial<{ name: string; accountId: string; apiToken: string }>) => request<CloudflareClient>(`/api/cloudflare/clients/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteCloudflareClient: (id: string) => request<void>(`/api/cloudflare/clients/${id}`, { method: "DELETE" }),
+  cloudflareZones: (clientId: string) => request<CloudflareZone[]>(`/api/cloudflare/clients/${clientId}/zones`),
+  createCloudflareTunnel: (payload: { clientId: string; name: string }) => request<CloudflareTunnel>("/api/cloudflare/tunnels", { method: "POST", body: JSON.stringify(payload) }),
+  deleteCloudflareTunnel: (id: string, force = false) => request<void>(`/api/cloudflare/tunnels/${id}${force ? "?force=true" : ""}`, { method: "DELETE" }),
+  cloudflareAssignments: () => request<CloudflareTunnelAssignment[]>("/api/cloudflare/assignments"),
+  createCloudflareAssignment: (payload: { tunnelId: string; projectId?: string; composeProject?: string; composeService?: string; containerName?: string }) => request<CloudflareTunnelAssignment>("/api/cloudflare/assignments", { method: "POST", body: JSON.stringify(payload) }),
+  deleteCloudflareAssignment: (id: string) => request<void>(`/api/cloudflare/assignments/${id}`, { method: "DELETE" }),
+  cloudflareHostnames: () => request<CloudflareRoute[]>("/api/cloudflare/hostnames"),
+  createCloudflareHostname: (payload: { tunnelId: string; assignmentId: string; zoneId: string; hostname: string; protocol: "http" | "https"; port: number; noTlsVerify?: boolean }) => request<CloudflareRoute>("/api/cloudflare/hostnames", { method: "POST", body: JSON.stringify(payload) }),
+  deleteCloudflareHostname: (id: string) => request<void>(`/api/cloudflare/hostnames/${id}`, { method: "DELETE" }),
+  retryCloudflareHostname: (id: string) => request<CloudflareRoute>(`/api/cloudflare/hostnames/${id}/retry`, { method: "POST" }),
   cloudflareRouteDiagnostics: () => request<CloudflareRouteDiagnostic[]>("/api/cloudflare/routes/diagnostics"),
   cloudflareDnsRecords: () => request<CloudflareDnsRecord[]>("/api/cloudflare/dns-records"),
   createCloudflareDnsRecord: (payload: CloudflareDnsRecordPayload) =>

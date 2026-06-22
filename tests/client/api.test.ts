@@ -375,6 +375,26 @@ describe("api client", () => {
         credentials: "include"
       }));
     });
+
+    it("creates a client without changing the credential payload", async () => {
+      const fetchMock = mockFetch({ id: "cfc_1" });
+      const payload = { name: "Acme", accountId: "account", apiToken: "secret" };
+      await api.createCloudflareClient(payload);
+      expect(fetchMock).toHaveBeenCalledWith("/api/cloudflare/clients", expect.objectContaining({ method: "POST", body: JSON.stringify(payload) }));
+    });
+
+    it("creates a tunnel network assignment", async () => {
+      const fetchMock = mockFetch({ id: "cfa_1" });
+      const payload = { tunnelId: "cft_1", projectId: "prj_1", composeProject: "shop", composeService: "web" };
+      await api.createCloudflareAssignment(payload);
+      expect(fetchMock).toHaveBeenCalledWith("/api/cloudflare/assignments", expect.objectContaining({ method: "POST", body: JSON.stringify(payload) }));
+    });
+
+    it("force deletes a managed tunnel using its tunnel id", async () => {
+      const fetchMock = mockFetch(undefined, { status: 204 });
+      await api.deleteCloudflareTunnel("cft_1", true);
+      expect(fetchMock).toHaveBeenCalledWith("/api/cloudflare/tunnels/cft_1?force=true", expect.objectContaining({ method: "DELETE" }));
+    });
   });
 
   describe("projectEnv normalization", () => {

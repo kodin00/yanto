@@ -33,6 +33,7 @@ const BackupsView = lazy(() => import("./views/BackupsView").then(m => ({ defaul
 const ContainersView = lazy(() => import("./views/ContainersView").then(m => ({ default: m.ContainersView })));
 const DeploymentsView = lazy(() => import("./views/DeploymentsView").then(m => ({ default: m.DeploymentsView })));
 const DnsView = lazy(() => import("./views/DnsView").then(m => ({ default: m.DnsView })));
+const HostnamesView = lazy(() => import("./views/HostnamesView").then(m => ({ default: m.HostnamesView })));
 const NodesView = lazy(() => import("./views/NodesView").then(m => ({ default: m.NodesView })));
 const ProjectsView = lazy(() => import("./views/ProjectsView").then(m => ({ default: m.ProjectsView })));
 const SettingsView = lazy(() => import("./views/SettingsView").then(m => ({ default: m.SettingsView })));
@@ -53,7 +54,7 @@ import { YantoBootLoader } from "./components/YantoBootLoader";
 import { api, type AuditLogEntry, type BackupRecord, type CloudflareDnsRecordPayload, type CloudflareRoutePayload, type PostgresTarget } from "./lib/api";
 import packageJson from "../../package.json";
 
-type View = "dashboard" | "projects" | "deployments" | "containers" | "nodes" | "backups" | "dns" | "audit" | "settings";
+type View = "dashboard" | "projects" | "deployments" | "containers" | "nodes" | "backups" | "hostnames" | "dns" | "audit" | "settings";
 type ToastState = { message: string; kind?: "ok" | "error" | "loading" } | null;
 type LogModalState = { title: string; logs: string; streamPath?: string; live?: boolean; status?: string };
 type LogStreamPayload = { logs?: string; chunk?: string; status?: string; error?: string; done?: boolean };
@@ -353,6 +354,13 @@ export function App() {
 
     if (targetView === "containers") {
       const containerRows = await fetchContainerRows();
+      if (containerRows) setContainers(containerRows);
+      return;
+    }
+
+    if (targetView === "hostnames") {
+      const [projectRows, containerRows] = await Promise.all([api.projects(), fetchContainerRows()]);
+      setProjects(projectRows);
       if (containerRows) setContainers(containerRows);
       return;
     }
@@ -1106,9 +1114,9 @@ export function App() {
     try {
       const updated = route.enabled ? await api.disableCfRoute(route.id) : await api.enableCfRoute(route.id);
       setCfRoutes((current) => current.map((r) => (r.id === updated.id ? updated : r)));
-      setCfRoutesByProject((current) => ({
+      if (updated.projectId) setCfRoutesByProject((current) => ({
         ...current,
-        [updated.projectId]: (current[updated.projectId] ?? []).map((r) => (r.id === updated.id ? updated : r))
+        [updated.projectId!]: (current[updated.projectId!] ?? []).map((r) => (r.id === updated.id ? updated : r))
       }));
       setProjects((current) => current.map((project) => (project.id === updated.projectId ? { ...project, cloudflareRoutes: (project.cloudflareRoutes ?? []).map((r) => (r.id === updated.id ? updated : r)) } : project)));
       void refreshRouteDiagnostics();
@@ -1128,7 +1136,7 @@ export function App() {
       const deletedRoute = cfRoutes.find((route) => route.id === routeId);
       setCfRoutes((current) => current.filter((r) => r.id !== routeId));
       if (deletedRoute) {
-        setCfRoutesByProject((current) => ({ ...current, [deletedRoute.projectId]: (current[deletedRoute.projectId] ?? []).filter((r) => r.id !== routeId) }));
+        if (deletedRoute.projectId) setCfRoutesByProject((current) => ({ ...current, [deletedRoute.projectId!]: (current[deletedRoute.projectId!] ?? []).filter((r) => r.id !== routeId) }));
         setProjects((current) => current.map((project) => (project.id === deletedRoute.projectId ? { ...project, cloudflareRoutes: (project.cloudflareRoutes ?? []).filter((r) => r.id !== routeId) } : project)));
       }
       void refreshRouteDiagnostics();
@@ -1342,6 +1350,7 @@ export function App() {
             ["projects", GitBranch, "Projects"],
             ["deployments", Boxes, "Deployments"],
             ["containers", Container, "Containers"],
+            ["hostnames", Globe2, "Hostnames"],
             ...(multiNodeEnabled ? [["nodes", Server, "Nodes"] as const] : []),
             ["backups", Archive, "Backups"],
             ["dns", Globe2, "DNS"],
@@ -1482,9 +1491,10 @@ export function App() {
             setConfirm={setConfirm}
             setPage={setDnsPage}
             openSettings={() => setView("settings")}
-            refreshDiagnostics={refreshRouteDiagnostics}
           />
         ) : null}
+
+        {view === "hostnames" ? <HostnamesView projects={projects} containers={containers} toast={(message, kind) => setToast({ message, kind })} /> : null}
 
         {view === "audit" ? (
           <AuditView
@@ -1785,7 +1795,7 @@ export function App() {
                   <div className="cf-route-head">
                     <div>
                       <div className="section-kicker">Cloudflare Tunnel</div>
-                      <p className="muted">{cfSettingsReady ? "One public hostname can be attached to this project." : "Set Cloudflare Tunnel settings first."}</p>
+                      <p className="muted">Manage multiple public hostnames and isolated tunnel networks from the Hostnames screen.</p>
                     </div>
                     <StatusBadge status={cfSettingsReady ? (cfRoutes.some((route) => route.enabled) ? "connected" : "idle") : "disabled"} />
                   </div>
@@ -1824,11 +1834,10 @@ export function App() {
                     <Button
                       type="button"
                       variant="secondary"
-                      disabled={!cfSettingsReady}
-                      onClick={() => setCfRouteEditorOpen(true)}
+                      onClick={() => { setProjectModal(null); setView("hostnames"); }}
                       icon={<Plus size={15} />}
                     >
-                      {cfRoutes.length ? "Edit hostname" : "Configure hostname"}
+                      Manage hostnames
                     </Button>
                   ) : null}
                   {cfRouteEditorOpen ? (

@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { cloudflareRoutes, projects } from "../db/schema.js";
 import { createDeployToken, createId } from "./tokens.js";
@@ -28,7 +28,7 @@ export type CreateProjectInput = {
 };
 
 export async function listProjects() {
-  return db.select().from(projects).orderBy(projects.createdAt);
+  return db.select().from(projects).orderBy(desc(projects.createdAt));
 }
 
 export async function listProjectsWithContainerCounts() {
@@ -38,6 +38,7 @@ export async function listProjectsWithContainerCounts() {
     : [];
   const routesByProject = new Map<string, typeof routeRows>();
   for (const route of routeRows) {
+    if (!route.projectId) continue;
     routesByProject.set(route.projectId, [...(routesByProject.get(route.projectId) ?? []), route]);
   }
   let containers: Awaited<ReturnType<typeof listContainers>> = [];
