@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { DeploymentRow, ProjectRow } from "../db/schema.js";
 import { runCommand } from "./commands.js";
-import { autoStartOverrideFile, buildAutoStartOverride } from "./compose.js";
+import { assertComposePortsAvailable, autoStartOverrideFile, buildAutoStartOverride } from "./compose.js";
 import { pathExists } from "./paths.js";
 import { writeProjectEnv, writeProjectEnvVariables } from "./project-env.js";
 import { gitSshEnv, resolveGitPrivateKeyPath } from "./ssh.js";
@@ -165,11 +165,15 @@ export async function runProjectDeployment(project: ProjectRow, deployment: Depl
     );
   }
 
+  const composePath = path.join(project.localPath, composeFile);
+  const composeContent = await fs.readFile(composePath, "utf8");
+  await callbacks.appendLog("Checking compose published ports before starting containers.\n");
+  await assertComposePortsAvailable(composeContent, { ignoreComposeProject: project.folderName });
+
   const composeArgs = ["compose", "-f", composeFile];
   const restartOverride = autoStartOverrideFile();
   const restartOverridePath = path.join(project.localPath, restartOverride);
   if (project.autoStart) {
-    const composeContent = await fs.readFile(path.join(project.localPath, composeFile), "utf8");
     await fs.writeFile(restartOverridePath, buildAutoStartOverride(composeContent), "utf8");
     await callbacks.appendLog("Auto start is enabled; applying restart: unless-stopped override.\n");
     composeArgs.push("-f", restartOverride);

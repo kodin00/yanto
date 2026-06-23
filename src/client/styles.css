@@ -1422,6 +1422,7 @@ th {
 }
 
 .status.success,
+.status.active,
 .status.ready,
 .status.ok,
 .status.yanto {

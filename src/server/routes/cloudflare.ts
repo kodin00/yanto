@@ -103,8 +103,12 @@ router.post("/api/cloudflare/hostnames", requireAuth, asyncRoute(async (req, res
   res.status(201).json(hostname);
 }));
 router.delete("/api/cloudflare/hostnames/:id", requireAuth, asyncRoute(async (req, res) => {
-  const id = routeParam(req, "id"); await deleteManagedHostname(id);
-  await recordAuditLog({ actor: actor(req), action: "cloudflare.hostname.delete", entityType: "cloudflare_route", entityId: id });
+  const id = routeParam(req, "id"); const result = await deleteManagedHostname(id);
+  await recordAuditLog({ actor: actor(req), action: "cloudflare.hostname.delete", entityType: "cloudflare_route", entityId: id, metadata: result.warnings.length ? { warnings: result.warnings } : undefined });
+  if (result.warnings.length) {
+    res.json({ ok: true, warnings: result.warnings });
+    return;
+  }
   res.status(204).end();
 }));
 router.post("/api/cloudflare/hostnames/:id/retry", requireAuth, asyncRoute(async (req, res) => {
@@ -169,7 +173,7 @@ router.get(
     const nodeId = routeParam(req, "nodeId");
     const tunnel = await getTunnelForNode(nodeId);
     if (!tunnel) {
-      res.status(404).json({ message: "No tunnel found for this node." });
+      res.status(404).json({ message: "No tunnel found. Create one in Hostnames → Tunnels & Networks." });
       return;
     }
     const [runtime, health] = await Promise.all([getCloudflaredStatus(nodeId), getTunnelHealth(tunnel)]);
@@ -184,7 +188,7 @@ router.post(
     const nodeId = routeParam(req, "nodeId");
     const tunnel = await getTunnelForNode(nodeId);
     if (!tunnel) {
-      res.status(404).json({ message: "No tunnel found for this node. Create a route first." });
+      res.status(404).json({ message: "No tunnel found. Create a tunnel in Hostnames → Tunnels & Networks first." });
       return;
     }
     await startCloudflared(tunnel);

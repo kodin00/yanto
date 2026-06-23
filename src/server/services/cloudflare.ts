@@ -371,7 +371,7 @@ export async function deleteManagedTunnel(tunnelId: string, force = false) {
   if (!force && (routes.length || assignments.length)) throw new Error("Remove hostnames and network assignments first, or force delete the tunnel.");
   const client = await requireClient(tunnel.clientId);
   if (force) {
-    for (const route of routes) await deleteDnsRecordForRoute(client, route).catch(() => undefined);
+    for (const route of routes) await deleteDnsRecordForRoute(client, tunnel, route).catch(() => undefined);
   }
   await runCommand("docker", ["rm", "-f", cloudflaredContainerName(tunnel.id)]);
   if (force) await disconnectAllFromNetwork(tunnel.dockerNetworkName);
@@ -508,8 +508,29 @@ async function upsertDnsRecordForRoute(client: CloudflareClientRow, tunnel: Clou
   return created.id;
 }
 
-async function deleteDnsRecordForRoute(client: CloudflareClientRow, route: CloudflareRouteRow) {
-  if (route.cfDnsRecordId) await cfFetch({ apiToken: client.apiToken }, `/zones/${route.zoneId}/dns_records/${route.cfDnsRecordId}`, { method: "DELETE" });
+function isMissingCloudflareResource(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /HTTP 404|not found|does not exist/i.test(message);
+}
+
+async function deleteDnsRecordForRoute(client: CloudflareClientRow, tunnel: CloudflareTunnelRow, route: CloudflareRouteRow) {
+  const target = `${tunnel.cfTunnelId}.cfargotunnel.com`;
+  const deleteRecord = async (recordId: string) => {
+    try {
+      await cfFetch({ apiToken: client.apiToken }, `/zones/${route.zoneId}/dns_records/${recordId}`, { method: "DELETE" });
+    } catch (error) {
+      if (!isMissingCloudflareResource(error)) throw error;
+    }
+  };
+
+  if (route.cfDnsRecordId) {
+    await deleteRecord(route.cfDnsRecordId);
+    return;
+  }
+
+  const records = await cfFetch<{ id: string; type: string; name: string; content: string }[]>({ apiToken: client.apiToken }, `/zones/${route.zoneId}/dns_records?type=CNAME&name=${encodeURIComponent(route.hostname)}`);
+  const matchingRecords = records.filter((record) => record.type === "CNAME" && record.name === route.hostname && record.content === target);
+  await Promise.all(matchingRecords.map((record) => deleteRecord(record.id)));
 }
 
 export async function createManagedHostname(input: { tunnelId: string; assignmentId: string; zoneId: string; hostname: string; protocol: "http" | "https"; port: number; noTlsVerify?: boolean }) {
@@ -564,11 +585,26 @@ export async function deleteManagedHostname(routeId: string) {
   const [route] = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.id, routeId)).limit(1);
   if (!route) throw new Error("Hostname not found.");
   const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, route.tunnelId)).limit(1);
-  if (!tunnel) throw new Error("Tunnel not found.");
-  const client = await requireClient(tunnel.clientId);
-  await deleteDnsRecordForRoute(client, route);
+  const warnings: string[] = [];
+  if (tunnel) {
+    try {
+      const client = await requireClient(tunnel.clientId);
+      await deleteDnsRecordForRoute(client, tunnel, route);
+    } catch (error) {
+      warnings.push(error instanceof Error ? error.message : "Cloudflare DNS cleanup failed.");
+    }
+  } else {
+    warnings.push("Tunnel was already missing; removed the local hostname record only.");
+  }
   await db.delete(cloudflareRoutes).where(eq(cloudflareRoutes.id, route.id));
-  await putTunnelConfig(tunnel);
+  if (tunnel) {
+    try {
+      await putTunnelConfig(tunnel);
+    } catch (error) {
+      warnings.push(error instanceof Error ? error.message : "Tunnel ingress cleanup failed.");
+    }
+  }
+  return { warnings };
 }
 
 type CfDnsRecord = { id: string };
@@ -996,7 +1032,7 @@ export async function stopCloudflared(nodeId: string): Promise<void> {
 export async function restartCloudflared(nodeId: string): Promise<void> {
   const [byId] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, nodeId)).limit(1);
   const tunnel = byId ?? (await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.nodeId, nodeId)).limit(1))[0];
-  if (!tunnel) throw new Error("No tunnel found for this node.");
+  if (!tunnel) throw new Error("No tunnel found. Create a tunnel in Hostnames → Tunnels & Networks first.");
 
   try {
     await stopCloudflared(nodeId);

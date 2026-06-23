@@ -1,11 +1,14 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { cloudflareRoutes, projects } from "../db/schema.js";
 import { createDeployToken, createId } from "./tokens.js";
 import { listContainers } from "./docker.js";
-import { ensureProjectsRoot, normalizeComposeFile, normalizeEnvFile, projectPath, removeProjectDirectory, slugifyFolderName } from "./paths.js";
+import { ensureProjectsRoot, normalizeComposeFile, normalizeEnvFile, pathExists, projectPath, removeProjectDirectory, slugifyFolderName } from "./paths.js";
 import { config } from "../config.js";
 import { assertDeployableNode } from "./nodes.js";
+import { assertComposePortsAvailable } from "./compose.js";
 
 export function publicProject<T extends { deployToken: string }>(project: T): Omit<T, "deployToken"> {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructured to exclude from output
@@ -62,6 +65,17 @@ export async function createProject(input: CreateProjectInput) {
   const folderName = input.folderName.trim() || slugifyFolderName(input.name);
   const localPath = projectPath(folderName);
   const gitUrl = input.gitUrl?.trim() || null;
+  const composeFile = normalizeComposeFile(input.composeFile ?? "docker-compose.yml");
+  const composeContent = input.composeContent?.trim() || null;
+
+  if (composeContent) {
+    await assertComposePortsAvailable(composeContent, { ignoreComposeProject: folderName });
+  } else {
+    const composePath = path.join(localPath, composeFile);
+    if (await pathExists(composePath)) {
+      await assertComposePortsAvailable(await fs.readFile(composePath, "utf8"), { ignoreComposeProject: folderName });
+    }
+  }
 
   const [project] = await db
     .insert(projects)
@@ -72,8 +86,8 @@ export async function createProject(input: CreateProjectInput) {
       branch: input.branch?.trim() || "master",
       folderName,
       localPath,
-      composeFile: normalizeComposeFile(input.composeFile ?? "docker-compose.yml"),
-      composeContent: input.composeContent?.trim() || null,
+      composeFile,
+      composeContent,
       envFile: normalizeEnvFile(input.envFile ?? ".env"),
       autoStart: input.autoStart ?? false,
       manualDeployEnabled: input.manualDeployEnabled ?? true,
