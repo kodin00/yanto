@@ -15,7 +15,7 @@ export function HostnamesView({ projects, containers, toast }: { projects: Proje
   const [hostnames, setHostnames] = useState<CloudflareRoute[]>([]);
   const [zones, setZones] = useState<Record<string, CloudflareZone[]>>({});
   const [busy, setBusy] = useState(false);
-  const [clientForm, setClientForm] = useState({ name: "", accountId: "", apiToken: "" });
+  const [clientForm, setClientForm] = useState({ name: "", accountId: "", zoneId: "", apiToken: "" });
   const [tunnelForm, setTunnelForm] = useState({ clientId: "", name: "" });
   const [assignmentForm, setAssignmentForm] = useState({ tunnelId: "", target: "" });
   const [hostnameForm, setHostnameForm] = useState({ tunnelId: "", assignmentId: "", zoneId: "", hostname: "", protocol: "http" as "http" | "https", port: "3000", noTlsVerify: false });
@@ -28,10 +28,18 @@ export function HostnamesView({ projects, containers, toast }: { projects: Proje
   useEffect(() => { void load().catch((error) => toast(error instanceof Error ? error.message : "Unable to load Cloudflare data.", "error")); }, []);
 
   const selectedTunnel = tunnels.find((item) => item.id === hostnameForm.tunnelId);
+  const selectedClient = selectedTunnel ? clients.find((client) => client.id === selectedTunnel.clientId) : undefined;
   const tunnelAssignments = assignments.filter((item) => item.tunnelId === hostnameForm.tunnelId);
   const clientOptions = useMemo(() => [{ label: "Choose client", value: "" }, ...clients.map((client) => ({ label: client.name, value: client.id }))], [clients]);
   const tunnelOptions = useMemo(() => [{ label: "Choose tunnel", value: "" }, ...tunnels.map((tunnel) => ({ label: tunnel.tunnelName, value: tunnel.id }))], [tunnels]);
-  const zoneOptions = useMemo(() => [{ label: selectedTunnel ? "Choose zone" : "Choose tunnel first", value: "" }, ...(selectedTunnel ? zones[selectedTunnel.clientId] ?? [] : []).map((zone) => ({ label: zone.name, value: zone.id }))], [selectedTunnel, zones]);
+  const zoneOptions = useMemo(() => {
+    const loadedZones = selectedTunnel ? zones[selectedTunnel.clientId] ?? [] : [];
+    const options = loadedZones.map((zone) => ({ label: zone.name, value: zone.id }));
+    if (selectedClient?.zoneId && !options.some((option) => option.value === selectedClient.zoneId)) {
+      options.unshift({ label: selectedClient.zoneId, value: selectedClient.zoneId });
+    }
+    return [{ label: selectedTunnel ? "Choose zone" : "Choose tunnel first", value: "" }, ...options];
+  }, [selectedClient, selectedTunnel, zones]);
   const assignmentOptions = useMemo(() => [{ label: hostnameForm.tunnelId ? "Choose assigned target" : "Choose tunnel first", value: "" }, ...tunnelAssignments.map((item) => ({ label: item.targetType === "compose_service" ? `${item.composeProject} / ${item.composeService}` : item.containerName ?? "Container", value: item.id }))], [hostnameForm.tunnelId, tunnelAssignments]);
   const targetOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -54,7 +62,8 @@ export function HostnamesView({ projects, containers, toast }: { projects: Proje
 
   async function selectHostnameTunnel(tunnelId: string) {
     const tunnel = tunnels.find((item) => item.id === tunnelId);
-    setHostnameForm((current) => ({ ...current, tunnelId, assignmentId: "", zoneId: "" }));
+    const client = tunnel ? clients.find((item) => item.id === tunnel.clientId) : undefined;
+    setHostnameForm((current) => ({ ...current, tunnelId, assignmentId: "", zoneId: client?.zoneId ?? "" }));
     if (tunnel && !zones[tunnel.clientId]) {
       const next = await api.cloudflareZones(tunnel.clientId);
       setZones((current) => ({ ...current, [tunnel.clientId]: next }));
@@ -69,8 +78,8 @@ export function HostnamesView({ projects, containers, toast }: { projects: Proje
       </div>
 
       {tab === "clients" ? <>
-        <section className="panel compact-form"><h3>Add client</h3><div className="cf-manager-form"><TextField label="Client name" value={clientForm.name} onChange={(name) => setClientForm({ ...clientForm, name })} /><TextField label="Account ID" value={clientForm.accountId} onChange={(accountId) => setClientForm({ ...clientForm, accountId })} /><TextField label="Limited API token" type="password" value={clientForm.apiToken} onChange={(apiToken) => setClientForm({ ...clientForm, apiToken })} /><Button disabled={busy || !clientForm.name || !clientForm.accountId || !clientForm.apiToken} icon={<Plus size={15} />} onClick={() => void act("Validating and saving client...", async () => { await api.createCloudflareClient(clientForm); setClientForm({ name: "", accountId: "", apiToken: "" }); })}>Add client</Button></div></section>
-        <section className="panel"><h3>Clients</h3><div className="cf-manager-list">{clients.map((client) => <div className="cf-manager-row" key={client.id}><div><strong>{client.name}</strong><span>{client.accountId}</span></div><StatusBadge status={client.hasApiToken ? "ready" : "missing"} label={client.hasApiToken ? "Token saved" : "No token"} /><Button variant="danger" disabled={busy} onClick={() => void act("Deleting client...", () => api.deleteCloudflareClient(client.id))} icon={<Trash2 size={14} />}>Delete</Button></div>)}</div></section>
+        <section className="panel compact-form"><h3>Add client</h3><div className="cf-manager-form"><TextField label="Client name" value={clientForm.name} onChange={(name) => setClientForm({ ...clientForm, name })} /><TextField label="Account ID" value={clientForm.accountId} onChange={(accountId) => setClientForm({ ...clientForm, accountId })} /><TextField label="Zone ID" value={clientForm.zoneId} onChange={(zoneId) => setClientForm({ ...clientForm, zoneId })} /><TextField label="Limited API token" type="password" value={clientForm.apiToken} onChange={(apiToken) => setClientForm({ ...clientForm, apiToken })} /><Button disabled={busy || !clientForm.name || !clientForm.accountId || !clientForm.zoneId || !clientForm.apiToken} icon={<Plus size={15} />} onClick={() => void act("Validating and saving client...", async () => { await api.createCloudflareClient(clientForm); setClientForm({ name: "", accountId: "", zoneId: "", apiToken: "" }); })}>Add client</Button></div></section>
+        <section className="panel"><h3>Clients</h3><div className="cf-manager-list">{clients.map((client) => <div className="cf-manager-row" key={client.id}><div><strong>{client.name}</strong><span>{client.accountId}</span><span>{client.zoneId}</span></div><StatusBadge status={client.hasApiToken ? "ready" : "missing"} label={client.hasApiToken ? "Token saved" : "No token"} /><Button variant="danger" disabled={busy} onClick={() => void act("Deleting client...", () => api.deleteCloudflareClient(client.id))} icon={<Trash2 size={14} />}>Delete</Button></div>)}</div></section>
       </> : null}
 
       {tab === "tunnels" ? <>

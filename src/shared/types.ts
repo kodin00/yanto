@@ -149,6 +149,7 @@ export type CloudflareClient = {
   id: string;
   name: string;
   accountId: string;
+  zoneId: string;
   hasApiToken: boolean;
   createdAt: string;
   updatedAt: string;

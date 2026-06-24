@@ -378,7 +378,7 @@ describe("api client", () => {
 
     it("creates a client without changing the credential payload", async () => {
       const fetchMock = mockFetch({ id: "cfc_1" });
-      const payload = { name: "Acme", accountId: "account", apiToken: "secret" };
+      const payload = { name: "Acme", accountId: "account", zoneId: "zone", apiToken: "secret" };
       await api.createCloudflareClient(payload);
       expect(fetchMock).toHaveBeenCalledWith("/api/cloudflare/clients", expect.objectContaining({ method: "POST", body: JSON.stringify(payload) }));
     });

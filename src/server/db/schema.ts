@@ -113,6 +113,7 @@ export const cloudflareClients = pgTable(
     id: text("id").primaryKey(),
     name: text("name").notNull(),
     accountId: text("account_id").notNull(),
+    zoneId: text("zone_id").notNull().default(""),
     apiToken: text("api_token").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()

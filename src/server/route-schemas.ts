@@ -73,6 +73,7 @@ export const cloudflareRouteInput = z.object({
 export const cloudflareClientInput = z.object({
   name: z.string().min(1).max(100),
   accountId: z.string().min(1).max(64),
+  zoneId: z.string().min(1).max(64),
   apiToken: z.string().min(1).optional()
 });
 

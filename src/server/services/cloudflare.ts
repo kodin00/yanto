@@ -115,10 +115,10 @@ export async function saveCloudflareSettings(input: Partial<CloudflareSettings>)
 
   if (next.accountId && next.apiToken) {
     await db.insert(cloudflareClients).values({
-      id: createId("cfc"), name: "Default Cloudflare", accountId: next.accountId, apiToken: encrypt(next.apiToken)
+      id: createId("cfc"), name: "Default Cloudflare", accountId: next.accountId, zoneId: next.zoneId, apiToken: encrypt(next.apiToken)
     }).onConflictDoUpdate({
       target: cloudflareClients.accountId,
-      set: { apiToken: encrypt(next.apiToken), updatedAt: new Date() }
+      set: { zoneId: next.zoneId, apiToken: encrypt(next.apiToken), updatedAt: new Date() }
     });
   }
 
@@ -204,6 +204,7 @@ function publicClient(row: CloudflareClientRow): CloudflareClient {
     id: row.id,
     name: row.name,
     accountId: row.accountId,
+    zoneId: row.zoneId,
     hasApiToken: Boolean(row.apiToken),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString()
@@ -220,35 +221,39 @@ export async function listCloudflareClients() {
   return (await db.select().from(cloudflareClients)).map(publicClient);
 }
 
-export async function validateCloudflareClient(input: { accountId: string; apiToken: string }) {
+export async function validateCloudflareClient(input: { accountId: string; zoneId: string; apiToken: string }) {
   const accountId = normalizeString(input.accountId);
+  const zoneId = normalizeString(input.zoneId);
   const apiToken = normalizeString(input.apiToken);
-  if (!accountId || !apiToken) throw new Error("Account ID and API token are required.");
+  if (!accountId || !zoneId || !apiToken) throw new Error("Account ID, Zone ID, and API token are required.");
   await cfFetch<unknown[]>({ apiToken }, `/accounts/${accountId}/cfd_tunnel?per_page=1`);
   const zones = await cfFetch<{ id: string; name: string; status: string }[]>({ apiToken }, `/zones?account.id=${encodeURIComponent(accountId)}&per_page=50`);
-  return { ok: true, accountName: accountId, zones };
+  const zone = zones.find((item) => item.id === zoneId) ?? await cfFetch<{ id: string; name: string; status: string }>({ apiToken }, `/zones/${zoneId}`);
+  return { ok: true, accountName: accountId, zoneName: zone.name, zones };
 }
 
-export async function createCloudflareClient(input: { name: string; accountId: string; apiToken: string }) {
+export async function createCloudflareClient(input: { name: string; accountId: string; zoneId: string; apiToken: string }) {
   await validateCloudflareClient(input);
   const [row] = await db.insert(cloudflareClients).values({
     id: createId("cfc"),
     name: normalizeString(input.name),
     accountId: normalizeString(input.accountId),
+    zoneId: normalizeString(input.zoneId),
     apiToken: encrypt(normalizeString(input.apiToken))
   }).returning();
   return publicClient(row);
 }
 
-export async function updateCloudflareClient(clientId: string, input: { name?: string; accountId?: string; apiToken?: string }) {
+export async function updateCloudflareClient(clientId: string, input: { name?: string; accountId?: string; zoneId?: string; apiToken?: string }) {
   const current = await requireClient(clientId);
   const next = {
     name: normalizeString(input.name) || current.name,
     accountId: normalizeString(input.accountId) || current.accountId,
+    zoneId: normalizeString(input.zoneId) || current.zoneId,
     apiToken: normalizeString(input.apiToken) || current.apiToken
   };
   await validateCloudflareClient(next);
-  const [row] = await db.update(cloudflareClients).set({ name: next.name, accountId: next.accountId, apiToken: encrypt(next.apiToken), updatedAt: new Date() }).where(eq(cloudflareClients.id, clientId)).returning();
+  const [row] = await db.update(cloudflareClients).set({ name: next.name, accountId: next.accountId, zoneId: next.zoneId, apiToken: encrypt(next.apiToken), updatedAt: new Date() }).where(eq(cloudflareClients.id, clientId)).returning();
   return publicClient(row);
 }
 
