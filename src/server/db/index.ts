@@ -162,22 +162,24 @@ export async function migrate() {
       id text PRIMARY KEY,
       name text NOT NULL,
       account_id text NOT NULL,
+      zone_id text NOT NULL DEFAULT '',
       api_token text NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     );
   `);
+  await pool.query(`ALTER TABLE cloudflare_clients ADD COLUMN IF NOT EXISTS zone_id text NOT NULL DEFAULT '';`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cloudflare_clients_account_id_idx ON cloudflare_clients(account_id);`);
 
   const legacySetting = await pool.query<{ value: string }>(`SELECT value FROM app_settings WHERE key = 'cloudflare.tunnel' LIMIT 1`);
   if (legacySetting.rows[0]) {
     try {
-      const legacy = JSON.parse(legacySetting.rows[0].value) as { accountId?: string; apiToken?: string };
+      const legacy = JSON.parse(legacySetting.rows[0].value) as { accountId?: string; zoneId?: string; apiToken?: string };
       if (legacy.accountId && legacy.apiToken) {
         const token = isEncrypted(legacy.apiToken) ? legacy.apiToken : encrypt(legacy.apiToken);
         await pool.query(
-          `INSERT INTO cloudflare_clients (id, name, account_id, api_token) VALUES ('cfc_legacy', 'Default Cloudflare', $1, $2) ON CONFLICT (account_id) DO NOTHING`,
-          [legacy.accountId, token]
+          `INSERT INTO cloudflare_clients (id, name, account_id, zone_id, api_token) VALUES ('cfc_legacy', 'Default Cloudflare', $1, $2, $3) ON CONFLICT (account_id) DO UPDATE SET zone_id = COALESCE(NULLIF(cloudflare_clients.zone_id, ''), EXCLUDED.zone_id)`,
+          [legacy.accountId, legacy.zoneId ?? "", token]
         );
       }
     } catch {

@@ -53,7 +53,7 @@ router.get("/api/cloudflare/clients", requireAuth, asyncRoute(async (_req, res) 
 router.post("/api/cloudflare/clients/validate", requireAuth, asyncRoute(async (req, res) => {
   const body = cloudflareClientInput.parse(req.body);
   if (!body.apiToken) throw new Error("API token is required.");
-  res.json(await validateCloudflareClient({ accountId: body.accountId, apiToken: body.apiToken }));
+  res.json(await validateCloudflareClient({ accountId: body.accountId, zoneId: body.zoneId, apiToken: body.apiToken }));
 }));
 router.post("/api/cloudflare/clients", requireAuth, asyncRoute(async (req, res) => {
   const body = cloudflareClientInput.parse(req.body);
