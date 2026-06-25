@@ -2383,6 +2383,10 @@ th {
   min-height: 0;
 }
 
+.dns-client-panel {
+  grid-column: 1 / -1;
+}
+
 .dns-not-ready {
   display: grid;
   gap: 12px;

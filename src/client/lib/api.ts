@@ -284,8 +284,14 @@ export const api = {
   retryCloudflareHostname: (id: string) => request<CloudflareRoute>(`/api/cloudflare/hostnames/${id}/retry`, { method: "POST" }),
   cloudflareRouteDiagnostics: () => request<CloudflareRouteDiagnostic[]>("/api/cloudflare/routes/diagnostics"),
   cloudflareDnsRecords: () => request<CloudflareDnsRecord[]>("/api/cloudflare/dns-records"),
+  cloudflareClientDnsRecords: (clientId: string) => request<CloudflareDnsRecord[]>(`/api/cloudflare/clients/${clientId}/dns-records`),
   createCloudflareDnsRecord: (payload: CloudflareDnsRecordPayload) =>
     request<CloudflareDnsRecord>("/api/cloudflare/dns-records", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  createCloudflareClientDnsRecord: (clientId: string, payload: CloudflareDnsRecordPayload) =>
+    request<CloudflareDnsRecord>(`/api/cloudflare/clients/${clientId}/dns-records`, {
       method: "POST",
       body: JSON.stringify(payload)
     }),
@@ -294,8 +300,15 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload)
     }),
+  updateCloudflareClientDnsRecord: (clientId: string, id: string, payload: CloudflareDnsRecordPayload) =>
+    request<CloudflareDnsRecord>(`/api/cloudflare/clients/${clientId}/dns-records/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
   deleteCloudflareDnsRecord: (id: string) =>
     request<void>(`/api/cloudflare/dns-records/${id}`, { method: "DELETE" }),
+  deleteCloudflareClientDnsRecord: (clientId: string, id: string) =>
+    request<void>(`/api/cloudflare/clients/${clientId}/dns-records/${id}`, { method: "DELETE" }),
   cloudflareTunnelStatus: (nodeId: string) =>
     request<CloudflareTunnelStatus>(`/api/cloudflare/tunnels/node/${nodeId}`),
   startCloudflared: (nodeId: string) =>

@@ -37,7 +37,7 @@ const HostnamesView = lazy(() => import("./views/HostnamesView").then(m => ({ de
 const NodesView = lazy(() => import("./views/NodesView").then(m => ({ default: m.NodesView })));
 const ProjectsView = lazy(() => import("./views/ProjectsView").then(m => ({ default: m.ProjectsView })));
 const SettingsView = lazy(() => import("./views/SettingsView").then(m => ({ default: m.SettingsView })));
-import type { CloudflareDnsRecord, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../shared/types";
+import type { CloudflareClient, CloudflareDnsRecord, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../shared/types";
 import {
   cloudflareServiceUrl,
   endpoint,
@@ -193,6 +193,8 @@ export function App() {
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
   const [nodes, setNodes] = useState<DeploymentNode[]>([]);
   const [backups, setBackups] = useState<BackupRecord[]>([]);
+  const [cloudflareClients, setCloudflareClients] = useState<CloudflareClient[]>([]);
+  const [dnsClientId, setDnsClientId] = useState("");
   const [dnsRecords, setDnsRecords] = useState<CloudflareDnsRecord[]>([]);
   const [routeDiagnostics, setRouteDiagnostics] = useState<CloudflareRouteDiagnostic[]>([]);
   const [postgresTargets, setPostgresTargets] = useState<PostgresTarget[]>([]);
@@ -378,13 +380,17 @@ export function App() {
     }
 
     if (targetView === "dns") {
-      const [settingRows, records, diagnostics] = await Promise.all([
+      const [settingRows, clients, diagnostics] = await Promise.all([
         api.settings(),
-        api.cloudflareDnsRecords().catch(() => []),
+        api.cloudflareClients().catch(() => []),
         api.cloudflareRouteDiagnostics().catch(() => [])
       ]);
+      const selectedClientId = dnsClientId && clients.some((client) => client.id === dnsClientId) ? dnsClientId : clients[0]?.id ?? "";
+      const records = selectedClientId ? await api.cloudflareClientDnsRecords(selectedClientId).catch(() => []) : [];
       setSettings(settingRows);
       setSettingsLoaded(true);
+      setCloudflareClients(clients);
+      setDnsClientId(selectedClientId);
       setDnsRecords(records);
       setRouteDiagnostics(diagnostics);
       return;
@@ -399,7 +405,7 @@ export function App() {
     setSettings(settingRows);
     setSettingsLoaded(true);
     setSystemLogs(logRows);
-  }, [fetchContainerRows]);
+  }, [dnsClientId, fetchContainerRows]);
 
   const loadViewWithState = useCallback(async (targetView: View, showLoading = true) => {
     if (showLoading) {
@@ -1148,11 +1154,27 @@ export function App() {
     }
   }
 
+  async function selectDnsClient(clientId: string) {
+    setDnsClientId(clientId);
+    setDnsPage(1);
+    setDnsRecords([]);
+    setViewLoading((current) => ({ ...current, dns: true }));
+    try {
+      const records = clientId ? await api.cloudflareClientDnsRecords(clientId) : [];
+      setDnsRecords(records);
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to load DNS records.", kind: "error" });
+    } finally {
+      setViewLoading((current) => ({ ...current, dns: false }));
+    }
+  }
+
   async function createDnsRecord(payload: CloudflareDnsRecordPayload) {
+    if (!dnsClientId) throw new Error("Choose a Cloudflare client first.");
     setBusy("dns-save");
     setToast({ message: "Creating DNS record...", kind: "loading" });
     try {
-      const record = await api.createCloudflareDnsRecord(payload);
+      const record = await api.createCloudflareClientDnsRecord(dnsClientId, payload);
       setDnsRecords((current) => [record, ...current.filter((item) => item.id !== record.id)]);
       void refreshRouteDiagnostics();
       setToast({ message: "DNS record created." });
@@ -1165,10 +1187,11 @@ export function App() {
   }
 
   async function updateDnsRecord(recordId: string, payload: CloudflareDnsRecordPayload) {
+    if (!dnsClientId) throw new Error("Choose a Cloudflare client first.");
     setBusy("dns-save");
     setToast({ message: "Updating DNS record...", kind: "loading" });
     try {
-      const record = await api.updateCloudflareDnsRecord(recordId, payload);
+      const record = await api.updateCloudflareClientDnsRecord(dnsClientId, recordId, payload);
       setDnsRecords((current) => current.map((item) => (item.id === record.id ? record : item)));
       void refreshRouteDiagnostics();
       setToast({ message: "DNS record updated." });
@@ -1181,9 +1204,10 @@ export function App() {
   }
 
   async function deleteDnsRecord(record: CloudflareDnsRecord) {
+    if (!dnsClientId) throw new Error("Choose a Cloudflare client first.");
     setBusy(`dns-delete:${record.id}`);
     try {
-      await api.deleteCloudflareDnsRecord(record.id);
+      await api.deleteCloudflareClientDnsRecord(dnsClientId, record.id);
       setDnsRecords((current) => current.filter((item) => item.id !== record.id));
       void refreshRouteDiagnostics();
     } finally {
@@ -1477,20 +1501,22 @@ export function App() {
 
         {view === "dns" ? (
           <DnsView
+            clients={cloudflareClients}
+            selectedClientId={dnsClientId}
             records={dnsRecords}
             visibleRecords={visibleDnsRecords}
             diagnostics={routeDiagnostics}
-            settings={settings}
             busy={busy}
             loading={viewLoading.dns}
             page={dnsPage}
+            selectClient={(clientId) => void selectDnsClient(clientId)}
             createRecord={createDnsRecord}
             updateRecord={updateDnsRecord}
             deleteRecord={deleteDnsRecord}
             copyText={copyText}
             setConfirm={setConfirm}
             setPage={setDnsPage}
-            openSettings={() => setView("settings")}
+            openClients={() => setView("hostnames")}
           />
         ) : null}
 

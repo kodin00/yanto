@@ -5,11 +5,13 @@ import { cloudflareAssignmentInput, cloudflareClientInput, cloudflareDnsRecordIn
 import { recordAuditLog } from "../services/audit.js";
 import {
   createDnsRecord,
+  createClientDnsRecord,
   createCloudflareClient,
   createManagedHostname,
   createManagedTunnel,
   createTunnelAssignment,
   deleteDnsRecord,
+  deleteClientDnsRecord,
   deleteCloudflareClient,
   deleteManagedHostname,
   deleteManagedTunnel,
@@ -21,6 +23,7 @@ import {
   getTunnelForNode,
   getTunnelHealth,
   listDnsRecords,
+  listClientDnsRecords,
   listCloudflareClients,
   listCloudflareZones,
   listManagedHostnames,
@@ -34,9 +37,10 @@ import {
   retryManagedHostname,
   startCloudflared,
   stopCloudflared,
-  updateDnsRecord
-  ,updateCloudflareClient
-  ,validateCloudflareClient
+  updateClientDnsRecord,
+  updateDnsRecord,
+  updateCloudflareClient,
+  validateCloudflareClient
 } from "../services/cloudflare.js";
 
 const router = Router();
@@ -74,6 +78,50 @@ router.delete("/api/cloudflare/clients/:id", requireAuth, asyncRoute(async (req,
   res.status(204).end();
 }));
 router.get("/api/cloudflare/clients/:id/zones", requireAuth, asyncRoute(async (req, res) => { res.json(await listCloudflareZones(routeParam(req, "id"))); }));
+
+router.get(
+  "/api/cloudflare/clients/:clientId/dns-records",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    res.json(await listClientDnsRecords(routeParam(req, "clientId")));
+  })
+);
+
+router.post(
+  "/api/cloudflare/clients/:clientId/dns-records",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const clientId = routeParam(req, "clientId");
+    const body = cloudflareDnsRecordInput.parse(req.body);
+    const record = await createClientDnsRecord(clientId, body);
+    await recordAuditLog({ actor: actor(req), action: "cloudflare.client_dns.create", entityType: "cloudflare_dns_record", entityId: record.id, metadata: { clientId, type: record.type, name: record.name } });
+    res.status(201).json(record);
+  })
+);
+
+router.patch(
+  "/api/cloudflare/clients/:clientId/dns-records/:id",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const clientId = routeParam(req, "clientId");
+    const body = cloudflareDnsRecordInput.parse(req.body);
+    const record = await updateClientDnsRecord(clientId, routeParam(req, "id"), body);
+    await recordAuditLog({ actor: actor(req), action: "cloudflare.client_dns.update", entityType: "cloudflare_dns_record", entityId: record.id, metadata: { clientId, type: record.type, name: record.name } });
+    res.json(record);
+  })
+);
+
+router.delete(
+  "/api/cloudflare/clients/:clientId/dns-records/:id",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const clientId = routeParam(req, "clientId");
+    const id = routeParam(req, "id");
+    await deleteClientDnsRecord(clientId, id);
+    await recordAuditLog({ actor: actor(req), action: "cloudflare.client_dns.delete", entityType: "cloudflare_dns_record", entityId: id, metadata: { clientId } });
+    res.status(204).end();
+  })
+);
 
 router.post("/api/cloudflare/tunnels", requireAuth, asyncRoute(async (req, res) => {
   const tunnel = await createManagedTunnel(cloudflareTunnelInput.parse(req.body));

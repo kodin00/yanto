@@ -1,11 +1,11 @@
 import { Cloud, Copy, Edit3, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { memo, useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import type { CloudflareDnsRecord, CloudflareDnsRecordType, CloudflareRouteDiagnostic } from "../../shared/types";
+import type { CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflareRouteDiagnostic } from "../../shared/types";
 import { Pagination } from "../components/Pagination";
 import { Button, CustomSelect, IconButton, StatusBadge, TextField, ToggleField } from "../components/ui";
 import type { CloudflareDnsRecordPayload } from "../lib/api";
-import type { ConfirmState, SettingsState } from "./types";
+import type { ConfirmState } from "./types";
 
 const editableTypes: CloudflareDnsRecordType[] = ["A", "AAAA", "CNAME", "TXT", "MX", "NS"];
 const proxiedTypes = new Set<CloudflareDnsRecordType>(["A", "AAAA", "CNAME"]);
@@ -33,20 +33,22 @@ const emptyForm: DnsFormState = {
 };
 
 type Props = {
+  clients: CloudflareClient[];
+  selectedClientId: string;
   records: CloudflareDnsRecord[];
   visibleRecords: CloudflareDnsRecord[];
   diagnostics: CloudflareRouteDiagnostic[];
-  settings: SettingsState;
   busy: string | null;
   loading?: boolean;
   page: number;
+  selectClient: (clientId: string) => void;
   createRecord: (payload: CloudflareDnsRecordPayload) => Promise<void>;
   updateRecord: (id: string, payload: CloudflareDnsRecordPayload) => Promise<void>;
   deleteRecord: (record: CloudflareDnsRecord) => Promise<void>;
   copyText: (value: string) => Promise<void>;
   setConfirm: (state: ConfirmState) => void;
   setPage: (page: number) => void;
-  openSettings: () => void;
+  openClients: () => void;
 };
 
 function editableType(type: string): type is CloudflareDnsRecordType {
@@ -79,9 +81,10 @@ function payloadFromForm(form: DnsFormState): CloudflareDnsRecordPayload {
 }
 
 export const DnsView = memo(function DnsView(props: Props) {
-  const { records, visibleRecords, diagnostics, settings, busy, loading, page, createRecord, updateRecord, deleteRecord, copyText, setConfirm, setPage, openSettings } = props;
+  const { clients, selectedClientId, records, visibleRecords, diagnostics, busy, loading, page, selectClient, createRecord, updateRecord, deleteRecord, copyText, setConfirm, setPage, openClients } = props;
   const [form, setForm] = useState<DnsFormState>(emptyForm);
-  const ready = Boolean(settings.cf?.zoneId && settings.cf.hasApiToken);
+  const selectedClient = clients.find((client) => client.id === selectedClientId);
+  const ready = Boolean(selectedClient?.zoneId && selectedClient.hasApiToken);
   const canProxy = proxiedTypes.has(form.type);
   const saving = busy === "dns-save";
   const typeOptions = useMemo(() => editableTypes.map((type) => ({ label: type, value: type })), []);
@@ -104,6 +107,37 @@ export const DnsView = memo(function DnsView(props: Props) {
 
   return (
     <section className="dns-layout">
+      <section className="panel dns-client-panel">
+        <div className="panel-head">
+          <h2>Client DNS</h2>
+          <span className="count">{clients.length ? `${clients.length} clients` : "No clients"}</span>
+        </div>
+        {clients.length ? (
+          <div className="cloudflare-tabs">
+            {clients.map((client) => (
+              <button
+                type="button"
+                className={client.id === selectedClientId ? "active" : ""}
+                key={client.id}
+                onClick={() => {
+                  setForm(emptyForm);
+                  selectClient(client.id);
+                }}
+              >
+                {client.name}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="dns-not-ready">
+            <p className="muted">Add a Cloudflare client before managing DNS records.</p>
+            <Button variant="secondary" onClick={openClients}>
+              Open clients
+            </Button>
+          </div>
+        )}
+      </section>
+
       <section className="panel dns-editor-panel">
         <div className="panel-head">
           <h2>{form.id ? "Edit DNS record" : "Add DNS record"}</h2>
@@ -111,9 +145,9 @@ export const DnsView = memo(function DnsView(props: Props) {
         </div>
         {!ready ? (
           <div className="dns-not-ready">
-            <p className="muted">Cloudflare Zone ID and API token are required before DNS records can be managed.</p>
-            <Button variant="secondary" onClick={openSettings}>
-              Open settings
+            <p className="muted">{selectedClient ? "This client needs a Zone ID and API token before DNS records can be managed." : "Choose a Cloudflare client before managing DNS records."}</p>
+            <Button variant="secondary" onClick={openClients}>
+              Open clients
             </Button>
           </div>
         ) : null}
@@ -144,7 +178,7 @@ export const DnsView = memo(function DnsView(props: Props) {
 
       <section className="panel dns-records-panel">
         <div className="panel-head">
-          <h2>DNS records</h2>
+          <h2>{selectedClient ? `${selectedClient.name} DNS records` : "DNS records"}</h2>
           <span className="count">{loading ? "Loading" : `${records.length} records`}</span>
         </div>
         <div className="table-wrap dns-table-wrap">
@@ -206,7 +240,7 @@ export const DnsView = memo(function DnsView(props: Props) {
               })}
               {!visibleRecords.length ? (
                 <tr>
-                  <td colSpan={7}>{loading ? "Loading DNS records..." : ready ? "No DNS records found." : "Configure Cloudflare settings first."}</td>
+                  <td colSpan={7}>{loading ? "Loading DNS records..." : ready ? "No DNS records found." : "Choose a Cloudflare client first."}</td>
                 </tr>
               ) : null}
             </tbody>

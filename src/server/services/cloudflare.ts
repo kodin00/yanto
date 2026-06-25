@@ -25,6 +25,7 @@ type CloudflareSettings = {
 };
 
 type CloudflareAuth = Pick<CloudflareSettings, "apiToken">;
+type CloudflareDnsAuth = Pick<CloudflareSettings, "zoneId" | "apiToken">;
 
 const emptyCloudflareSettings: CloudflareSettings = {
   accountId: "",
@@ -666,7 +667,7 @@ function toPublicDnsRecord(record: CfDnsRecordResult): CloudflareDnsRecord {
   };
 }
 
-function ensureDnsSettings(settings: CloudflareSettings) {
+function ensureDnsSettings(settings: CloudflareDnsAuth) {
   if (!settings.zoneId) {
     throw new Error("Cloudflare Zone ID is not configured.");
   }
@@ -690,6 +691,15 @@ function dnsRecordPayload(input: CloudflareDnsRecordInput) {
 
 export async function listDnsRecords(): Promise<CloudflareDnsRecord[]> {
   const settings = await getStoredCloudflareSettings();
+  return listDnsRecordsWithAuth(settings);
+}
+
+async function dnsAuthForClient(clientId: string): Promise<CloudflareDnsAuth> {
+  const client = await requireClient(clientId);
+  return { zoneId: client.zoneId, apiToken: client.apiToken };
+}
+
+async function listDnsRecordsWithAuth(settings: CloudflareDnsAuth): Promise<CloudflareDnsRecord[]> {
   ensureDnsSettings(settings);
   const records = await cfFetch<CfDnsRecordResult[]>(
     settings,
@@ -700,6 +710,10 @@ export async function listDnsRecords(): Promise<CloudflareDnsRecord[]> {
 
 export async function createDnsRecord(input: CloudflareDnsRecordInput): Promise<CloudflareDnsRecord> {
   const settings = await getStoredCloudflareSettings();
+  return createDnsRecordWithAuth(settings, input);
+}
+
+async function createDnsRecordWithAuth(settings: CloudflareDnsAuth, input: CloudflareDnsRecordInput): Promise<CloudflareDnsRecord> {
   ensureDnsSettings(settings);
   const created = await cfFetch<CfDnsRecordResult>(settings, `/zones/${settings.zoneId}/dns_records`, {
     method: "POST",
@@ -710,6 +724,10 @@ export async function createDnsRecord(input: CloudflareDnsRecordInput): Promise<
 
 export async function updateDnsRecord(recordId: string, input: CloudflareDnsRecordInput): Promise<CloudflareDnsRecord> {
   const settings = await getStoredCloudflareSettings();
+  return updateDnsRecordWithAuth(settings, recordId, input);
+}
+
+async function updateDnsRecordWithAuth(settings: CloudflareDnsAuth, recordId: string, input: CloudflareDnsRecordInput): Promise<CloudflareDnsRecord> {
   ensureDnsSettings(settings);
   const updated = await cfFetch<CfDnsRecordResult>(settings, `/zones/${settings.zoneId}/dns_records/${recordId}`, {
     method: "PATCH",
@@ -720,8 +738,28 @@ export async function updateDnsRecord(recordId: string, input: CloudflareDnsReco
 
 export async function deleteDnsRecord(recordId: string): Promise<void> {
   const settings = await getStoredCloudflareSettings();
+  await deleteDnsRecordWithAuth(settings, recordId);
+}
+
+async function deleteDnsRecordWithAuth(settings: CloudflareDnsAuth, recordId: string): Promise<void> {
   ensureDnsSettings(settings);
   await cfFetch<{ id: string }>(settings, `/zones/${settings.zoneId}/dns_records/${recordId}`, { method: "DELETE" });
+}
+
+export async function listClientDnsRecords(clientId: string): Promise<CloudflareDnsRecord[]> {
+  return listDnsRecordsWithAuth(await dnsAuthForClient(clientId));
+}
+
+export async function createClientDnsRecord(clientId: string, input: CloudflareDnsRecordInput): Promise<CloudflareDnsRecord> {
+  return createDnsRecordWithAuth(await dnsAuthForClient(clientId), input);
+}
+
+export async function updateClientDnsRecord(clientId: string, recordId: string, input: CloudflareDnsRecordInput): Promise<CloudflareDnsRecord> {
+  return updateDnsRecordWithAuth(await dnsAuthForClient(clientId), recordId, input);
+}
+
+export async function deleteClientDnsRecord(clientId: string, recordId: string): Promise<void> {
+  await deleteDnsRecordWithAuth(await dnsAuthForClient(clientId), recordId);
 }
 
 function diagnosticDnsRecord(record: CloudflareDnsRecord): CloudflareRouteDiagnosticDnsRecord {
