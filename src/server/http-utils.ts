@@ -1,6 +1,12 @@
 import type express from "express";
 import { currentUser } from "./auth.js";
 
+export class HttpError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
 export function asyncRoute(handler: (req: express.Request, res: express.Response) => Promise<void>) {
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
     handler(req, res).catch(next);

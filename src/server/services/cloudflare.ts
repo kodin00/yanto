@@ -11,6 +11,7 @@ import { getProject } from "./projects.js";
 import { encrypt, decrypt, isEncrypted } from "./crypto.js";
 import { normalizeString } from "./utils.js";
 import { classifyRouteDiagnostic } from "./cloudflare-diagnostics.js";
+import { HttpError } from "../http-utils.js";
 import type { CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflareRouteDiagnostic, CloudflareRouteDiagnosticDnsRecord, CloudflareRouteReachabilityStatus, CloudflareZone } from "../../shared/types.js";
 
 // --- Cloudflare Settings (app_settings key: "cloudflare.tunnel") ---
@@ -135,6 +136,16 @@ type CfApiResponse<T> = {
   errors?: { code: number; message: string }[];
 };
 
+function cloudflareErrorMessage(body: string) {
+  try {
+    const parsed = JSON.parse(body) as Partial<CfApiResponse<unknown>>;
+    const messages = parsed.errors?.map((error) => error.message).filter(Boolean).join("; ");
+    return messages || body;
+  } catch {
+    return body;
+  }
+}
+
 async function cfFetch<T>(settings: CloudflareAuth, apiPath: string, init?: RequestInit): Promise<T> {
   if (!settings.apiToken) {
     throw new Error("Cloudflare API token is not configured.");
@@ -151,7 +162,8 @@ async function cfFetch<T>(settings: CloudflareAuth, apiPath: string, init?: Requ
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new Error(`Cloudflare API returned HTTP ${response.status}: ${text.slice(0, 200)}`);
+    const message = cloudflareErrorMessage(text).slice(0, 500);
+    throw new HttpError(400, `Cloudflare API returned HTTP ${response.status}: ${message}`);
   }
 
   let body: CfApiResponse<T>;
@@ -163,7 +175,7 @@ async function cfFetch<T>(settings: CloudflareAuth, apiPath: string, init?: Requ
 
   if (!body.success) {
     const messages = body.errors?.map((e) => e.message).join("; ") ?? "Unknown Cloudflare API error.";
-    throw new Error(messages);
+    throw new HttpError(400, messages);
   }
 
   return body.result;

@@ -9,6 +9,7 @@ import { z } from "zod";
 import { config, warnOnUnsafeDefaults } from "./config.js";
 import { migrate, pool } from "./db/index.js";
 import { logger } from "./logger.js";
+import { HttpError } from "./http-utils.js";
 import { ensureLocalMasterNode } from "./services/nodes.js";
 import { recoverInterruptedDeployments } from "./services/deployments.js";
 import { ensureEnabledCloudflaredConnectors, reconcileTunnelAssignments } from "./services/cloudflare.js";
@@ -102,7 +103,7 @@ app.use((error: unknown, _req: express.Request, res: express.Response, next: exp
   void next;
   const message = error instanceof Error ? error.message : "Unexpected server error.";
   logger.error("request failed", { error: message });
-  const status = error instanceof z.ZodError ? 400 : 500;
+  const status = error instanceof z.ZodError ? 400 : error instanceof HttpError ? error.status : 500;
   const publicMessage = config.nodeEnv === "production" && status >= 500 ? "Internal server error." : message;
   res.status(status).json({ message: publicMessage });
 });
