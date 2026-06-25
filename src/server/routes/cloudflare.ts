@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../auth.js";
-import { asyncRoute, actor, routeParam } from "../http-utils.js";
+import { HttpError, asyncRoute, actor, routeParam } from "../http-utils.js";
 import { cloudflareAssignmentInput, cloudflareClientInput, cloudflareDnsRecordInput, cloudflareHostnameInput, cloudflareRouteInput, cloudflareTunnelInput } from "../route-schemas.js";
 import { recordAuditLog } from "../services/audit.js";
 import {
@@ -52,12 +52,12 @@ router.get(
 router.get("/api/cloudflare/clients", requireAuth, asyncRoute(async (_req, res) => { res.json(await listCloudflareClients()); }));
 router.post("/api/cloudflare/clients/validate", requireAuth, asyncRoute(async (req, res) => {
   const body = cloudflareClientInput.parse(req.body);
-  if (!body.apiToken) throw new Error("API token is required.");
+  if (!body.apiToken) throw new HttpError(400, "API token is required.");
   res.json(await validateCloudflareClient({ accountId: body.accountId, zoneId: body.zoneId, apiToken: body.apiToken }));
 }));
 router.post("/api/cloudflare/clients", requireAuth, asyncRoute(async (req, res) => {
   const body = cloudflareClientInput.parse(req.body);
-  if (!body.apiToken) throw new Error("API token is required.");
+  if (!body.apiToken) throw new HttpError(400, "API token is required.");
   const client = await createCloudflareClient({ ...body, apiToken: body.apiToken });
   await recordAuditLog({ actor: actor(req), action: "cloudflare.client.create", entityType: "cloudflare_client", entityId: client.id });
   res.status(201).json(client);
