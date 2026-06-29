@@ -27,7 +27,7 @@ import {
   Trash2
 } from "lucide-react";
 import { DashboardView } from "./views";
-import { FormEvent, lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const AuditView = lazy(() => import("./views/AuditView").then(m => ({ default: m.AuditView })));
 const BackupsView = lazy(() => import("./views/BackupsView").then(m => ({ default: m.BackupsView })));
@@ -198,6 +198,9 @@ export function App() {
   const [cloudflareClients, setCloudflareClients] = useState<CloudflareClient[]>([]);
   const [dnsClientId, setDnsClientId] = useState("");
   const [dnsRecords, setDnsRecords] = useState<CloudflareDnsRecord[]>([]);
+  const [dnsLoaded, setDnsLoaded] = useState(false);
+  const dnsClientIdRef = useRef("");
+  const dnsLoadRequestRef = useRef(0);
   const [routeDiagnostics, setRouteDiagnostics] = useState<CloudflareRouteDiagnostic[]>([]);
   const [postgresTargets, setPostgresTargets] = useState<PostgresTarget[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
@@ -383,19 +386,24 @@ export function App() {
     }
 
     if (targetView === "dns") {
+      const requestId = ++dnsLoadRequestRef.current;
       const [settingRows, clients, diagnostics] = await Promise.all([
         api.settings(),
         api.cloudflareClients().catch(() => []),
         api.cloudflareRouteDiagnostics().catch(() => [])
       ]);
-      const selectedClientId = dnsClientId && clients.some((client) => client.id === dnsClientId) ? dnsClientId : clients[0]?.id ?? "";
+      const currentClientId = dnsClientIdRef.current;
+      const selectedClientId = currentClientId && clients.some((client) => client.id === currentClientId) ? currentClientId : clients[0]?.id ?? "";
       const records = selectedClientId ? await api.cloudflareClientDnsRecords(selectedClientId).catch(() => []) : [];
+      if (requestId !== dnsLoadRequestRef.current) return;
+      dnsClientIdRef.current = selectedClientId;
       setSettings(settingRows);
       setSettingsLoaded(true);
       setCloudflareClients(clients);
       setDnsClientId(selectedClientId);
       setDnsRecords(records);
       setRouteDiagnostics(diagnostics);
+      setDnsLoaded(true);
       return;
     }
 
@@ -412,7 +420,7 @@ export function App() {
     setSettings(settingRows);
     setSettingsLoaded(true);
     setSystemLogs(logRows);
-  }, [dnsClientId, fetchContainerRows]);
+  }, [fetchContainerRows]);
 
   const loadViewWithState = useCallback(async (targetView: View, showLoading = true) => {
     if (showLoading) {
@@ -1162,17 +1170,23 @@ export function App() {
   }
 
   async function selectDnsClient(clientId: string) {
+    if (clientId === dnsClientIdRef.current) return;
+    const requestId = ++dnsLoadRequestRef.current;
+    dnsClientIdRef.current = clientId;
     setDnsClientId(clientId);
     setDnsPage(1);
-    setDnsRecords([]);
     setViewLoading((current) => ({ ...current, dns: true }));
     try {
       const records = clientId ? await api.cloudflareClientDnsRecords(clientId) : [];
+      if (requestId !== dnsLoadRequestRef.current) return;
       setDnsRecords(records);
     } catch (error) {
+      if (requestId !== dnsLoadRequestRef.current) return;
       setToast({ message: error instanceof Error ? error.message : "Unable to load DNS records.", kind: "error" });
     } finally {
-      setViewLoading((current) => ({ ...current, dns: false }));
+      if (requestId === dnsLoadRequestRef.current) {
+        setViewLoading((current) => ({ ...current, dns: false }));
+      }
     }
   }
 
@@ -1517,6 +1531,7 @@ export function App() {
             diagnostics={routeDiagnostics}
             busy={busy}
             loading={viewLoading.dns}
+            loaded={dnsLoaded}
             page={dnsPage}
             selectClient={(clientId) => void selectDnsClient(clientId)}
             createRecord={createDnsRecord}

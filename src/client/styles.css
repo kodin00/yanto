@@ -2496,6 +2496,30 @@ th {
   grid-column: 1 / -1;
 }
 
+.dns-client-tabs {
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
+.dns-client-tabs button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.dns-client-tabs button:disabled {
+  cursor: default;
+}
+
+.dns-client-tabs .dns-default-client-tab {
+  margin-left: auto;
+}
+
+.dns-page-loading {
+  min-height: 240px;
+  display: grid;
+  place-items: center;
+}
+
 .dns-not-ready {
   display: grid;
   gap: 12px;

@@ -3,7 +3,7 @@ import { memo, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import type { CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflareRouteDiagnostic } from "../../shared/types";
 import { Pagination } from "../components/Pagination";
-import { Button, CustomSelect, IconButton, StatusBadge, TextField, ToggleField } from "../components/ui";
+import { Button, CustomSelect, IconButton, LoadingInline, StatusBadge, TextField, ToggleField } from "../components/ui";
 import type { CloudflareDnsRecordPayload } from "../lib/api";
 import type { ConfirmState } from "./types";
 
@@ -40,6 +40,7 @@ type Props = {
   diagnostics: CloudflareRouteDiagnostic[];
   busy: string | null;
   loading?: boolean;
+  loaded: boolean;
   page: number;
   selectClient: (clientId: string) => void;
   createRecord: (payload: CloudflareDnsRecordPayload) => Promise<void>;
@@ -81,13 +82,19 @@ function payloadFromForm(form: DnsFormState): CloudflareDnsRecordPayload {
 }
 
 export const DnsView = memo(function DnsView(props: Props) {
-  const { clients, selectedClientId, records, visibleRecords, diagnostics, busy, loading, page, selectClient, createRecord, updateRecord, deleteRecord, copyText, setConfirm, setPage, openClients } = props;
+  const { clients, selectedClientId, records, visibleRecords, diagnostics, busy, loading, loaded, page, selectClient, createRecord, updateRecord, deleteRecord, copyText, setConfirm, setPage, openClients } = props;
   const [form, setForm] = useState<DnsFormState>(emptyForm);
   const selectedClient = clients.find((client) => client.id === selectedClientId);
   const ready = Boolean(selectedClient?.zoneId && selectedClient.hasApiToken);
   const canProxy = proxiedTypes.has(form.type);
   const saving = busy === "dns-save";
+  const formDisabled = !ready || saving || loading;
   const typeOptions = useMemo(() => editableTypes.map((type) => ({ label: type, value: type })), []);
+  const orderedClients = useMemo(() => [...clients].sort((left, right) => {
+    const leftIsDefault = left.name.trim().toLowerCase() === "default cloudflare";
+    const rightIsDefault = right.name.trim().toLowerCase() === "default cloudflare";
+    return Number(leftIsDefault) - Number(rightIsDefault);
+  }), [clients]);
   const diagnosticsByHostname = useMemo(() => Object.fromEntries(diagnostics.map((diagnostic) => [diagnostic.hostname.toLowerCase(), diagnostic])), [diagnostics]);
   const yantoRecordKeys = useMemo(() => new Set(diagnostics.flatMap((diagnostic) => {
     if (!diagnostic.expectedDnsTarget) return [];
@@ -105,6 +112,14 @@ export const DnsView = memo(function DnsView(props: Props) {
     setForm(emptyForm);
   }
 
+  if (!loaded) {
+    return (
+      <section className="panel dns-page-loading" aria-live="polite">
+        <LoadingInline label="Loading DNS..." />
+      </section>
+    );
+  }
+
   return (
     <section className="dns-layout">
       <section className="panel dns-client-panel">
@@ -113,12 +128,17 @@ export const DnsView = memo(function DnsView(props: Props) {
           <span className="count">{clients.length ? `${clients.length} clients` : "No clients"}</span>
         </div>
         {clients.length ? (
-          <div className="cloudflare-tabs">
-            {clients.map((client) => (
+          <div className="cloudflare-tabs dns-client-tabs">
+            {orderedClients.map((client) => {
+              const isDefault = client.name.trim().toLowerCase() === "default cloudflare";
+              const active = client.id === selectedClientId;
+              return (
               <button
                 type="button"
-                className={client.id === selectedClientId ? "active" : ""}
+                className={`${active ? "active" : ""}${isDefault ? " dns-default-client-tab" : ""}`.trim()}
                 key={client.id}
+                aria-current={active ? "page" : undefined}
+                disabled={Boolean(loading) || active}
                 onClick={() => {
                   setForm(emptyForm);
                   selectClient(client.id);
@@ -126,7 +146,8 @@ export const DnsView = memo(function DnsView(props: Props) {
               >
                 {client.name}
               </button>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <div className="dns-not-ready">
@@ -153,23 +174,23 @@ export const DnsView = memo(function DnsView(props: Props) {
         ) : null}
         <form className="form-grid dns-record-form" onSubmit={submit} autoComplete="off">
           <div className="dns-form-grid">
-            <CustomSelect label="Type" value={form.type} options={typeOptions} disabled={!ready || saving} onChange={(type) => setForm((current) => ({ ...current, type, proxied: proxiedTypes.has(type) ? current.proxied : false }))} />
-            <TextField label="Name" value={form.name} onChange={(name) => setForm((current) => ({ ...current, name }))} placeholder="www or example.com" required disabled={!ready || saving} />
-            <TextField label="Content" value={form.content} onChange={(content) => setForm((current) => ({ ...current, content }))} placeholder="Target value" required disabled={!ready || saving} />
-            <TextField label="TTL" value={form.ttl} onChange={(ttl) => setForm((current) => ({ ...current, ttl: ttl.replace(/\D/g, "") || "1" }))} placeholder="1" required disabled={!ready || saving} />
+            <CustomSelect label="Type" value={form.type} options={typeOptions} disabled={formDisabled} onChange={(type) => setForm((current) => ({ ...current, type, proxied: proxiedTypes.has(type) ? current.proxied : false }))} />
+            <TextField label="Name" value={form.name} onChange={(name) => setForm((current) => ({ ...current, name }))} placeholder="www or example.com" required disabled={formDisabled} />
+            <TextField label="Content" value={form.content} onChange={(content) => setForm((current) => ({ ...current, content }))} placeholder="Target value" required disabled={formDisabled} />
+            <TextField label="TTL" value={form.ttl} onChange={(ttl) => setForm((current) => ({ ...current, ttl: ttl.replace(/\D/g, "") || "1" }))} placeholder="1" required disabled={formDisabled} />
             {form.type === "MX" ? (
-              <TextField label="Priority" value={form.priority} onChange={(priority) => setForm((current) => ({ ...current, priority: priority.replace(/\D/g, "") }))} placeholder="10" disabled={!ready || saving} />
+              <TextField label="Priority" value={form.priority} onChange={(priority) => setForm((current) => ({ ...current, priority: priority.replace(/\D/g, "") }))} placeholder="10" disabled={formDisabled} />
             ) : null}
           </div>
-          <TextField label="Comment" value={form.comment} onChange={(comment) => setForm((current) => ({ ...current, comment }))} placeholder="Optional note" disabled={!ready || saving} />
-          <ToggleField label="Proxied" value={canProxy && form.proxied} onChange={(proxied) => setForm((current) => ({ ...current, proxied }))} disabled={!ready || saving || !canProxy} description={canProxy ? "Routes traffic through Cloudflare." : "Only A, AAAA, and CNAME records can be proxied."} />
+          <TextField label="Comment" value={form.comment} onChange={(comment) => setForm((current) => ({ ...current, comment }))} placeholder="Optional note" disabled={formDisabled} />
+          <ToggleField label="Proxied" value={canProxy && form.proxied} onChange={(proxied) => setForm((current) => ({ ...current, proxied }))} disabled={formDisabled || !canProxy} description={canProxy ? "Routes traffic through Cloudflare." : "Only A, AAAA, and CNAME records can be proxied."} />
           <div className="actions">
             {form.id ? (
               <Button type="button" variant="ghost" disabled={saving} onClick={() => setForm(emptyForm)}>
                 Cancel
               </Button>
             ) : null}
-            <Button type="submit" disabled={!ready || saving || !form.name.trim() || !form.content.trim()} loading={saving} icon={<Plus size={16} />}>
+            <Button type="submit" disabled={formDisabled || !form.name.trim() || !form.content.trim()} loading={saving} icon={<Plus size={16} />}>
               {form.id ? "Save record" : "Create record"}
             </Button>
           </div>
