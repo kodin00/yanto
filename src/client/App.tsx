@@ -129,7 +129,7 @@ const emptyProjectEnvState: ProjectEnvState = {
   draftKey: "",
   draftValue: "",
   content: "",
-  mode: "pairs",
+  mode: "text",
   loading: false,
   available: true,
   opened: false
@@ -917,7 +917,7 @@ export function App() {
     try {
       const [rows, envContent] = await Promise.all([api.projectEnv(projectModal.id), api.projectEnvContent(projectModal.id)]);
       const normalizedRows = normalizeEnvRows(rows);
-      setProjectEnv({ rows: normalizedRows, baseline: normalizedRows, draftKey: "", draftValue: "", content: envContent.content, mode: "pairs", loading: false, available: true, opened: true });
+      setProjectEnv({ rows: normalizedRows, baseline: normalizedRows, draftKey: "", draftValue: "", content: envContent.content, mode: "text", loading: false, available: true, opened: true });
       setProjectEditorModal("env");
       setToast(null);
     } catch (error) {

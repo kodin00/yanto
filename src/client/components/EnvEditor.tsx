@@ -1,4 +1,5 @@
 import { FileText, List, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import type { Dispatch, SetStateAction } from "react";
 import { normalizeEnvRows } from "../app-utils";
 import { Button, IconButton, TextAreaField, TextField, ToggleField } from "./ui";
 import type { ProjectEnvVariable } from "../lib/api";
@@ -37,7 +38,7 @@ function parseEnvContentRows(content: string) {
   return normalizeEnvRows(rows);
 }
 
-export function EnvEditor({ modal, onChange }: { modal: ProjectEnvState; onChange: (next: ProjectEnvState) => void }) {
+export function EnvEditor({ modal, onChange }: { modal: ProjectEnvState; onChange: Dispatch<SetStateAction<ProjectEnvState>> }) {
   const baselineKeys = new Set(modal.baseline.map((row) => row.key));
   const currentKeys = new Set(modal.rows.map((row) => row.key));
   const changedRows = modal.rows.filter((row) => {
@@ -47,24 +48,26 @@ export function EnvEditor({ modal, onChange }: { modal: ProjectEnvState; onChang
   const removedRows = modal.baseline.filter((row) => !currentKeys.has(row.key));
   const setRows = (rows: ProjectEnvVariable[], patch: Partial<ProjectEnvState> = {}) => onChange({ ...modal, ...patch, rows, content: serializeEnvRows(rows) });
   const setMode = (mode: EnvEditMode) => {
-    if (mode === modal.mode) return;
-    onChange(mode === "text" ? { ...modal, mode } : { ...modal, mode, rows: parseEnvContentRows(modal.content) });
+    onChange((current) => {
+      if (mode === current.mode) return current;
+      return mode === "text" ? { ...current, mode } : { ...current, mode, rows: parseEnvContentRows(current.content) };
+    });
   };
 
   return (
     <div className={`env-editor ${modal.mode === "text" ? "text-mode" : ""}`}>
       <div className="env-mode-toggle" role="group" aria-label="Environment input mode">
-        <button type="button" className={modal.mode === "pairs" ? "active" : ""} onClick={() => setMode("pairs")}>
+        <button type="button" aria-pressed={modal.mode === "pairs"} className={modal.mode === "pairs" ? "active" : ""} onClick={() => setMode("pairs")}>
           <List size={15} />
           <span>Key/value</span>
         </button>
-        <button type="button" className={modal.mode === "text" ? "active" : ""} onClick={() => setMode("text")}>
+        <button type="button" aria-pressed={modal.mode === "text"} className={modal.mode === "text" ? "active" : ""} onClick={() => setMode("text")}>
           <FileText size={15} />
           <span>Text</span>
         </button>
       </div>
       {modal.mode === "text" ? (
-        <TextAreaField label="Environment text" value={modal.content} onChange={(content) => onChange({ ...modal, content })} />
+        <TextAreaField label="Environment text" value={modal.content} onChange={(content) => onChange((current) => ({ ...current, content }))} />
       ) : (
         <>
           <div className="env-rows">
