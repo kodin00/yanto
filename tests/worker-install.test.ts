@@ -8,6 +8,7 @@ describe("worker install/runtime files", () => {
 
     expect(compose.services.worker.ports).toBeUndefined();
     expect(compose.services.worker.environment.YANTO_NODE_ROLE).toBe("worker");
+    expect(compose.services.worker.extra_hosts).toContain("host.docker.internal:host-gateway");
   });
 
   it("routes worker containers to the worker process through the image command", () => {
@@ -16,6 +17,8 @@ describe("worker install/runtime files", () => {
     expect(dockerfile).toContain("YANTO_NODE_ROLE");
     expect(dockerfile).toContain("dist/server/server/worker.js");
     expect(dockerfile).toContain("dist/server/server/index.js");
+    expect(dockerfile).toContain("FRP_VERSION=0.69.0");
+    expect(dockerfile).toContain("sha256sum -c");
   });
 
   it("documents master and worker one-liner entrypoints in the installer", () => {

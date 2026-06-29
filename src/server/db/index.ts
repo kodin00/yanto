@@ -271,4 +271,41 @@ export async function migrate() {
   await pool.query(`CREATE INDEX IF NOT EXISTS cloudflare_routes_project_id_idx ON cloudflare_routes(project_id);`);
   await pool.query(`DROP INDEX IF EXISTS cloudflare_routes_hostname_idx;`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cloudflare_routes_hostname_idx ON cloudflare_routes(zone_id, hostname);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS frp_tunnels (
+      id text PRIMARY KEY,
+      node_id text NOT NULL REFERENCES deployment_nodes(id) ON DELETE CASCADE,
+      name text NOT NULL,
+      protocol text NOT NULL,
+      local_host text NOT NULL,
+      local_port integer NOT NULL,
+      remote_port integer NOT NULL,
+      enabled boolean NOT NULL DEFAULT true,
+      sync_status text NOT NULL DEFAULT 'syncing',
+      last_error text,
+      last_synced_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT frp_tunnels_protocol_check CHECK (protocol IN ('tcp', 'udp')),
+      CONSTRAINT frp_tunnels_local_port_check CHECK (local_port BETWEEN 1 AND 65535),
+      CONSTRAINT frp_tunnels_remote_port_check CHECK (remote_port BETWEEN 1 AND 65535)
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS frp_tunnels_node_id_idx ON frp_tunnels(node_id);`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS frp_tunnels_protocol_remote_port_idx ON frp_tunnels(protocol, remote_port);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS frp_worker_states (
+      node_id text PRIMARY KEY REFERENCES deployment_nodes(id) ON DELETE CASCADE,
+      desired_revision text,
+      applied_revision text,
+      process_status text NOT NULL DEFAULT 'stopped',
+      frpc_version text,
+      last_error text,
+      last_reported_at timestamptz,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`ALTER TABLE frp_worker_states ADD COLUMN IF NOT EXISTS desired_revision text;`);
 }

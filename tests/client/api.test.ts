@@ -395,6 +395,30 @@ describe("api client", () => {
       await api.deleteCloudflareTunnel("cft_1", true);
       expect(fetchMock).toHaveBeenCalledWith("/api/cloudflare/tunnels/cft_1?force=true", expect.objectContaining({ method: "DELETE" }));
     });
+
+    it("saves the FRP public endpoint", async () => {
+      const fetchMock = mockFetch({ publicHost: "203.0.113.10" });
+      await api.saveFrpSettings("203.0.113.10");
+      expect(fetchMock).toHaveBeenCalledWith("/api/frp/settings", expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ publicHost: "203.0.113.10" })
+      }));
+    });
+
+    it("creates and updates FRP tunnels", async () => {
+      const fetchMock = mockFetch({ id: "frp_1" });
+      const payload = { name: "Minecraft", nodeId: "node_1", protocol: "tcp" as const, localHost: "host.docker.internal", localPort: 25565, remotePort: 25565, enabled: true };
+      await api.createFrpTunnel(payload);
+      expect(fetchMock).toHaveBeenLastCalledWith("/api/frp/tunnels", expect.objectContaining({ method: "POST", body: JSON.stringify(payload) }));
+      await api.updateFrpTunnel("frp_1", { enabled: false });
+      expect(fetchMock).toHaveBeenLastCalledWith("/api/frp/tunnels/frp_1", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ enabled: false }) }));
+    });
+
+    it("controls the FRP server lifecycle", async () => {
+      const fetchMock = mockFetch({ running: true });
+      await api.controlFrpServer("restart");
+      expect(fetchMock).toHaveBeenCalledWith("/api/frp/server/restart", expect.objectContaining({ method: "POST" }));
+    });
   });
 
   describe("projectEnv normalization", () => {

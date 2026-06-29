@@ -6,10 +6,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { HttpError } from "./http-utils.js";
 import { config, warnOnUnsafeDefaults } from "./config.js";
 import { migrate, pool } from "./db/index.js";
 import { logger } from "./logger.js";
-import { HttpError } from "./http-utils.js";
 import { ensureLocalMasterNode } from "./services/nodes.js";
 import { recoverInterruptedDeployments } from "./services/deployments.js";
 import { ensureEnabledCloudflaredConnectors, reconcileTunnelAssignments } from "./services/cloudflare.js";
@@ -23,6 +23,7 @@ import workersRouter from "./routes/workers.js";
 import settingsRouter from "./routes/settings.js";
 import cloudflareRouter from "./routes/cloudflare.js";
 import systemRouter from "./routes/system.js";
+import frpRouter from "./routes/frp.js";
 
 const app = express();
 
@@ -98,13 +99,14 @@ app.use(workersRouter);
 app.use(settingsRouter);
 app.use(cloudflareRouter);
 app.use(systemRouter);
+app.use(frpRouter);
 
 app.use((error: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   void next;
   const message = error instanceof Error ? error.message : "Unexpected server error.";
   logger.error("request failed", { error: message });
   const status = error instanceof z.ZodError ? 400 : error instanceof HttpError ? error.status : 500;
-  const publicMessage = config.nodeEnv === "production" && status >= 500 ? "Internal server error." : message;
+  const publicMessage = config.nodeEnv === "production" && status >= 500 && !(error instanceof HttpError) ? "Internal server error." : message;
   res.status(status).json({ message: publicMessage });
 });
 

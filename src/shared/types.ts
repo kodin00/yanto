@@ -168,6 +168,75 @@ export type MultiNodePublicSettings = {
   releaseStage: "beta";
 };
 
+export type FrpProtocol = "tcp" | "udp";
+export type FrpTunnelStatus = "disabled" | "error" | "syncing" | "online" | "offline";
+
+export type FrpSettings = {
+  publicHost: string;
+  bindPort: number;
+  portStart: number;
+  portEnd: number;
+  configured: boolean;
+};
+
+export type FrpWorkerState = {
+  nodeId: string;
+  desiredRevision: string | null;
+  appliedRevision: string | null;
+  processStatus: "running" | "stopped" | "error" | string;
+  frpcVersion: string | null;
+  lastError: string | null;
+  lastReportedAt: string | null;
+};
+
+export type FrpTunnel = {
+  id: string;
+  nodeId: string;
+  nodeName: string | null;
+  name: string;
+  protocol: FrpProtocol;
+  localHost: string;
+  localPort: number;
+  remotePort: number;
+  enabled: boolean;
+  syncStatus: FrpTunnelStatus;
+  lastError: string | null;
+  lastSyncedAt: string | null;
+  trafficInBytes: number;
+  trafficOutBytes: number;
+  currentConnections: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FrpClientStatus = {
+  nodeId: string;
+  nodeName: string;
+  workerStatus: string;
+  frpcStatus: string;
+  frpcVersion: string | null;
+  protocol: string | null;
+  lastSeenAt: string | null;
+  lastError: string | null;
+};
+
+export type FrpServerStatus = {
+  running: boolean;
+  containerStatus: string | null;
+  version: string | null;
+  uptimeSeconds: number | null;
+  trafficInBytes: number;
+  trafficOutBytes: number;
+  error: string | null;
+};
+
+export type FrpOverview = {
+  settings: FrpSettings;
+  server: FrpServerStatus;
+  clients: FrpClientStatus[];
+  tunnels: FrpTunnel[];
+};
+
 export type CloudflareTunnel = {
   id: string;
   clientId: string;

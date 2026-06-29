@@ -183,6 +183,40 @@ export const cloudflareRoutes = pgTable(
   ]
 );
 
+export const frpTunnels = pgTable(
+  "frp_tunnels",
+  {
+    id: text("id").primaryKey(),
+    nodeId: text("node_id").notNull().references(() => deploymentNodes.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    protocol: text("protocol").notNull(),
+    localHost: text("local_host").notNull(),
+    localPort: integer("local_port").notNull(),
+    remotePort: integer("remote_port").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    syncStatus: text("sync_status").notNull().default("syncing"),
+    lastError: text("last_error"),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("frp_tunnels_node_id_idx").on(table.nodeId),
+    uniqueIndex("frp_tunnels_protocol_remote_port_idx").on(table.protocol, table.remotePort)
+  ]
+);
+
+export const frpWorkerStates = pgTable("frp_worker_states", {
+  nodeId: text("node_id").primaryKey().references(() => deploymentNodes.id, { onDelete: "cascade" }),
+  desiredRevision: text("desired_revision"),
+  appliedRevision: text("applied_revision"),
+  processStatus: text("process_status").notNull().default("stopped"),
+  frpcVersion: text("frpc_version"),
+  lastError: text("last_error"),
+  lastReportedAt: timestamp("last_reported_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+});
+
 export type ProjectRow = typeof projects.$inferSelect;
 export type NewProjectRow = typeof projects.$inferInsert;
 export type DeploymentNodeRow = typeof deploymentNodes.$inferSelect;
@@ -200,3 +234,6 @@ export type CloudflareTunnelAssignmentRow = typeof cloudflareTunnelAssignments.$
 export type NewCloudflareTunnelRow = typeof cloudflareTunnels.$inferInsert;
 export type CloudflareRouteRow = typeof cloudflareRoutes.$inferSelect;
 export type NewCloudflareRouteRow = typeof cloudflareRoutes.$inferInsert;
+export type FrpTunnelRow = typeof frpTunnels.$inferSelect;
+export type NewFrpTunnelRow = typeof frpTunnels.$inferInsert;
+export type FrpWorkerStateRow = typeof frpWorkerStates.$inferSelect;

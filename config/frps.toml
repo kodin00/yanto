@@ -1,0 +1,21 @@
+bindAddr = "0.0.0.0"
+bindPort = {{ .Envs.FRP_BIND_PORT }}
+transport.tls.force = true
+maxPortsPerClient = 20
+allowPorts = [
+  { start = {{ .Envs.FRP_PORT_START }}, end = {{ .Envs.FRP_PORT_END }} }
+]
+
+auth.method = "token"
+auth.additionalScopes = ["HeartBeats", "NewWorkConns"]
+auth.tokenSource.type = "file"
+auth.tokenSource.file.path = "/data/frp/auth-token"
+
+webServer.addr = "0.0.0.0"
+webServer.port = 7500
+webServer.user = "yanto"
+webServer.password = "{{ .Envs.FRP_DASHBOARD_PASSWORD }}"
+
+log.to = "console"
+log.level = "info"
+log.disablePrintColor = true

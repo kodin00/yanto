@@ -1,6 +1,7 @@
 services:
   app:
     build: .
+    image: yanto:local
     restart: unless-stopped
     ports:
       - "127.0.0.1:${PORT:-8080}:8080"
@@ -22,12 +23,19 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       WORKER_JOIN_TOKEN: ${WORKER_JOIN_TOKEN:-}
       WORKER_TOKEN_SECRET: ${WORKER_TOKEN_SECRET:-change-this-to-a-long-random-secret}
+      FRP_BIND_PORT: ${FRP_BIND_PORT:-7000}
+      FRP_PORT_START: ${FRP_PORT_START:-25560}
+      FRP_PORT_END: ${FRP_PORT_END:-25600}
+      FRP_TOKEN_PATH: /data/frp/auth-token
+      FRP_DASHBOARD_URL: http://frps:7500
+      FRP_CONTAINER_NAME: yanto-frps
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${HOST_PROJECTS_ROOT:-~/projects}:/projects
       - ${SSH_SOURCE_DIR:-~/.ssh}:/root/.ssh:ro
       - yanto_ssh:/data/ssh
       - yanto_backups:/data/backups
+      - yanto_frp:/data/frp:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -37,6 +45,36 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+
+  frps:
+    image: yanto:local
+    container_name: yanto-frps
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        umask 077
+        if [ ! -s /data/frp/auth-token ]; then
+          od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > /data/frp/auth-token
+        fi
+        export FRP_DASHBOARD_PASSWORD="$$(cat /data/frp/auth-token)"
+        exec frps -c /etc/frp/frps.toml
+    environment:
+      FRP_BIND_PORT: ${FRP_BIND_PORT:-7000}
+      FRP_PORT_START: ${FRP_PORT_START:-25560}
+      FRP_PORT_END: ${FRP_PORT_END:-25600}
+    ports:
+      - "${FRP_BIND_PORT:-7000}:${FRP_BIND_PORT:-7000}/tcp"
+      - "${FRP_PORT_START:-25560}-${FRP_PORT_END:-25600}:${FRP_PORT_START:-25560}-${FRP_PORT_END:-25600}/tcp"
+      - "${FRP_PORT_START:-25560}-${FRP_PORT_END:-25600}:${FRP_PORT_START:-25560}-${FRP_PORT_END:-25600}/udp"
+    volumes:
+      - yanto_frp:/data/frp
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -u \"yanto:$$(cat /data/frp/auth-token)\" http://localhost:7500/api/serverinfo >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   postgres:
     image: postgres:17-alpine
@@ -57,3 +95,4 @@ volumes:
   yanto_postgres:
   yanto_ssh:
   yanto_backups:
+  yanto_frp:

@@ -16,6 +16,7 @@ import {
   List,
   LogOut,
   Moon,
+  Network,
   Play,
   Plus,
   RefreshCw,
@@ -34,6 +35,7 @@ const ContainersView = lazy(() => import("./views/ContainersView").then(m => ({ 
 const DeploymentsView = lazy(() => import("./views/DeploymentsView").then(m => ({ default: m.DeploymentsView })));
 const DnsView = lazy(() => import("./views/DnsView").then(m => ({ default: m.DnsView })));
 const HostnamesView = lazy(() => import("./views/HostnamesView").then(m => ({ default: m.HostnamesView })));
+const FrpView = lazy(() => import("./views/FrpView").then(m => ({ default: m.FrpView })));
 const NodesView = lazy(() => import("./views/NodesView").then(m => ({ default: m.NodesView })));
 const ProjectsView = lazy(() => import("./views/ProjectsView").then(m => ({ default: m.ProjectsView })));
 const SettingsView = lazy(() => import("./views/SettingsView").then(m => ({ default: m.SettingsView })));
@@ -54,7 +56,7 @@ import { YantoBootLoader } from "./components/YantoBootLoader";
 import { api, type AuditLogEntry, type BackupRecord, type CloudflareDnsRecordPayload, type CloudflareRoutePayload, type PostgresTarget } from "./lib/api";
 import packageJson from "../../package.json";
 
-type View = "dashboard" | "projects" | "deployments" | "containers" | "nodes" | "backups" | "hostnames" | "dns" | "audit" | "settings";
+type View = "dashboard" | "projects" | "deployments" | "containers" | "nodes" | "backups" | "hostnames" | "frp" | "dns" | "audit" | "settings";
 type ToastState = { message: string; kind?: "ok" | "error" | "loading" } | null;
 type LogModalState = { title: string; logs: string; streamPath?: string; live?: boolean; status?: string };
 type LogStreamPayload = { logs?: string; chunk?: string; status?: string; error?: string; done?: boolean };
@@ -235,6 +237,7 @@ export function App() {
   const [backupPage, setBackupPage] = useState(1);
   const [dnsPage, setDnsPage] = useState(1);
   const [auditPage, setAuditPage] = useState(1);
+  const [frpRefreshKey, setFrpRefreshKey] = useState(0);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -398,6 +401,10 @@ export function App() {
 
     if (targetView === "audit") {
       setAuditEntries(await api.auditLog().catch(() => []));
+      return;
+    }
+
+    if (targetView === "frp") {
       return;
     }
 
@@ -1308,6 +1315,7 @@ export function App() {
     setBusy("refresh-view");
     setToast({ message: `Refreshing ${view}...`, kind: "loading" });
     try {
+      if (view === "frp") setFrpRefreshKey((current) => current + 1);
       await loadViewWithState(view);
       setToast({ message: "View refreshed." });
     } catch (error) {
@@ -1375,6 +1383,7 @@ export function App() {
             ["deployments", Boxes, "Deployments"],
             ["containers", Container, "Containers"],
             ["hostnames", Globe2, "Hostnames"],
+            ["frp", Network, "FRP"],
             ...(multiNodeEnabled ? [["nodes", Server, "Nodes"] as const] : []),
             ["backups", Archive, "Backups"],
             ["dns", Globe2, "DNS"],
@@ -1521,6 +1530,15 @@ export function App() {
         ) : null}
 
         {view === "hostnames" ? <HostnamesView projects={projects} containers={containers} toast={(message, kind) => setToast({ message, kind })} /> : null}
+
+        {view === "frp" ? (
+          <FrpView
+            refreshKey={frpRefreshKey}
+            copyText={copyText}
+            toast={(message, kind) => setToast({ message, kind })}
+            setConfirm={setConfirm}
+          />
+        ) : null}
 
         {view === "audit" ? (
           <AuditView

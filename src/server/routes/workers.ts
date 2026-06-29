@@ -2,7 +2,7 @@ import { Router } from "express";
 import type express from "express";
 import rateLimit from "express-rate-limit";
 import { asyncRoute, routeParam } from "../http-utils.js";
-import { workerDeploymentUpdateInput, workerHeartbeatInput, workerLogInput, workerRegisterInput } from "../route-schemas.js";
+import { frpWorkerStatusInput, workerDeploymentUpdateInput, workerHeartbeatInput, workerLogInput, workerRegisterInput } from "../route-schemas.js";
 import { recordAuditLog } from "../services/audit.js";
 import { appendDeploymentLog, findDeploymentForNode, finishDeployment, startDeployment, updateDeploymentMetadata } from "../services/deployments.js";
 import { getProject } from "../services/projects.js";
@@ -10,6 +10,7 @@ import { githubBranchFromRef, githubPayloadFromRequestBody, githubWebhookPayload
 import { markNodeSeen, nextWorkerDeployment, nodeForWorkerToken, registerWorker } from "../services/nodes.js";
 import { getWorkerJoinToken } from "../services/settings.js";
 import { constantTimeEqual } from "../services/tokens.js";
+import { updateFrpWorkerState, workerFrpConfig } from "../services/frp.js";
 
 type RawBodyRequest = express.Request & { rawBody?: Buffer };
 
@@ -79,6 +80,24 @@ router.get(
     await markNodeSeen(node);
     const job = await nextWorkerDeployment(node.id);
     res.json(job ?? null);
+  })
+);
+
+router.get(
+  "/api/workers/frp/config",
+  requireWorker(async (_req, res, node) => {
+    await markNodeSeen(node);
+    res.json(await workerFrpConfig(node.id));
+  })
+);
+
+router.post(
+  "/api/workers/frp/status",
+  requireWorker(async (req, res, node) => {
+    const body = frpWorkerStatusInput.parse(req.body ?? {});
+    await updateFrpWorkerState(node.id, body);
+    await markNodeSeen(node);
+    res.json({ ok: true });
   })
 );
 

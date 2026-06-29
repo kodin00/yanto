@@ -22,6 +22,8 @@ services:
       - ${HOST_PROJECTS_ROOT:-~/projects}:/projects
       - ${SSH_SOURCE_DIR:-~/.ssh}:/root/.ssh:ro
       - yanto_worker_data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   yanto_worker_data:

@@ -21,6 +21,13 @@ export const config = {
   projectsRoot: path.resolve(process.env.PROJECTS_ROOT ?? "/projects"),
   backupsDir: path.resolve(process.env.BACKUPS_DIR ?? "/data/backups"),
   cloudflaredDir: path.resolve(process.env.CLOUDFLARED_DIR ?? "/data/cloudflared"),
+  frpDataDir: path.resolve(process.env.FRP_DATA_DIR ?? "/data/frp"),
+  frpTokenPath: path.resolve(process.env.FRP_TOKEN_PATH ?? "/data/frp/auth-token"),
+  frpDashboardUrl: process.env.FRP_DASHBOARD_URL ?? "http://frps:7500",
+  frpContainerName: process.env.FRP_CONTAINER_NAME ?? "yanto-frps",
+  frpBindPort: Number(process.env.FRP_BIND_PORT ?? 7000),
+  frpPortStart: Number(process.env.FRP_PORT_START ?? 25560),
+  frpPortEnd: Number(process.env.FRP_PORT_END ?? 25600),
   hostProjectsRoot: process.env.HOST_PROJECTS_ROOT ?? "~/projects",
   sshKeysDir: path.resolve(process.env.SSH_KEYS_DIR ?? "/tmp/yanto-ssh"),
   sshPrivateKeyPath: process.env.SSH_PRIVATE_KEY_PATH ?? "/root/.ssh/id_ed25519",
@@ -41,13 +48,19 @@ export function warnOnUnsafeDefaults() {
   if (!["master", "worker"].includes(config.nodeRole)) {
     console.warn(`YANTO_NODE_ROLE should be "master" or "worker"; got "${config.nodeRole}".`);
   }
-  if (config.jwtSecret === requiredSecretFallback) {
+  if (!Number.isInteger(config.frpBindPort) || config.frpBindPort < 1 || config.frpBindPort > 65535) {
+    throw new Error("FRP_BIND_PORT must be an integer between 1 and 65535.");
+  }
+  if (!Number.isInteger(config.frpPortStart) || !Number.isInteger(config.frpPortEnd) || config.frpPortStart < 1 || config.frpPortEnd > 65535 || config.frpPortStart > config.frpPortEnd) {
+    throw new Error("FRP_PORT_START and FRP_PORT_END must define a valid port range.");
+  }
+  if (config.nodeRole === "master" && config.jwtSecret === requiredSecretFallback) {
     if (config.nodeEnv === "production") {
       throw new Error("FATAL: JWT_SECRET is using the default value. Set a strong secret before running in production.");
     }
     console.warn("JWT_SECRET is using the default value. Set a strong secret before exposing this app.");
   }
-  if (config.adminPassword === "admin") {
+  if (config.nodeRole === "master" && config.adminPassword === "admin") {
     if (config.nodeEnv === "production") {
       throw new Error("FATAL: ADMIN_PASSWORD is using the default value. Set a strong admin password before running in production.");
     }

@@ -1,4 +1,4 @@
-import type { AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../../shared/types";
+import type { AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, ContainerInfo, Deployment, DeploymentNode, FrpOverview, FrpSettings, FrpTunnel, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -52,6 +52,16 @@ export type CloudflareDnsRecordPayload = {
   proxied?: boolean;
   priority?: number | null;
   comment?: string | null;
+};
+
+export type FrpTunnelPayload = {
+  name: string;
+  nodeId: string;
+  protocol: "tcp" | "udp";
+  localHost: string;
+  localPort: number;
+  remotePort: number;
+  enabled: boolean;
 };
 
 export type SshKeyStatus = {
@@ -329,5 +339,16 @@ export const api = {
   disableCfRoute: (routeId: string) =>
     request<CloudflareRoute>(`/api/cloudflare/routes/${routeId}/disable`, { method: "PATCH" }),
   deleteCfRoute: (routeId: string) =>
-    request<void>(`/api/cloudflare/routes/${routeId}`, { method: "DELETE" })
+    request<void>(`/api/cloudflare/routes/${routeId}`, { method: "DELETE" }),
+  frpOverview: () => request<FrpOverview>("/api/frp/overview"),
+  saveFrpSettings: (publicHost: string) =>
+    request<FrpSettings>("/api/frp/settings", { method: "PUT", body: JSON.stringify({ publicHost }) }),
+  controlFrpServer: (action: "start" | "stop" | "restart") =>
+    request<FrpOverview["server"]>(`/api/frp/server/${action}`, { method: "POST" }),
+  createFrpTunnel: (payload: FrpTunnelPayload) =>
+    request<FrpTunnel>("/api/frp/tunnels", { method: "POST", body: JSON.stringify(payload) }),
+  updateFrpTunnel: (id: string, payload: Partial<FrpTunnelPayload>) =>
+    request<FrpTunnel>(`/api/frp/tunnels/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteFrpTunnel: (id: string) =>
+    request<void>(`/api/frp/tunnels/${id}`, { method: "DELETE" })
 };

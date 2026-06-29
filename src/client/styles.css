@@ -493,10 +493,111 @@ a.button {
 
 .dashboard,
 .settings-grid,
-.backup-layout {
+.backup-layout,
+.frp-layout {
   display: grid;
   gap: 16px;
   grid-template-columns: 1fr;
+}
+
+.frp-layout {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.frp-server-panel,
+.frp-settings-panel,
+.frp-clients-panel,
+.frp-editor-panel,
+.frp-firewall-panel {
+  min-width: 0;
+}
+
+.frp-clients-panel,
+.frp-tunnels-panel {
+  grid-column: 1 / -1;
+}
+
+.frp-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.frp-stat-grid > div {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  background: var(--field);
+  border: 1px solid var(--line-light);
+}
+
+.frp-stat-grid span,
+.frp-client-card > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.frp-stat-grid strong {
+  font-size: 14px;
+}
+
+.frp-client-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 10px;
+}
+
+.frp-client-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  background: var(--field);
+  border: 1px solid var(--line);
+}
+
+.frp-client-card > div:first-child,
+.frp-client-statuses {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.frp-empty-state {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+}
+
+.frp-presets {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.frp-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.frp-mapping {
+  min-width: 230px;
+}
+
+.frp-mapping span,
+.frp-mapping strong {
+  display: block;
+}
+
+.frp-firewall-panel pre {
+  overflow-x: auto;
+  padding: 12px;
+  color: var(--terminal-ink);
+  background: var(--terminal-bg);
+  font-size: 12px;
 }
 
 .backup-layout > .panel {
@@ -1425,7 +1526,8 @@ th {
 .status.active,
 .status.ready,
 .status.ok,
-.status.yanto {
+.status.yanto,
+.status.online {
   background: var(--success-bg);
   color: var(--green-dark);
 }
@@ -1436,7 +1538,9 @@ th {
 .status.conflict,
 .status.mismatch,
 .status.missing,
-.status.unhealthy {
+.status.unhealthy,
+.status.error,
+.status.offline {
   background: var(--danger-bg);
   color: var(--red-dark);
 }
@@ -1451,6 +1555,11 @@ th {
 .status.skipped,
 .status.unknown,
 .status.checking {
+  background: var(--idle-bg);
+  color: var(--amber);
+}
+
+.status.syncing {
   background: var(--idle-bg);
   color: var(--amber);
 }
@@ -2495,8 +2604,19 @@ th {
 
   .dashboard-main-grid,
   .settings-grid,
-  .dns-layout {
+  .dns-layout,
+  .frp-layout {
     grid-template-columns: 1fr;
+  }
+
+  .frp-clients-panel,
+  .frp-tunnels-panel {
+    grid-column: auto;
+  }
+
+  .frp-stat-grid,
+  .frp-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .ops-hero {
