@@ -44,9 +44,17 @@ describe("project env files", () => {
     const rows = await readProjectEnvVariables(project());
 
     expect(rows).toEqual([
-      { key: "APP_PORT", value: "3000", masked: false },
-      { key: "JWT_SECRET", value: "********", masked: true }
+      { key: "APP_PORT", value: "3000" },
+      { key: "JWT_SECRET", value: "super-secret-value" }
     ]);
+  });
+
+  it("writes literal asterisks instead of treating them as a masked sentinel", async () => {
+    await fs.writeFile(path.join(tempDir, ".env"), "JWT_SECRET=original-secret\n");
+
+    await writeProjectEnvVariables(project(), [{ key: "JWT_SECRET", value: "********" }]);
+
+    await expect(fs.readFile(path.join(tempDir, ".env"), "utf8")).resolves.toBe("JWT_SECRET=********\n");
   });
 
   it("writes .env in the project directory by default", async () => {

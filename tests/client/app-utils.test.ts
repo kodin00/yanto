@@ -336,8 +336,8 @@ describe("normalizeEnvRows", () => {
     ];
     const result = normalizeEnvRows(rows);
     expect(result).toEqual([
-      { key: "A_VAR", value: "", masked: false },
-      { key: "B_VAR", value: "hello", masked: true }
+      { key: "A_VAR", value: "" },
+      { key: "B_VAR", value: "hello" }
     ]);
   });
 

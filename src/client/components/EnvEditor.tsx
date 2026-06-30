@@ -1,7 +1,7 @@
-import { FileText, List, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { FileText, List, Plus, Trash2 } from "lucide-react";
 import type { Dispatch, SetStateAction } from "react";
 import { normalizeEnvRows } from "../app-utils";
-import { Button, IconButton, TextAreaField, TextField, ToggleField } from "./ui";
+import { Button, IconButton, TextAreaField, TextField } from "./ui";
 import type { ProjectEnvVariable } from "../lib/api";
 
 export type EnvEditMode = "pairs" | "text";
@@ -33,7 +33,7 @@ function parseEnvContentRows(content: string) {
     const separator = line.indexOf("=");
     if (separator <= 0) continue;
     const value = line.slice(separator + 1);
-    rows.push({ key: line.slice(0, separator).trim(), value, masked: value === "********" });
+    rows.push({ key: line.slice(0, separator).trim(), value });
   }
   return normalizeEnvRows(rows);
 }
@@ -43,7 +43,7 @@ export function EnvEditor({ modal, onChange }: { modal: ProjectEnvState; onChang
   const currentKeys = new Set(modal.rows.map((row) => row.key));
   const changedRows = modal.rows.filter((row) => {
     const original = modal.baseline.find((item) => item.key === row.key);
-    return !original || original.value !== row.value || original.masked !== row.masked;
+    return !original || original.value !== row.value;
   });
   const removedRows = modal.baseline.filter((row) => !currentKeys.has(row.key));
   const setRows = (rows: ProjectEnvVariable[], patch: Partial<ProjectEnvState> = {}) => onChange({ ...modal, ...patch, rows, content: serializeEnvRows(rows) });
@@ -79,7 +79,6 @@ export function EnvEditor({ modal, onChange }: { modal: ProjectEnvState; onChang
                   value={row.value ?? ""}
                   onChange={(value) => setRows(modal.rows.map((item, rowIndex) => (rowIndex === index ? { ...item, value } : item)))}
                 />
-                <ToggleField label="Masked" value={Boolean(row.masked)} onChange={(masked) => setRows(modal.rows.map((item, rowIndex) => (rowIndex === index ? { ...item, masked } : item)))} />
                 <IconButton label="Remove variable" variant="danger" onClick={() => setRows(modal.rows.filter((_, rowIndex) => rowIndex !== index))}>
                   <Trash2 size={15} />
                 </IconButton>
@@ -94,7 +93,7 @@ export function EnvEditor({ modal, onChange }: { modal: ProjectEnvState; onChang
               onClick={() => {
                 const key = modal.draftKey.trim();
                 if (!key) return;
-                setRows(normalizeEnvRows([...modal.rows, { key, value: modal.draftValue, masked: false }]), { draftKey: "", draftValue: "" });
+                setRows(normalizeEnvRows([...modal.rows, { key, value: modal.draftValue }]), { draftKey: "", draftValue: "" });
               }}
               icon={<Plus size={15} />}
             >
@@ -102,13 +101,12 @@ export function EnvEditor({ modal, onChange }: { modal: ProjectEnvState; onChang
             </Button>
           </div>
           <div className="env-diff">
-            <div className="section-kicker">Masked diff</div>
+            <div className="section-kicker">Environment diff</div>
             {[...changedRows, ...removedRows].map((row) => {
               const removed = !currentKeys.has(row.key);
               const created = !baselineKeys.has(row.key);
               return (
                 <div key={`${row.key}:diff`}>
-                  <ShieldCheck size={15} />
                   <span>{row.key}</span>
                   <strong>{removed ? "removed" : created ? "added" : "updated"}</strong>
                 </div>

@@ -110,13 +110,12 @@ function normalizeProjectEnv(payload: unknown): ProjectEnvVariable[] {
   if (Array.isArray(payload)) {
     return payload
       .filter((row): row is ProjectEnvVariable => Boolean(row) && typeof row === "object" && "key" in row)
-      .map((row) => ({ key: String(row.key), value: row.value == null ? "" : String(row.value), masked: Boolean(row.masked) }));
+      .map((row) => ({ key: String(row.key), value: row.value == null ? "" : String(row.value) }));
   }
   if (payload && typeof payload === "object") {
     return Object.entries(payload).map(([key, value]) => ({
       key,
-      value: value == null ? "" : String(value),
-      masked: true
+      value: value == null ? "" : String(value)
     }));
   }
   return [];

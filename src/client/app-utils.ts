@@ -152,7 +152,7 @@ export function cloudflareServiceUrl(project: Project, containers: ContainerInfo
 }
 
 export function normalizeEnvRows(rows: ProjectEnvVariable[]) {
-  return rows.map((row) => ({ key: row.key, value: row.value ?? "", masked: Boolean(row.masked) })).sort((a, b) => a.key.localeCompare(b.key));
+  return rows.map((row) => ({ key: row.key, value: row.value ?? "" })).sort((a, b) => a.key.localeCompare(b.key));
 }
 
 export function deploymentChanges(deployment: Deployment) {

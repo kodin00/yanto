@@ -431,8 +431,8 @@ describe("api client", () => {
       const result = await api.projectEnv("p1");
 
       expect(result).toEqual([
-        { key: "DB_HOST", value: "localhost", masked: false },
-        { key: "SECRET", value: "", masked: true }
+        { key: "DB_HOST", value: "localhost" },
+        { key: "SECRET", value: "" }
       ]);
     });
 
@@ -442,8 +442,8 @@ describe("api client", () => {
       const result = await api.projectEnv("p1");
 
       expect(result).toEqual([
-        { key: "API_KEY", value: "abc123", masked: true },
-        { key: "DB_URL", value: "postgres://...", masked: true }
+        { key: "API_KEY", value: "abc123" },
+        { key: "DB_URL", value: "postgres://..." }
       ]);
     });
 

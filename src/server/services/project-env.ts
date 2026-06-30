@@ -4,20 +4,10 @@ import type { EnvPreview, EnvPreviewEntry } from "../../shared/types.js";
 import type { ProjectRow } from "../db/schema.js";
 import { normalizeEnvFile, pathExists } from "./paths.js";
 
-const secretPattern = /(secret|token|password|passwd|pwd|key|credential|auth|jwt)/i;
-const maskedSentinel = "********";
 const defaultEnvFile = ".env";
 
 function envPath(project: ProjectRow, envFile?: string) {
   return path.join(project.localPath, normalizeEnvFile(envFile ?? defaultEnvFile));
-}
-
-function maskValue(key: string, value: string) {
-  if (!value) return "";
-  const shouldMask = secretPattern.test(key) || value.length > 16;
-  if (!shouldMask) return value;
-  if (value.length <= 4) return "****";
-  return `${value.slice(0, 2)}****${value.slice(-2)}`;
 }
 
 function parseEnvMap(content: string) {
@@ -62,7 +52,7 @@ export function previewEnvContent(content: string, envFile = ".env"): EnvPreview
       line: index + 1,
       key,
       hasValue: value.length > 0,
-      maskedValue: maskValue(key, value),
+      maskedValue: value,
       comment: null
     };
   });
@@ -81,19 +71,9 @@ export async function readProjectEnv(project: ProjectRow, envFile = defaultEnvFi
     return { envFile: normalized, content: "" };
   }
   const content = await fs.readFile(target, "utf8");
-  const maskedContent = content
-    .split(/\r?\n/)
-    .map((line) => {
-      const separator = line.indexOf("=");
-      if (separator <= 0) return line;
-      const key = line.slice(0, separator).trim();
-      const value = line.slice(separator + 1);
-      return secretPattern.test(key) || value.length > 16 ? `${line.slice(0, separator + 1)}${maskedSentinel}` : line;
-    })
-    .join("\n");
   return {
     envFile: normalized,
-    content: maskedContent
+    content
   };
 }
 
@@ -101,8 +81,7 @@ export async function readProjectEnvVariables(project: ProjectRow, envFile?: str
   const current = await readProjectEnv(project, envFile);
   return Array.from(parseEnvMap(current.content).entries()).map(([key, value]) => ({
     key,
-    value,
-    masked: value === maskedSentinel
+    value
   }));
 }
 
@@ -114,35 +93,17 @@ export async function previewProjectEnv(project: ProjectRow, envFile?: string) {
 export async function writeProjectEnv(project: ProjectRow, content: string, envFile = defaultEnvFile) {
   const normalized = normalizeEnvFile(envFile);
   const target = envPath(project, normalized);
-  const existing = (await pathExists(target)) ? await fs.readFile(target, "utf8") : "";
-  const existingValues = parseEnvMap(existing);
-  const resolvedContent = content
-    .split(/\r?\n/)
-    .map((line) => {
-      const separator = line.indexOf("=");
-      if (separator <= 0) return line;
-      const key = line.slice(0, separator).trim();
-      const value = line.slice(separator + 1);
-      if (value === maskedSentinel && existingValues.has(key)) {
-        return `${line.slice(0, separator + 1)}${existingValues.get(key) ?? ""}`;
-      }
-      return line;
-    })
-    .join("\n");
   await fs.mkdir(path.dirname(target), { recursive: true });
-  await fs.writeFile(target, resolvedContent, { encoding: "utf8", mode: 0o600 });
-  return previewEnvContent(resolvedContent, normalized);
+  await fs.writeFile(target, content, { encoding: "utf8", mode: 0o600 });
+  return previewEnvContent(content, normalized);
 }
 
 export async function writeProjectEnvVariables(project: ProjectRow, variables: { key: string; value?: string | null; masked?: boolean }[], envFile = defaultEnvFile) {
   const normalized = normalizeEnvFile(envFile);
-  const currentPath = envPath(project, normalized);
-  const existing = (await pathExists(currentPath)) ? await fs.readFile(currentPath, "utf8") : "";
-  const existingValues = parseEnvMap(existing);
   const content = variables
     .map((variable) => {
       const key = variable.key.trim();
-      const value = variable.value == null && variable.masked ? existingValues.get(key) ?? "" : variable.value ?? "";
+      const value = variable.value ?? "";
       return `${key}=${value}`;
     })
     .filter((line) => line.split("=")[0])

@@ -624,14 +624,7 @@ export function App() {
   }
 
   function projectEnvPayload() {
-    const rows = normalizeEnvRows(projectEnv.rows.filter((row) => row.key.trim()));
-    return rows.map((row) => {
-      const original = projectEnv.baseline.find((item) => item.key === row.key);
-      if (original?.masked && original.value === row.value) {
-        return { key: row.key, masked: row.masked };
-      }
-      return row;
-    });
+    return normalizeEnvRows(projectEnv.rows.filter((row) => row.key.trim()));
   }
 
   function updateR2Form(patch: Partial<typeof r2Form>) {
