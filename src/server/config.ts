@@ -2,6 +2,10 @@ import path from "node:path";
 
 const requiredSecretFallback = "change-this-to-a-long-random-secret";
 
+function configuredSecret(...values: Array<string | undefined>) {
+  return values.find((value) => value && value !== requiredSecretFallback) ?? requiredSecretFallback;
+}
+
 export const config = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   nodeRole: process.env.YANTO_NODE_ROLE ?? "master",
@@ -16,7 +20,7 @@ export const config = {
   port: Number(process.env.PORT ?? "8080"),
   databaseUrl: process.env.DATABASE_URL ?? "postgres://yanto:yanto@localhost:5432/yanto",
   jwtSecret: process.env.JWT_SECRET ?? requiredSecretFallback,
-  mcpTokenSecret: process.env.MCP_TOKEN_SECRET ?? process.env.WORKER_TOKEN_SECRET ?? process.env.JWT_SECRET ?? requiredSecretFallback,
+  mcpTokenSecret: configuredSecret(process.env.MCP_TOKEN_SECRET, process.env.WORKER_TOKEN_SECRET, process.env.JWT_SECRET),
   mcpAllowedHosts: process.env.MCP_ALLOWED_HOSTS ?? "",
   mcpAllowedOrigins: process.env.MCP_ALLOWED_ORIGINS ?? "",
   adminUsername: process.env.ADMIN_USERNAME ?? "admin",
@@ -70,9 +74,6 @@ export function warnOnUnsafeDefaults() {
     console.warn("ADMIN_PASSWORD is using the default value. Set a strong admin password.");
   }
   if (config.nodeRole === "master" && config.mcpTokenSecret === requiredSecretFallback) {
-    if (config.nodeEnv === "production") {
-      throw new Error("FATAL: MCP_TOKEN_SECRET/JWT_SECRET is using the default value. Set a strong secret before running in production.");
-    }
-    console.warn("MCP_TOKEN_SECRET/JWT_SECRET is using the default value. Set a strong secret before exposing MCP.");
+    console.warn("MCP_TOKEN_SECRET/WORKER_TOKEN_SECRET/JWT_SECRET is using the default value. Set a stable strong secret before creating MCP tokens.");
   }
 }

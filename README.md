@@ -84,7 +84,7 @@ Important environment variables:
 
 - `DATABASE_URL`
 - `JWT_SECRET`
-- `MCP_TOKEN_SECRET`, defaults to `WORKER_TOKEN_SECRET`/`JWT_SECRET`; set a stable long random value before creating MCP tokens
+- `MCP_TOKEN_SECRET`, optional; defaults to `WORKER_TOKEN_SECRET`/`JWT_SECRET`; set a stable long random value before creating MCP tokens
 - `MCP_ALLOWED_HOSTS`, comma-separated hosts allowed to call `/mcp`
 - `MCP_ALLOWED_ORIGINS`, comma-separated browser origins allowed to call `/mcp`
 - `ADMIN_USERNAME`
