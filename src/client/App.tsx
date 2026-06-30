@@ -39,7 +39,7 @@ const FrpView = lazy(() => import("./views/FrpView").then(m => ({ default: m.Frp
 const NodesView = lazy(() => import("./views/NodesView").then(m => ({ default: m.NodesView })));
 const ProjectsView = lazy(() => import("./views/ProjectsView").then(m => ({ default: m.ProjectsView })));
 const SettingsView = lazy(() => import("./views/SettingsView").then(m => ({ default: m.SettingsView })));
-import type { CloudflareClient, CloudflareDnsRecord, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, ContainerInfo, Deployment, DeploymentNode, MultiNodePublicSettings, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../shared/types";
+import type { CloudflareClient, CloudflareDnsRecord, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, ContainerInfo, Deployment, DeploymentNode, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../shared/types";
 import {
   cloudflareServiceUrl,
   endpoint,
@@ -207,6 +207,9 @@ export function App() {
   const [usage, setUsage] = useState<SystemUsage | null>(null);
   const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: "", sshKey: emptySshKeySettings, r2: emptyR2Settings, cf: emptyCfSettings, setupWizard: emptySetupWizardStatus, multiNode: emptyMultiNodeSettings });
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [mcpTokens, setMcpTokens] = useState<McpAccessToken[]>([]);
+  const [mcpTokenForm, setMcpTokenForm] = useState<{ name: string; accessLevel: McpAccessLevel }>({ name: "", accessLevel: "read" });
+  const [createdMcpToken, setCreatedMcpToken] = useState<{ token: string; accessToken: McpAccessToken } | null>(null);
   const [r2Form, setR2Form] = useState({ enabled: false, accountId: "", bucket: "", accessKeyId: "", secretAccessKey: "", prefix: "postgres-dumps" });
   const [r2FormDirty, setR2FormDirty] = useState(false);
   const [cfForm, setCfForm] = useState({ accountId: "", zoneId: "", apiToken: "" });
@@ -298,8 +301,9 @@ export function App() {
   }, []);
 
   const refreshSettings = useCallback(async () => {
-    const settingRows = await api.settings().catch(() => null);
+    const [settingRows, tokenRows] = await Promise.all([api.settings().catch(() => null), api.mcpTokens().catch(() => null)]);
     if (settingRows) setSettings(settingRows);
+    if (tokenRows) setMcpTokens(tokenRows);
   }, []);
 
   const refreshRouteDiagnostics = useCallback(async () => {
@@ -416,8 +420,9 @@ export function App() {
       return;
     }
 
-    const [settingRows, logRows] = await Promise.all([api.settings(), api.systemLogs().catch(() => "")]);
+    const [settingRows, logRows, tokenRows] = await Promise.all([api.settings(), api.systemLogs().catch(() => ""), api.mcpTokens().catch(() => [])]);
     setSettings(settingRows);
+    setMcpTokens(tokenRows);
     setSettingsLoaded(true);
     setSystemLogs(logRows);
   }, [fetchContainerRows]);
@@ -1094,6 +1099,43 @@ export function App() {
     }
   }
 
+  async function createMcpToken(event: FormEvent) {
+    event.preventDefault();
+    setBusy("mcp-token-create");
+    setToast({ message: "Creating MCP token...", kind: "loading" });
+    try {
+      const result = await api.createMcpToken(mcpTokenForm);
+      setCreatedMcpToken(result);
+      setMcpTokens((current) => [result.accessToken, ...current]);
+      setMcpTokenForm({ name: "", accessLevel: "read" });
+      setToast({ message: "MCP token created. Copy it now; it will not be shown again." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to create MCP token.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function revokeMcpToken(token: McpAccessToken) {
+    setConfirm({
+      title: "Revoke MCP token",
+      body: `Revoke "${token.name}"? Existing MCP clients using this token will stop working immediately.`,
+      label: "Revoke token",
+      danger: true,
+      loadingMessage: "Revoking MCP token...",
+      successMessage: "MCP token revoked.",
+      action: async () => {
+        setBusy(`mcp-token:${token.id}`);
+        try {
+          await api.revokeMcpToken(token.id);
+          setMcpTokens((current) => current.map((row) => (row.id === token.id ? { ...row, revokedAt: new Date().toISOString() } : row)));
+        } finally {
+          setBusy(null);
+        }
+      }
+    });
+  }
+
   const [cfRouteForm, setCfRouteForm] = useState<CfRouteForm>(buildCfRouteForm());
 
   async function publishCfRoute(projectId: string) {
@@ -1574,6 +1616,9 @@ export function App() {
         {view === "settings" ? (
           <SettingsView
             settings={settings}
+            mcpTokens={mcpTokens}
+            mcpTokenForm={mcpTokenForm}
+            createdMcpToken={createdMcpToken}
             r2Form={r2Form}
             cfForm={cfForm}
             busy={busy}
@@ -1584,8 +1629,12 @@ export function App() {
             cleanupPreviewed={cleanupPreviewed}
             updateR2Form={updateR2Form}
             updateCfForm={updateCfForm}
+            updateMcpTokenForm={(patch) => setMcpTokenForm((current) => ({ ...current, ...patch }))}
             saveR2Settings={saveR2Settings}
             saveCfSettings={saveCfSettings}
+            createMcpToken={createMcpToken}
+            revokeMcpToken={revokeMcpToken}
+            dismissCreatedMcpToken={() => setCreatedMcpToken(null)}
             saveMultiNodeSettings={saveMultiNodeSettings}
             validateCfSettings={validateCfSettings}
             saveSshPrivateKey={saveSshPrivateKey}

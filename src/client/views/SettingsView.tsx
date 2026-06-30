@@ -3,10 +3,14 @@ import { memo } from "react";
 import type { FormEvent } from "react";
 import { Button, LogViewer, StatusBadge, TextAreaField, TextField, ToggleField } from "../components/ui";
 import { api } from "../lib/api";
-import type { CfFormState, ConfirmState, R2FormState, SettingsState } from "./types";
+import type { McpAccessLevel, McpAccessToken } from "../../shared/types";
+import type { CfFormState, ConfirmState, CreatedMcpTokenState, McpTokenFormState, R2FormState, SettingsState } from "./types";
 
 type Props = {
   settings: SettingsState;
+  mcpTokens: McpAccessToken[];
+  mcpTokenForm: McpTokenFormState;
+  createdMcpToken: CreatedMcpTokenState;
   r2Form: R2FormState;
   cfForm: CfFormState;
   busy: string | null;
@@ -17,8 +21,12 @@ type Props = {
   cleanupPreviewed: boolean;
   updateR2Form: (patch: Partial<R2FormState>) => void;
   updateCfForm: (patch: Partial<CfFormState>) => void;
+  updateMcpTokenForm: (patch: Partial<McpTokenFormState>) => void;
   saveR2Settings: (event: FormEvent) => void;
   saveCfSettings: (event: FormEvent) => void;
+  createMcpToken: (event: FormEvent) => void;
+  revokeMcpToken: (token: McpAccessToken) => void;
+  dismissCreatedMcpToken: () => void;
   saveMultiNodeSettings: (enabled: boolean) => void;
   validateCfSettings: () => void;
   saveSshPrivateKey: (event: FormEvent) => void;
@@ -40,6 +48,9 @@ type Props = {
 export const SettingsView = memo(function SettingsView(props: Props) {
   const {
     settings,
+    mcpTokens,
+    mcpTokenForm,
+    createdMcpToken,
     r2Form,
     cfForm,
     busy,
@@ -50,8 +61,12 @@ export const SettingsView = memo(function SettingsView(props: Props) {
     cleanupPreviewed,
     updateR2Form,
     updateCfForm,
+    updateMcpTokenForm,
     saveR2Settings,
     saveCfSettings,
+    createMcpToken,
+    revokeMcpToken,
+    dismissCreatedMcpToken,
     saveMultiNodeSettings,
     validateCfSettings,
     saveSshPrivateKey,
@@ -146,6 +161,73 @@ export const SettingsView = memo(function SettingsView(props: Props) {
             description="Opt in to worker nodes, node targeting, and worker install commands."
             disabled={busy === "multi-node-settings"}
           />
+        </section>
+
+        <section className="panel mcp-settings-panel">
+          <div className="panel-head">
+            <h2>MCP access</h2>
+            <KeyRound size={19} />
+          </div>
+          <p className="muted">Create bearer tokens for AI clients. Tokens authorize `/mcp` and local stdio only; token administration stays dashboard-only.</p>
+          {createdMcpToken ? (
+            <div className="created-secret-box">
+              <div>
+                <strong>Copy this token now</strong>
+                <p className="muted">Yanto stores only a hash and will not show the secret again.</p>
+              </div>
+              <div className="token-box">
+                <span>{createdMcpToken.token}</span>
+                <button type="button" onClick={() => void copyText(createdMcpToken.token)} title="Copy MCP token" aria-label="Copy MCP token">
+                  <Copy size={15} />
+                </button>
+              </div>
+              <Button type="button" variant="secondary" onClick={dismissCreatedMcpToken}>
+                I copied it
+              </Button>
+            </div>
+          ) : null}
+          <form className="form-grid compact-form" onSubmit={createMcpToken} autoComplete="off">
+            <div className="settings-form-pair">
+              <TextField label="Token name" value={mcpTokenForm.name} onChange={(name) => updateMcpTokenForm({ name })} placeholder="Codex local" autoComplete="off" />
+              <label className="field">
+                <span>Access level</span>
+                <select value={mcpTokenForm.accessLevel} onChange={(event) => updateMcpTokenForm({ accessLevel: event.target.value as McpAccessLevel })}>
+                  <option value="read">Read</option>
+                  <option value="write">Write</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+            </div>
+            <p className="muted">Scopes are hierarchical: write includes read; admin includes both. Destructive and secret-reveal MCP tools still require <code>confirm: true</code>.</p>
+            <div className="actions">
+              <Button type="submit" disabled={busy === "mcp-token-create" || !mcpTokenForm.name.trim()} icon={<KeyRound size={16} />}>
+                Create MCP token
+              </Button>
+            </div>
+          </form>
+          <div className="token-table">
+            {mcpTokens.length ? (
+              mcpTokens.map((token) => (
+                <div className="token-row" key={token.id}>
+                  <div>
+                    <strong>{token.name}</strong>
+                    <p className="muted">
+                      {token.accessLevel} · created {new Date(token.createdAt).toLocaleString()}
+                      {token.lastUsedAt ? ` · last used ${new Date(token.lastUsedAt).toLocaleString()}` : ""}
+                    </p>
+                  </div>
+                  <div className="actions">
+                    <StatusBadge status={token.revokedAt ? "revoked" : token.accessLevel} />
+                    <Button type="button" variant="danger" disabled={Boolean(token.revokedAt) || busy === `mcp-token:${token.id}`} onClick={() => revokeMcpToken(token)} icon={<Trash2 size={16} />}>
+                      Revoke
+                    </Button>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="muted">No MCP tokens yet.</p>
+            )}
+          </div>
         </section>
 
         <section className="panel webhook-settings compact-settings-panel">

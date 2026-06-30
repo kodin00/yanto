@@ -142,6 +142,24 @@ export async function migrate() {
     );
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mcp_access_tokens (
+      id text PRIMARY KEY,
+      name text NOT NULL,
+      token_hash text NOT NULL,
+      access_level text NOT NULL,
+      last_used_at timestamptz,
+      revoked_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`ALTER TABLE mcp_access_tokens ADD COLUMN IF NOT EXISTS last_used_at timestamptz;`);
+  await pool.query(`ALTER TABLE mcp_access_tokens ADD COLUMN IF NOT EXISTS revoked_at timestamptz;`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS mcp_access_tokens_token_hash_idx ON mcp_access_tokens(token_hash);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS mcp_access_tokens_revoked_idx ON mcp_access_tokens(revoked_at);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS mcp_access_tokens_created_at_idx ON mcp_access_tokens(created_at DESC);`);
+
   await pool.query(`CREATE INDEX IF NOT EXISTS projects_created_at_idx ON projects(created_at);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS projects_folder_name_idx ON projects(folder_name);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS projects_target_node_idx ON projects(target_node_id);`);

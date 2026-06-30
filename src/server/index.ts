@@ -24,6 +24,8 @@ import settingsRouter from "./routes/settings.js";
 import cloudflareRouter from "./routes/cloudflare.js";
 import systemRouter from "./routes/system.js";
 import frpRouter from "./routes/frp.js";
+import mcpTokensRouter from "./routes/mcp-tokens.js";
+import mcpRouter from "./mcp/http.js";
 
 const app = express();
 
@@ -49,7 +51,7 @@ app.use(helmet({
 }));
 
 const CSRF_COOKIE = "yanto_csrf";
-const CSRF_SKIP_PATHS = ["/api/auth/login", "/api/workers/", "/deploy", "/api/webhooks/", "/webhooks/"];
+const CSRF_SKIP_PATHS = ["/api/auth/login", "/api/workers/", "/deploy", "/api/webhooks/", "/webhooks/", "/mcp"];
 
 function csrfProtection(req: express.Request, res: express.Response, next: express.NextFunction) {
   if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") {
@@ -90,6 +92,7 @@ function csrfProtection(req: express.Request, res: express.Response, next: expre
 
 app.use(csrfProtection);
 
+app.use(mcpRouter);
 app.use(authRouter);
 app.use(projectsRouter);
 app.use(deploymentsRouter);
@@ -100,6 +103,7 @@ app.use(settingsRouter);
 app.use(cloudflareRouter);
 app.use(systemRouter);
 app.use(frpRouter);
+app.use(mcpTokensRouter);
 
 app.use((error: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   void next;

@@ -1,4 +1,4 @@
-import type { AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, ContainerInfo, Deployment, DeploymentNode, FrpOverview, FrpSettings, FrpTunnel, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../../shared/types";
+import type { AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, ContainerInfo, Deployment, DeploymentNode, FrpOverview, FrpSettings, FrpTunnel, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -229,6 +229,13 @@ export const api = {
   systemLogs: () => request<string>("/api/system/logs"),
   cleanupPreview: () => request<{ logs: string }>("/api/system/cleanup/preview"),
   cleanup: () => request<{ logs: string }>("/api/system/cleanup", { method: "POST" }),
+  mcpTokens: () => request<McpAccessToken[]>("/api/mcp-tokens"),
+  createMcpToken: (payload: { name: string; accessLevel: McpAccessLevel }) =>
+    request<{ token: string; accessToken: McpAccessToken }>("/api/mcp-tokens", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  revokeMcpToken: (id: string) => request<void>(`/api/mcp-tokens/${id}`, { method: "DELETE" }),
   saveSshKey: (privateKey: string) =>
     request<{ ok: true; sshKey: SshKeyStatus }>("/api/settings/ssh-key", {
       method: "POST",

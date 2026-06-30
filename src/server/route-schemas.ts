@@ -159,3 +159,10 @@ export const frpWorkerStatusInput = z.object({
   frpcVersion: z.string().max(100).nullable().optional(),
   lastError: z.string().max(4000).nullable().optional()
 });
+
+export const mcpAccessLevelInput = z.enum(["read", "write", "admin"]);
+
+export const mcpTokenCreateInput = z.object({
+  name: z.string().trim().min(1).max(100),
+  accessLevel: mcpAccessLevelInput
+});

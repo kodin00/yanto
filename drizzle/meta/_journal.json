@@ -8,6 +8,13 @@
       "when": 1779550654157,
       "tag": "0000_high_human_torch",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782835200000,
+      "tag": "0001_smart_mcp_access_tokens",
+      "breakpoints": true
     }
   ]
 }

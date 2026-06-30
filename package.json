@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server/index.ts",
+    "dev:mcp:stdio": "tsx src/server/mcp/stdio.ts",
     "dev:client": "vite --host 0.0.0.0",
     "dev:full": "concurrently -n server,client -c blue,green \"npm run dev\" \"npm run dev:client\"",
     "dev:debug": "tsx watch --inspect src/server/index.ts",
@@ -12,6 +13,7 @@
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
     "start": "node dist/server/server/index.js",
+    "start:mcp:stdio": "node dist/server/server/mcp/stdio.js",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
@@ -21,6 +23,7 @@
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@vitejs/plugin-react": "^5.0.4",
     "bcryptjs": "^3.0.2",
     "cookie-parser": "^1.4.7",

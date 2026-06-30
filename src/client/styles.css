@@ -1622,6 +1622,7 @@ th {
 
 .field input,
 .field textarea,
+.field select,
 .select-trigger {
   width: 100%;
   min-height: 42px;
@@ -1634,6 +1635,7 @@ th {
 
 .field input:disabled,
 .field textarea:disabled,
+.field select:disabled,
 .select-trigger:disabled,
 .toggle-switch:disabled {
   cursor: not-allowed;
@@ -1650,6 +1652,7 @@ th {
 
 .field input:focus,
 .field textarea:focus,
+.field select:focus,
 .select-trigger:focus {
   outline: 3px solid rgba(36, 118, 90, 0.18);
   border-color: var(--green);
@@ -1805,6 +1808,35 @@ th {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.created-secret-box,
+.token-table {
+  display: grid;
+  gap: 10px;
+}
+
+.created-secret-box {
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+}
+
+.token-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.token-row > div:first-child {
+  min-width: 0;
+}
+
+.token-row .actions {
+  flex-shrink: 0;
 }
 
 .ssh-key-form textarea {

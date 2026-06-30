@@ -1,4 +1,4 @@
-import type { CloudflarePublicSettings, MultiNodePublicSettings, R2PublicSettings, SetupWizardStatus } from "../../shared/types";
+import type { CloudflarePublicSettings, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, R2PublicSettings, SetupWizardStatus } from "../../shared/types";
 import type { SshKeyStatus } from "../lib/api";
 
 export type View = "dashboard" | "projects" | "deployments" | "containers" | "nodes" | "backups" | "hostnames" | "frp" | "dns" | "audit" | "settings";
@@ -31,3 +31,13 @@ export type CfFormState = {
   zoneId: string;
   apiToken: string;
 };
+
+export type McpTokenFormState = {
+  name: string;
+  accessLevel: McpAccessLevel;
+};
+
+export type CreatedMcpTokenState = {
+  token: string;
+  accessToken: McpAccessToken;
+} | null;

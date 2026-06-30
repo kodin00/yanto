@@ -107,6 +107,25 @@ export const appSettings = pgTable("app_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
 });
 
+export const mcpAccessTokens = pgTable(
+  "mcp_access_tokens",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    accessLevel: text("access_level").notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    uniqueIndex("mcp_access_tokens_token_hash_idx").on(table.tokenHash),
+    index("mcp_access_tokens_revoked_idx").on(table.revokedAt),
+    index("mcp_access_tokens_created_at_idx").on(table.createdAt)
+  ]
+);
+
 export const cloudflareClients = pgTable(
   "cloudflare_clients",
   {
@@ -228,6 +247,8 @@ export type NewBackupRow = typeof backups.$inferInsert;
 export type AuditLogRow = typeof auditLogs.$inferSelect;
 export type NewAuditLogRow = typeof auditLogs.$inferInsert;
 export type AppSettingRow = typeof appSettings.$inferSelect;
+export type McpAccessTokenRow = typeof mcpAccessTokens.$inferSelect;
+export type NewMcpAccessTokenRow = typeof mcpAccessTokens.$inferInsert;
 export type CloudflareClientRow = typeof cloudflareClients.$inferSelect;
 export type CloudflareTunnelRow = typeof cloudflareTunnels.$inferSelect;
 export type CloudflareTunnelAssignmentRow = typeof cloudflareTunnelAssignments.$inferSelect;

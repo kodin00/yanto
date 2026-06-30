@@ -16,6 +16,9 @@ export const config = {
   port: Number(process.env.PORT ?? "8080"),
   databaseUrl: process.env.DATABASE_URL ?? "postgres://yanto:yanto@localhost:5432/yanto",
   jwtSecret: process.env.JWT_SECRET ?? requiredSecretFallback,
+  mcpTokenSecret: process.env.MCP_TOKEN_SECRET ?? process.env.WORKER_TOKEN_SECRET ?? process.env.JWT_SECRET ?? requiredSecretFallback,
+  mcpAllowedHosts: process.env.MCP_ALLOWED_HOSTS ?? "",
+  mcpAllowedOrigins: process.env.MCP_ALLOWED_ORIGINS ?? "",
   adminUsername: process.env.ADMIN_USERNAME ?? "admin",
   adminPassword: process.env.ADMIN_PASSWORD ?? "admin",
   projectsRoot: path.resolve(process.env.PROJECTS_ROOT ?? "/projects"),
@@ -65,5 +68,11 @@ export function warnOnUnsafeDefaults() {
       throw new Error("FATAL: ADMIN_PASSWORD is using the default value. Set a strong admin password before running in production.");
     }
     console.warn("ADMIN_PASSWORD is using the default value. Set a strong admin password.");
+  }
+  if (config.nodeRole === "master" && config.mcpTokenSecret === requiredSecretFallback) {
+    if (config.nodeEnv === "production") {
+      throw new Error("FATAL: MCP_TOKEN_SECRET/JWT_SECRET is using the default value. Set a strong secret before running in production.");
+    }
+    console.warn("MCP_TOKEN_SECRET/JWT_SECRET is using the default value. Set a strong secret before exposing MCP.");
   }
 }

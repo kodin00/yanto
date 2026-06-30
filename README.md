@@ -84,6 +84,9 @@ Important environment variables:
 
 - `DATABASE_URL`
 - `JWT_SECRET`
+- `MCP_TOKEN_SECRET`, defaults to `WORKER_TOKEN_SECRET`/`JWT_SECRET`; set a stable long random value before creating MCP tokens
+- `MCP_ALLOWED_HOSTS`, comma-separated hosts allowed to call `/mcp`
+- `MCP_ALLOWED_ORIGINS`, comma-separated browser origins allowed to call `/mcp`
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD`
 - `PROJECTS_ROOT` inside the container, default `/projects`
@@ -103,6 +106,60 @@ Important environment variables:
 - `DEPLOYMENT_LOG_MAX_CHARS`, default `500000`, keeps recent deployment logs bounded in Postgres
 - `FRP_BIND_PORT`, default `7000`, is the public FRPC control port
 - `FRP_PORT_START` and `FRP_PORT_END`, defaults `25560` and `25600`, define the published TCP/UDP forwarding range
+
+## MCP access for AI automation
+
+Yanto exposes the administrator product surface through Model Context Protocol:
+
+- Streamable HTTP: `POST /mcp`
+- Local stdio: `npm run start:mcp:stdio` or `node dist/server/server/mcp/stdio.js`
+
+Create tokens from `Settings -> MCP access`. The raw token is shown once; Yanto stores only a keyed hash. Token administration is dashboard/API-only and is not exposed as MCP tools.
+
+Scopes are hierarchical:
+
+- `read`: health, usage, nodes, projects, masked env, logs, deployments, containers, backups, public settings, Cloudflare/FRP reads.
+- `write`: includes read plus creates/updates and non-destructive runtime starts.
+- `admin`: includes write plus deletion, cleanup, rollback execution, stop/restart operations, and secret/token reveal tools.
+
+Destructive or sensitive MCP calls require both an `admin` token and `confirm: true`. This includes deletion, cleanup, rollback execution, force-delete, deploy token reveal, worker join token reveal, and stop/restart operations. Environment reads are masked; Cloudflare, R2, and SSH secrets are write-only.
+
+HTTP client example:
+
+```json
+{
+  "mcpServers": {
+    "yanto": {
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer ymcp_..."
+      }
+    }
+  }
+}
+```
+
+Codex stdio example:
+
+```toml
+[mcp_servers.yanto]
+command = "docker"
+args = ["compose", "exec", "-T", "-e", "YANTO_MCP_TOKEN=ymcp_...", "app", "node", "dist/server/server/mcp/stdio.js"]
+```
+
+For local development without Docker:
+
+```bash
+YANTO_MCP_TOKEN=ymcp_... npm run dev:mcp:stdio
+```
+
+MCP intentionally excludes login/logout, webhook ingestion, worker polling/reporting, raw backup download, raw backup upload, and restore flows. Deployment tools return promptly with a deployment ID; poll deployment status or logs through MCP instead of holding the tool call open.
+
+Troubleshooting:
+
+- `401`: missing/invalid bearer token, or the token was revoked.
+- `403 MCP host/origin rejected`: add your client host/origin to `MCP_ALLOWED_HOSTS` / `MCP_ALLOWED_ORIGINS`.
+- Worker containers do not expose MCP; run MCP against the master app container.
 
 ## FRP Port Forwarding
 

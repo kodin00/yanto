@@ -1,5 +1,16 @@
 export type DeploymentStatus = "running" | "success" | "failed";
 export type DeploymentTrigger = "manual" | "webhook" | "github" | "rollback";
+export type McpAccessLevel = "read" | "write" | "admin";
+
+export type McpAccessToken = {
+  id: string;
+  name: string;
+  accessLevel: McpAccessLevel;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
 
 export type Project = {
   id: string;
