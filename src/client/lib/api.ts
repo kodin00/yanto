@@ -1,4 +1,4 @@
-import type { AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, ContainerInfo, Deployment, DeploymentNode, FrpOverview, FrpSettings, FrpTunnel, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../../shared/types";
+import type { AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, ContainerInfo, Deployment, DeploymentNode, FrpClientSetup, FrpOverview, FrpSettings, FrpTunnel, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -56,7 +56,7 @@ export type CloudflareDnsRecordPayload = {
 
 export type FrpTunnelPayload = {
   name: string;
-  nodeId: string;
+  nodeId?: string | null;
   protocol: "tcp" | "udp";
   localHost: string;
   localPort: number;
@@ -347,6 +347,7 @@ export const api = {
   deleteCfRoute: (routeId: string) =>
     request<void>(`/api/cloudflare/routes/${routeId}`, { method: "DELETE" }),
   frpOverview: () => request<FrpOverview>("/api/frp/overview"),
+  frpClientSetup: () => request<FrpClientSetup>("/api/frp/client-setup"),
   saveFrpSettings: (publicHost: string) =>
     request<FrpSettings>("/api/frp/settings", { method: "PUT", body: JSON.stringify({ publicHost }) }),
   controlFrpServer: (action: "start" | "stop" | "restart") =>

@@ -407,11 +407,17 @@ describe("api client", () => {
 
     it("creates and updates FRP tunnels", async () => {
       const fetchMock = mockFetch({ id: "frp_1" });
-      const payload = { name: "Minecraft", nodeId: "node_1", protocol: "tcp" as const, localHost: "host.docker.internal", localPort: 25565, remotePort: 25565, enabled: true };
+      const payload = { name: "Minecraft", protocol: "tcp" as const, localHost: "127.0.0.1", localPort: 25565, remotePort: 25565, enabled: true };
       await api.createFrpTunnel(payload);
       expect(fetchMock).toHaveBeenLastCalledWith("/api/frp/tunnels", expect.objectContaining({ method: "POST", body: JSON.stringify(payload) }));
       await api.updateFrpTunnel("frp_1", { enabled: false });
       expect(fetchMock).toHaveBeenLastCalledWith("/api/frp/tunnels/frp_1", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ enabled: false }) }));
+    });
+
+    it("loads manual FRPC client setup", async () => {
+      const fetchMock = mockFetch({ frpcToml: "serverAddr = \"x.x.x.x\"\n", installScript: "#!/usr/bin/env bash\n" });
+      await api.frpClientSetup();
+      expect(fetchMock).toHaveBeenCalledWith("/api/frp/client-setup", expect.objectContaining({ credentials: "include" }));
     });
 
     it("controls the FRP server lifecycle", async () => {

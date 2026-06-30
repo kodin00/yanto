@@ -1,6 +1,6 @@
 # Managing FRP in Yanto
 
-Yanto uses FRP to expose services from a worker machine behind CGNAT through the public VPS.
+Yanto runs FRPS on the public VPS and gives you a copyable FRPC client script/config for the machine behind CGNAT. Yanto no longer runs FRPC through a Yanto worker.
 
 ## 1. Deploy or upgrade the VPS
 
@@ -13,7 +13,7 @@ docker compose -f compose.yml up -d --build --remove-orphans
 
 The default ports are:
 
-- `7000/tcp` for the FRP client connection.
+- `7000/tcp` for the FRP client control connection.
 - `25560-25600/tcp` and `25560-25600/udp` for public forwards.
 
 Open them in the VPS firewall:
@@ -35,50 +35,60 @@ To use another range, set `FRP_BIND_PORT`, `FRP_PORT_START`, and `FRP_PORT_END` 
 
 The FRP screen can start, stop, and restart the server when needed.
 
-## 3. Connect the home server
+## 3. Create a forward
 
-If the home server is not listed under **Home clients**:
+### SSH example
 
-1. Click **Copy worker install command**.
-2. Run the command with `sudo` on the home server.
-3. Wait several seconds and refresh the FRP screen.
+Use these values for a simple SSH forward:
 
-For an existing worker, rerun its install command after upgrading Yanto so its image includes FRPC v0.69.0.
+```toml
+serverAddr = "x.x.x.x"
+serverPort = 7000
 
-## 4. Create a Minecraft forward
+[[proxies]]
+name = "ssh"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 22
+remotePort = 25560
+```
 
-### Java Edition
+`remotePort` must be inside the configured VPS range unless you change `FRP_PORT_START` and `FRP_PORT_END`.
+
+### Minecraft Java
 
 1. Click **Minecraft Java**.
-2. Select the home worker.
-3. Keep the local target as `host.docker.internal:25565`.
-4. Use public port `25565`, or another free port in the allowed range.
-5. Create the tunnel and wait for **Online**.
-6. Players connect to `VPS_IP:PUBLIC_PORT`.
+2. Keep the local target as `127.0.0.1:25565` when the server runs on the same client machine.
+3. Use public port `25565`, or another free port in the allowed range.
+4. Create the tunnel.
 
-### Bedrock Edition
+### Minecraft Bedrock
 
 1. Click **Minecraft Bedrock**.
 2. Keep local port `19132`.
 3. Choose a free UDP public port in the configured range.
-4. Create the tunnel and wait for **Online**.
+4. Create the tunnel.
 
-The Minecraft server must be reachable from the worker container. A native server or Docker-published port should listen on a host interface such as `0.0.0.0`, not only `127.0.0.1`.
+## 4. Run FRPC on the client server
+
+1. Click **Copy client script** or **Copy frpc.toml**.
+2. Review `serverAddr`, `serverPort`, `localIP`, `localPort`, and `remotePort`.
+3. Run the script with `sudo` on the client server, or write `frpc.toml` yourself and run `frpc -c frpc.toml`.
+
+For a service on the same client server, `127.0.0.1` is usually right. For a service on another LAN machine, use that machine's LAN IP.
 
 ## Common operations
 
-- **Disable:** temporarily closes a forward without deleting it.
-- **Edit:** changes the local target, protocol, worker, or public port.
-- **Delete:** removes the forward from the worker on its next poll.
+- **Disable:** temporarily closes a forward after you copy/restart the FRPC config.
+- **Edit:** changes the local target, protocol, or public port.
+- **Delete:** removes the rule from Yanto; copy/restart FRPC so the client stops advertising it.
 - **Copy endpoint:** copies the public address players should use.
-- **Restart server:** restarts FRPS on the VPS; workers reconnect automatically.
+- **Restart server:** restarts FRPS on the VPS; FRPC reconnects automatically.
 
 ## Troubleshooting
 
-- **Syncing:** the worker has not applied the latest configuration yet. Confirm the worker is online and wait a few seconds.
-- **Offline:** FRPC is connected incorrectly, FRPS is stopped, or the proxy could not start. Check the public IP, firewall, and port range.
-- **Error:** read the client error shown in Yanto. Common causes are an unreachable local service or an outdated worker image.
-- **FRPC online but tunnel offline:** verify Minecraft is listening on the configured local host and port.
+- **Offline:** FRPC is not connected, FRPS is stopped, or the proxy could not start. Check the public IP, token, TLS setting, firewall, and port range.
+- **FRPC online but tunnel offline:** verify the service is listening on the configured local host and port from the client server.
 - **Cannot connect externally:** confirm both the VPS firewall and provider firewall/security group allow the public port and protocol.
 
 Useful logs:
@@ -87,7 +97,6 @@ Useful logs:
 # VPS
 docker logs yanto-frps --tail 100
 
-# Home server
-cd /opt/yanto
-docker compose -f compose.worker.yml --env-file .env.worker logs --tail 100 worker
+# Client server with systemd
+sudo journalctl -u frpc -n 100 --no-pager
 ```

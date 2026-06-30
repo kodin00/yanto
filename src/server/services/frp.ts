@@ -1,19 +1,18 @@
 import fs from "node:fs/promises";
-import { and, asc, eq } from "drizzle-orm";
-import type { FrpClientStatus, FrpOverview, FrpServerStatus, FrpTunnel, FrpTunnelStatus } from "../../shared/types.js";
+import { asc, eq } from "drizzle-orm";
+import type { FrpClientSetup, FrpOverview, FrpServerStatus, FrpTunnel, FrpTunnelStatus } from "../../shared/types.js";
 import { config } from "../config.js";
 import { db } from "../db/index.js";
-import { appSettings, deploymentNodes, frpTunnels, frpWorkerStates, type FrpTunnelRow } from "../db/schema.js";
+import { appSettings, deploymentNodes, frpTunnels, type FrpTunnelRow } from "../db/schema.js";
 import { runCommand } from "./commands.js";
-import { getNode } from "./nodes.js";
-import { createId, hashToken } from "./tokens.js";
+import { createId } from "./tokens.js";
 import { HttpError } from "../http-utils.js";
 
 const publicHostKey = "frp.public_host";
 
 export type FrpTunnelInput = {
   name: string;
-  nodeId: string;
+  nodeId?: string | null;
   protocol: "tcp" | "udp";
   localHost: string;
   localPort: number;
@@ -43,6 +42,8 @@ type DashboardClient = {
   status?: string;
   online?: boolean;
 };
+
+type ManualFrpcTunnel = Pick<FrpTunnelRow, "id" | "protocol" | "localHost" | "localPort" | "remotePort">;
 
 function numberValue(value: unknown) {
   const parsed = Number(value ?? 0);
@@ -106,12 +107,6 @@ export function validateFrpRemotePort(remotePort: number) {
   }
 }
 
-async function assertWorkerNode(nodeId: string) {
-  const node = await getNode(nodeId);
-  if (!node || node.role !== "worker") throw new HttpError(400, "FRP tunnels must target an enrolled worker node.");
-  return node;
-}
-
 function rethrowTunnelWriteError(error: unknown): never {
   if (error && typeof error === "object" && "code" in error && error.code === "23505") {
     throw new HttpError(409, "That public port is already used by another tunnel with the same protocol.");
@@ -120,14 +115,14 @@ function rethrowTunnelWriteError(error: unknown): never {
 }
 
 export async function createFrpTunnel(input: FrpTunnelInput) {
-  await assertWorkerNode(input.nodeId);
   validateFrpRemotePort(input.remotePort);
   if (input.enabled && !(await publicFrpSettings()).configured) throw new HttpError(400, "Save the VPS public endpoint before enabling a tunnel.");
   try {
     const [row] = await db.insert(frpTunnels).values({
       id: createId("frp"),
       ...input,
-      syncStatus: input.enabled ? "syncing" : "disabled"
+      nodeId: input.nodeId ?? null,
+      syncStatus: input.enabled ? "offline" : "disabled"
     }).returning();
     return row;
   } catch (error) {
@@ -138,14 +133,13 @@ export async function createFrpTunnel(input: FrpTunnelInput) {
 export async function updateFrpTunnel(id: string, input: Partial<FrpTunnelInput>) {
   const [current] = await db.select().from(frpTunnels).where(eq(frpTunnels.id, id)).limit(1);
   if (!current) throw new HttpError(404, "FRP tunnel not found.");
-  if (input.nodeId) await assertWorkerNode(input.nodeId);
   if (input.remotePort !== undefined) validateFrpRemotePort(input.remotePort);
   const enabled = input.enabled ?? current.enabled;
   if (enabled && !(await publicFrpSettings()).configured) throw new HttpError(400, "Save the VPS public endpoint before enabling a tunnel.");
   try {
     const [row] = await db.update(frpTunnels).set({
       ...input,
-      syncStatus: enabled ? "syncing" : "disabled",
+      syncStatus: enabled ? "offline" : "disabled",
       lastError: null,
       updatedAt: new Date()
     }).where(eq(frpTunnels.id, id)).returning();
@@ -161,86 +155,152 @@ export async function deleteFrpTunnel(id: string) {
   return row;
 }
 
-async function desiredPayload(nodeId: string) {
-  const settings = await publicFrpSettings();
-  const tunnels = await db.select().from(frpTunnels)
-    .where(and(eq(frpTunnels.nodeId, nodeId), eq(frpTunnels.enabled, true)))
-    .orderBy(asc(frpTunnels.createdAt));
-  const desired = {
-    nodeId,
-    serverAddr: settings.publicHost,
-    serverPort: settings.bindPort,
-    wireProtocol: "v2",
-    tunnels: tunnels.map((tunnel) => ({
-      id: tunnel.id,
-      name: tunnel.name,
-      protocol: tunnel.protocol,
-      localHost: tunnel.localHost,
-      localPort: tunnel.localPort,
-      remotePort: tunnel.remotePort
-    }))
-  };
-  return { settings, tunnels, desired, revision: hashToken(JSON.stringify(desired)) };
-}
-
-export async function workerFrpConfig(nodeId: string) {
-  const { settings, desired, revision } = await desiredPayload(nodeId);
-  return {
-    configured: settings.configured,
-    ...desired,
-    revision,
-    authToken: settings.configured ? await readFrpToken() : ""
-  };
-}
-
-export async function updateFrpWorkerState(nodeId: string, input: {
-  appliedRevision?: string | null;
-  processStatus: "running" | "stopped" | "error";
-  frpcVersion?: string | null;
-  lastError?: string | null;
-}) {
-  const now = new Date();
-  const { revision } = await desiredPayload(nodeId);
-  await db.insert(frpWorkerStates).values({
-    nodeId,
-    desiredRevision: revision,
-    appliedRevision: input.appliedRevision ?? null,
-    processStatus: input.processStatus,
-    frpcVersion: input.frpcVersion ?? null,
-    lastError: input.lastError ?? null,
-    lastReportedAt: now,
-    updatedAt: now
-  }).onConflictDoUpdate({
-    target: frpWorkerStates.nodeId,
-    set: {
-      appliedRevision: input.appliedRevision ?? null,
-      desiredRevision: revision,
-      processStatus: input.processStatus,
-      frpcVersion: input.frpcVersion ?? null,
-      lastError: input.lastError ?? null,
-      lastReportedAt: now,
-      updatedAt: now
-    }
-  });
-
-  const synchronized = input.processStatus === "running" && input.appliedRevision === revision;
-  await db.update(frpTunnels).set({
-    syncStatus: input.processStatus === "error" ? "error" : synchronized ? "offline" : "syncing",
-    lastError: input.lastError ?? null,
-    lastSyncedAt: synchronized ? now : null
-  }).where(and(eq(frpTunnels.nodeId, nodeId), eq(frpTunnels.enabled, true)));
-}
-
 function proxyNames(proxy: DashboardProxy) {
   const name = proxy.name ?? "";
   return [name, name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : name];
 }
 
-function tunnelStatus(row: FrpTunnelRow, workerRevision: string | null, desiredRevision: string, proxy?: DashboardProxy): FrpTunnelStatus {
+function tunnelStatus(row: FrpTunnelRow, proxy?: DashboardProxy): FrpTunnelStatus {
   if (!row.enabled) return "disabled";
   if (row.lastError || row.syncStatus === "error") return "error";
-  if (!workerRevision || workerRevision !== desiredRevision || row.syncStatus === "syncing") return "syncing";
   return proxy?.status?.toLowerCase() === "online" ? "online" : "offline";
+}
+
+function tomlString(value: string) {
+  return JSON.stringify(value);
+}
+
+function tomlArray(values: string[]) {
+  return `[${values.map(tomlString).join(", ")}]`;
+}
+
+function sampleTunnel(): ManualFrpcTunnel {
+  const preferredPort = config.frpPortStart <= 6000 && config.frpPortEnd >= 6000 ? 6000 : config.frpPortStart;
+  return {
+    id: "ssh",
+    protocol: "tcp",
+    localHost: "127.0.0.1",
+    localPort: 22,
+    remotePort: preferredPort
+  } as ManualFrpcTunnel;
+}
+
+export function buildFrpcToml(input: { serverAddr: string; serverPort: number; authToken: string; tunnels: ManualFrpcTunnel[] }) {
+  const tunnels = input.tunnels.length ? input.tunnels : [sampleTunnel()];
+  const lines = [
+    `serverAddr = ${tomlString(input.serverAddr || "x.x.x.x")}`,
+    `serverPort = ${input.serverPort}`,
+    `loginFailExit = false`,
+    `clientID = "yanto-manual-frpc"`,
+    `user = "yanto-manual-frpc"`,
+    "",
+    `[auth]`,
+    `method = "token"`,
+    `token = ${tomlString(input.authToken || "PASTE_FRP_TOKEN_HERE")}`,
+    `additionalScopes = ${tomlArray(["HeartBeats", "NewWorkConns"])}`,
+    "",
+    `[transport]`,
+    `wireProtocol = "v2"`,
+    "",
+    `[transport.tls]`,
+    `enable = true`,
+    "",
+    `[log]`,
+    `to = "console"`,
+    `level = "info"`,
+    `disablePrintColor = true`
+  ];
+  for (const tunnel of tunnels) {
+    lines.push(
+      "",
+      `[[proxies]]`,
+      `name = ${tomlString(tunnel.id)}`,
+      `type = ${tomlString(tunnel.protocol)}`,
+      `localIP = ${tomlString(tunnel.localHost)}`,
+      `localPort = ${tunnel.localPort}`,
+      `remotePort = ${tunnel.remotePort}`
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function buildFrpcInstallScript(frpcToml: string) {
+  return `#!/usr/bin/env bash
+set -euo pipefail
+
+FRP_VERSION="\${FRP_VERSION:-0.69.0}"
+INSTALL_DIR="\${INSTALL_DIR:-/opt/frp}"
+CONFIG_PATH="\${CONFIG_PATH:-/etc/frp/frpc.toml}"
+SERVICE_NAME="\${SERVICE_NAME:-frpc}"
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Run this script with sudo."
+  exit 1
+fi
+
+case "$(uname -m)" in
+  x86_64|amd64) ARCH="amd64" ;;
+  aarch64|arm64) ARCH="arm64" ;;
+  armv7l) ARCH="arm" ;;
+  *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+curl -fsSL "https://github.com/fatedier/frp/releases/download/v\${FRP_VERSION}/frp_\${FRP_VERSION}_linux_\${ARCH}.tar.gz" -o "$TMP_DIR/frp.tar.gz"
+tar -xzf "$TMP_DIR/frp.tar.gz" -C "$TMP_DIR"
+mkdir -p "$INSTALL_DIR" "$(dirname "$CONFIG_PATH")"
+install -m 0755 "$TMP_DIR/frp_\${FRP_VERSION}_linux_\${ARCH}/frpc" "$INSTALL_DIR/frpc"
+cat > "$CONFIG_PATH" <<'FRPC_TOML'
+${frpcToml}FRPC_TOML
+chmod 600 "$CONFIG_PATH"
+
+if command -v systemctl >/dev/null 2>&1; then
+  cat > "/etc/systemd/system/\${SERVICE_NAME}.service" <<EOF
+[Unit]
+Description=FRP client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$INSTALL_DIR/frpc -c $CONFIG_PATH
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now "\${SERVICE_NAME}"
+  systemctl status "\${SERVICE_NAME}" --no-pager
+else
+  echo "systemd not found. Run: $INSTALL_DIR/frpc -c $CONFIG_PATH"
+fi
+`;
+}
+
+export async function frpClientSetup(): Promise<FrpClientSetup> {
+  const [settings, token, tunnels] = await Promise.all([
+    publicFrpSettings(),
+    readFrpToken(),
+    db.select().from(frpTunnels).where(eq(frpTunnels.enabled, true)).orderBy(asc(frpTunnels.createdAt))
+  ]);
+  const frpcToml = buildFrpcToml({
+    serverAddr: settings.publicHost,
+    serverPort: settings.bindPort,
+    authToken: token,
+    tunnels
+  });
+  return {
+    serverAddr: settings.publicHost,
+    serverPort: settings.bindPort,
+    tokenConfigured: Boolean(token),
+    tunnelCount: tunnels.length,
+    frpcToml,
+    installScript: buildFrpcInstallScript(frpcToml)
+  };
 }
 
 async function dashboardData() {
@@ -290,36 +350,16 @@ async function frpServerStatus(): Promise<{ status: FrpServerStatus; dashboard: 
 }
 
 export async function frpOverview(): Promise<FrpOverview> {
-  const [settings, tunnelRows, workerRows, runtime] = await Promise.all([
+  const [settings, tunnelRows, runtime] = await Promise.all([
     publicFrpSettings(),
     db.select({ tunnel: frpTunnels, nodeName: deploymentNodes.name }).from(frpTunnels).leftJoin(deploymentNodes, eq(frpTunnels.nodeId, deploymentNodes.id)).orderBy(asc(frpTunnels.createdAt)),
-    db.select({ state: frpWorkerStates, node: deploymentNodes }).from(deploymentNodes).leftJoin(frpWorkerStates, eq(frpWorkerStates.nodeId, deploymentNodes.id)).where(eq(deploymentNodes.role, "worker")).orderBy(asc(deploymentNodes.name)),
     frpServerStatus()
   ]);
 
-  const dashboardClients = new Map((runtime.dashboard?.clients ?? []).map((client) => [client.user || client.clientID || "", client]));
   const proxies = runtime.dashboard?.proxies ?? [];
-  const desiredRevisions = new Map<string, string>();
-  await Promise.all(workerRows.map(async ({ node }) => desiredRevisions.set(node.id, (await desiredPayload(node.id)).revision)));
-
-  const clients: FrpClientStatus[] = workerRows.map(({ node, state }) => {
-    const dashboard = dashboardClients.get(node.id);
-    const workerOnline = node.lastSeenAt && Date.now() - new Date(node.lastSeenAt).getTime() < 60_000;
-    return {
-      nodeId: node.id,
-      nodeName: node.name,
-      workerStatus: workerOnline ? "online" : "offline",
-      frpcStatus: dashboard ? (dashboard.online === false ? "offline" : "online") : state?.processStatus ?? "stopped",
-      frpcVersion: dashboard?.version ?? state?.frpcVersion ?? null,
-      protocol: dashboard?.wireProtocol ?? dashboard?.protocol ?? null,
-      lastSeenAt: node.lastSeenAt?.toISOString() ?? null,
-      lastError: state?.lastError ?? null
-    };
-  });
 
   const tunnels: FrpTunnel[] = tunnelRows.map(({ tunnel, nodeName }) => {
     const proxy = proxies.find((candidate) => proxyNames(candidate).includes(tunnel.id));
-    const worker = workerRows.find(({ node }) => node.id === tunnel.nodeId)?.state;
     return {
       id: tunnel.id,
       nodeId: tunnel.nodeId,
@@ -330,7 +370,7 @@ export async function frpOverview(): Promise<FrpOverview> {
       remotePort: tunnel.remotePort,
       enabled: tunnel.enabled,
       nodeName,
-      syncStatus: tunnelStatus(tunnel, worker?.appliedRevision ?? null, desiredRevisions.get(tunnel.nodeId) ?? "", proxy),
+      syncStatus: tunnelStatus(tunnel, proxy),
       lastError: tunnel.lastError,
       lastSyncedAt: tunnel.lastSyncedAt?.toISOString() ?? null,
       trafficInBytes: numberValue(proxy?.todayTrafficIn ?? proxy?.trafficIn ?? proxy?.traffic_in),
@@ -341,7 +381,7 @@ export async function frpOverview(): Promise<FrpOverview> {
     };
   });
 
-  return { settings, server: runtime.status, clients, tunnels };
+  return { settings, server: runtime.status, tunnels };
 }
 
 export async function controlFrpServer(action: "start" | "stop" | "restart") {

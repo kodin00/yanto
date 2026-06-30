@@ -190,19 +190,9 @@ export type FrpSettings = {
   configured: boolean;
 };
 
-export type FrpWorkerState = {
-  nodeId: string;
-  desiredRevision: string | null;
-  appliedRevision: string | null;
-  processStatus: "running" | "stopped" | "error" | string;
-  frpcVersion: string | null;
-  lastError: string | null;
-  lastReportedAt: string | null;
-};
-
 export type FrpTunnel = {
   id: string;
-  nodeId: string;
+  nodeId: string | null;
   nodeName: string | null;
   name: string;
   protocol: FrpProtocol;
@@ -220,15 +210,13 @@ export type FrpTunnel = {
   updatedAt: string;
 };
 
-export type FrpClientStatus = {
-  nodeId: string;
-  nodeName: string;
-  workerStatus: string;
-  frpcStatus: string;
-  frpcVersion: string | null;
-  protocol: string | null;
-  lastSeenAt: string | null;
-  lastError: string | null;
+export type FrpClientSetup = {
+  serverAddr: string;
+  serverPort: number;
+  tokenConfigured: boolean;
+  tunnelCount: number;
+  frpcToml: string;
+  installScript: string;
 };
 
 export type FrpServerStatus = {
@@ -244,7 +232,6 @@ export type FrpServerStatus = {
 export type FrpOverview = {
   settings: FrpSettings;
   server: FrpServerStatus;
-  clients: FrpClientStatus[];
   tunnels: FrpTunnel[];
 };
 

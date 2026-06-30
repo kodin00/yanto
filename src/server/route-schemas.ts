@@ -143,7 +143,7 @@ export const frpSettingsInput = z.object({
 
 export const frpTunnelInput = z.object({
   name: z.string().trim().min(1).max(100),
-  nodeId: z.string().min(1),
+  nodeId: z.string().min(1).nullable().optional(),
   protocol: z.enum(["tcp", "udp"]),
   localHost: frpHost,
   localPort: z.number().int().min(1).max(65535),
@@ -152,13 +152,6 @@ export const frpTunnelInput = z.object({
 });
 
 export const frpTunnelUpdateInput = frpTunnelInput.partial().refine((value) => Object.keys(value).length > 0, "At least one field is required.");
-
-export const frpWorkerStatusInput = z.object({
-  appliedRevision: z.string().max(128).nullable().optional(),
-  processStatus: z.enum(["running", "stopped", "error"]),
-  frpcVersion: z.string().max(100).nullable().optional(),
-  lastError: z.string().max(4000).nullable().optional()
-});
 
 export const mcpAccessLevelInput = z.enum(["read", "write", "admin"]);
 

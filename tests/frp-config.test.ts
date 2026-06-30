@@ -1,17 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildFrpcConfig, type WorkerFrpConfig } from "../src/server/services/worker-frp.js";
+import { buildFrpcToml } from "../src/server/services/frp.js";
 
-const desired: WorkerFrpConfig = {
-  configured: true,
-  nodeId: "node_home",
+const desired = {
   serverAddr: "203.0.113.10",
   serverPort: 7000,
-  wireProtocol: "v2",
-  revision: "revision",
   authToken: "secret-token",
   tunnels: [{
     id: "frp_minecraft",
-    name: "Minecraft Java",
     protocol: "tcp",
     localHost: "host.docker.internal",
     localPort: 25565,
@@ -20,29 +15,27 @@ const desired: WorkerFrpConfig = {
 };
 
 describe("FRPC configuration", () => {
-  it("renders worker identity, secure transport, and bounded proxy fields", () => {
-    expect(buildFrpcConfig(desired)).toEqual({
-      clientID: "node_home",
-      user: "node_home",
-      serverAddr: "203.0.113.10",
-      serverPort: 7000,
-      loginFailExit: false,
-      auth: { method: "token", token: "secret-token", additionalScopes: ["HeartBeats", "NewWorkConns"] },
-      transport: { wireProtocol: "v2", tls: { enable: true } },
-      log: { to: "console", level: "info", disablePrintColor: true },
-      proxies: [{
-        name: "frp_minecraft",
-        type: "tcp",
-        localIP: "host.docker.internal",
-        localPort: 25565,
-        remotePort: 25565
-      }]
-    });
+  it("renders secure manual FRPC TOML with bounded proxy fields", () => {
+    const rendered = buildFrpcToml(desired);
+    expect(rendered).toContain('serverAddr = "203.0.113.10"');
+    expect(rendered).toContain("serverPort = 7000");
+    expect(rendered).toContain('token = "secret-token"');
+    expect(rendered).toContain("additionalScopes = [\"HeartBeats\", \"NewWorkConns\"]");
+    expect(rendered).toContain("wireProtocol = \"v2\"");
+    expect(rendered).toContain("[transport.tls]");
+    expect(rendered).toContain("enable = true");
+    expect(rendered).toContain("[[proxies]]");
+    expect(rendered).toContain('name = "frp_minecraft"');
+    expect(rendered).toContain('localIP = "host.docker.internal"');
+    expect(rendered).toContain("localPort = 25565");
+    expect(rendered).toContain("remotePort = 25565");
   });
 
-  it("does not place display names in FRP wire identifiers", () => {
-    const rendered = buildFrpcConfig({ ...desired, tunnels: [{ ...desired.tunnels[0], name: "Name with spaces" }] });
-    expect(rendered.proxies[0].name).toBe("frp_minecraft");
-    expect(JSON.stringify(rendered)).not.toContain("Name with spaces");
+  it("uses an editable SSH sample when no tunnels exist yet", () => {
+    const rendered = buildFrpcToml({ ...desired, serverAddr: "", authToken: "", tunnels: [] });
+    expect(rendered).toContain('serverAddr = "x.x.x.x"');
+    expect(rendered).toContain('token = "PASTE_FRP_TOKEN_HERE"');
+    expect(rendered).toContain('name = "ssh"');
+    expect(rendered).toContain("localPort = 22");
   });
 });

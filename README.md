@@ -163,7 +163,7 @@ Troubleshooting:
 
 ## FRP Port Forwarding
 
-The FRP screen manages TCP and UDP services on enrolled worker nodes, including home servers behind CGNAT. Set the VPS public IP or an unproxied DNS hostname in the FRP screen, copy the worker install command to the home server, and create a forwarding rule.
+The FRP screen manages TCP and UDP services from a manually run FRPC client, including home servers behind CGNAT. Set the VPS public IP or an unproxied DNS hostname in the FRP screen, create forwarding rules, then copy the client script or `frpc.toml` to the client server.
 
 See [FRP_GUIDE.md](FRP_GUIDE.md) for setup, daily operations, and troubleshooting.
 
@@ -177,9 +177,7 @@ sudo ufw allow 25560:25600/udp
 
 Yanto does not change firewall rules automatically. A Cloudflare-proxied hostname cannot carry arbitrary Minecraft TCP/UDP traffic; use the VPS IP or a DNS-only hostname.
 
-The worker reaches the default local target through `host.docker.internal`. A native Minecraft server or Docker-published Minecraft port should therefore listen on a host interface reachable from Docker, such as `0.0.0.0:25565`; otherwise enter a reachable LAN address in the tunnel form.
-
-Existing workers must be rebuilt after upgrading Yanto so their image contains the pinned FRPC binary. Re-running the worker install command performs the repository update and Compose rebuild.
+The generated FRPC config uses `127.0.0.1` for services running on the same client server. Change `localIP`, `localPort`, and `remotePort` in Yanto or in `frpc.toml` for your actual service before starting FRPC.
 
 ## Git SSH On A VPS
 

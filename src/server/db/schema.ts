@@ -206,7 +206,7 @@ export const frpTunnels = pgTable(
   "frp_tunnels",
   {
     id: text("id").primaryKey(),
-    nodeId: text("node_id").notNull().references(() => deploymentNodes.id, { onDelete: "cascade" }),
+    nodeId: text("node_id").references(() => deploymentNodes.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     protocol: text("protocol").notNull(),
     localHost: text("local_host").notNull(),
@@ -224,17 +224,6 @@ export const frpTunnels = pgTable(
     uniqueIndex("frp_tunnels_protocol_remote_port_idx").on(table.protocol, table.remotePort)
   ]
 );
-
-export const frpWorkerStates = pgTable("frp_worker_states", {
-  nodeId: text("node_id").primaryKey().references(() => deploymentNodes.id, { onDelete: "cascade" }),
-  desiredRevision: text("desired_revision"),
-  appliedRevision: text("applied_revision"),
-  processStatus: text("process_status").notNull().default("stopped"),
-  frpcVersion: text("frpc_version"),
-  lastError: text("last_error"),
-  lastReportedAt: timestamp("last_reported_at", { withTimezone: true }),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
-});
 
 export type ProjectRow = typeof projects.$inferSelect;
 export type NewProjectRow = typeof projects.$inferInsert;
@@ -257,4 +246,3 @@ export type CloudflareRouteRow = typeof cloudflareRoutes.$inferSelect;
 export type NewCloudflareRouteRow = typeof cloudflareRoutes.$inferInsert;
 export type FrpTunnelRow = typeof frpTunnels.$inferSelect;
 export type NewFrpTunnelRow = typeof frpTunnels.$inferInsert;
-export type FrpWorkerStateRow = typeof frpWorkerStates.$inferSelect;

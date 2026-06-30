@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   controlFrpServer: vi.fn(),
   createFrpTunnel: vi.fn(),
   deleteFrpTunnel: vi.fn(),
+  frpClientSetup: vi.fn(),
   frpOverview: vi.fn(),
   saveFrpSettings: vi.fn(),
   updateFrpTunnel: vi.fn()
@@ -51,7 +52,7 @@ describe("FRP routes", () => {
   it("creates a validated TCP tunnel", async () => {
     const tunnel = { id: "frp_1", protocol: "tcp", remotePort: 25565 };
     mocks.createFrpTunnel.mockResolvedValue(tunnel);
-    const payload = { name: "Minecraft", nodeId: "node_1", protocol: "tcp", localHost: "host.docker.internal", localPort: 25565, remotePort: 25565, enabled: true };
+    const payload = { name: "Minecraft", protocol: "tcp", localHost: "127.0.0.1", localPort: 25565, remotePort: 25565, enabled: true };
     const response = await call("/api/frp/tunnels", {
       method: "POST",
       headers: { authorization: "ok", "content-type": "application/json" },
@@ -65,7 +66,7 @@ describe("FRP routes", () => {
     const response = await call("/api/frp/tunnels", {
       method: "POST",
       headers: { authorization: "ok", "content-type": "application/json" },
-      body: JSON.stringify({ name: "Bad", nodeId: "node_1", protocol: "http", localHost: "localhost", localPort: 80, remotePort: 25565 })
+      body: JSON.stringify({ name: "Bad", protocol: "http", localHost: "localhost", localPort: 80, remotePort: 25565 })
     });
     expect(response.status).toBe(400);
     expect(mocks.createFrpTunnel).not.toHaveBeenCalled();
@@ -76,5 +77,12 @@ describe("FRP routes", () => {
     const response = await call("/api/frp/server/restart", { method: "POST", headers: { authorization: "ok" } });
     expect(response).toEqual({ status: 200, body: { running: true } });
     expect(mocks.controlFrpServer).toHaveBeenCalledWith("restart");
+  });
+
+  it("reveals manual FRPC setup for authenticated users", async () => {
+    mocks.frpClientSetup.mockResolvedValue({ frpcToml: "serverAddr = \"x.x.x.x\"\n", installScript: "#!/usr/bin/env bash\n" });
+    const response = await call("/api/frp/client-setup", { headers: { authorization: "ok" } });
+    expect(response).toEqual({ status: 200, body: { frpcToml: "serverAddr = \"x.x.x.x\"\n", installScript: "#!/usr/bin/env bash\n" } });
+    expect(mocks.frpClientSetup).toHaveBeenCalled();
   });
 });

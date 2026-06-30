@@ -10,7 +10,7 @@ describe("FRP validation", () => {
   });
 
   it("requires TCP or UDP and valid service ports", () => {
-    const base = { name: "Minecraft", nodeId: "node_home", localHost: "host.docker.internal", localPort: 25565, remotePort: 25565 };
+    const base = { name: "Minecraft", localHost: "127.0.0.1", localPort: 25565, remotePort: 25565 };
     expect(frpTunnelInput.parse({ ...base, protocol: "tcp" })).toMatchObject({ protocol: "tcp", enabled: true });
     expect(() => frpTunnelInput.parse({ ...base, protocol: "http" })).toThrow();
     expect(() => frpTunnelInput.parse({ ...base, protocol: "tcp", localPort: 70000 })).toThrow();

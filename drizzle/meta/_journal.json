@@ -15,6 +15,13 @@
       "when": 1782835200000,
       "tag": "0001_smart_mcp_access_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782835200001,
+      "tag": "0002_manual_frp_clients",
+      "breakpoints": true
     }
   ]
 }

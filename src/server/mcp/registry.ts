@@ -645,7 +645,7 @@ export function createYantoMcpServer(ctx: YantoMcpContext) {
   });
   registerTool(server, ctx, "write", "yanto_frp_tunnel_create", "Create FRP tunnel.", frpTunnelInput, write, async (input) => {
     const tunnel = await createFrpTunnel(input);
-    await recordAuditLog({ actor: ctx.actor, action: "frp.tunnel.create", entityType: "frp_tunnel", entityId: tunnel.id, metadata: { nodeId: tunnel.nodeId, protocol: tunnel.protocol, remotePort: tunnel.remotePort } });
+    await recordAuditLog({ actor: ctx.actor, action: "frp.tunnel.create", entityType: "frp_tunnel", entityId: tunnel.id, metadata: { protocol: tunnel.protocol, remotePort: tunnel.remotePort } });
     return summarize("FRP tunnel created", tunnel, "tunnel");
   });
   registerTool(server, ctx, "write", "yanto_frp_tunnel_update", "Update FRP tunnel.", frpTunnelUpdateMcpInput, write, async (input) => {

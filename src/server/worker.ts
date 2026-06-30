@@ -6,7 +6,6 @@ import { logger } from "./logger.js";
 import type { DeploymentRow, ProjectRow } from "./db/schema.js";
 import { runProjectDeployment, type DeploymentMetadata } from "./services/deployment-runner.js";
 import { runCommand } from "./services/commands.js";
-import { WorkerFrpManager, type WorkerFrpConfig, type WorkerFrpStatus } from "./services/worker-frp.js";
 
 type WorkerJob = {
   deployment: DeploymentRow;
@@ -99,17 +98,6 @@ async function nextJob(token: string) {
   return request<WorkerJob>("/api/workers/jobs/next", { method: "GET" }, token);
 }
 
-async function desiredFrpConfig(token: string) {
-  return request<WorkerFrpConfig>("/api/workers/frp/config", { method: "GET" }, token);
-}
-
-async function reportFrpStatus(token: string, status: WorkerFrpStatus) {
-  await request<{ ok: true }>("/api/workers/frp/status", {
-    method: "POST",
-    body: JSON.stringify(status)
-  }, token);
-}
-
 async function appendLog(token: string, deploymentId: string, chunk: string) {
   await request<{ ok: true }>(`/api/workers/deployments/${deploymentId}/logs`, {
     method: "POST",
@@ -148,14 +136,12 @@ async function runJob(token: string, job: NonNullable<WorkerJob>) {
   }
 }
 
-async function controlLoop(token: string, frp: WorkerFrpManager, isStopping: () => boolean) {
+async function controlLoop(token: string, isStopping: () => boolean) {
   let consecutiveErrors = 0;
   const maxBackoffMs = 60_000;
   while (!isStopping()) {
     try {
       await heartbeat(token);
-      const desired = await desiredFrpConfig(token);
-      await reportFrpStatus(token, await frp.reconcile(desired));
       consecutiveErrors = 0;
     } catch (error) {
       consecutiveErrors++;
@@ -186,19 +172,17 @@ async function deploymentLoop(token: string, isStopping: () => boolean) {
 async function main() {
   warnOnUnsafeDefaults();
   const token = await tokenForWorker();
-  const frp = new WorkerFrpManager();
   let stopping = false;
   const shutdown = async (signal: string) => {
     if (stopping) return;
     stopping = true;
     logger.info("worker shutdown starting", { signal });
-    await frp.shutdown();
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   logger.info("worker started", { masterUrl: config.masterUrl, name: config.workerName || os.hostname() });
   await Promise.all([
-    controlLoop(token, frp, () => stopping),
+    controlLoop(token, () => stopping),
     deploymentLoop(token, () => stopping)
   ]);
 }

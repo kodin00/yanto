@@ -293,7 +293,7 @@ export async function migrate() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS frp_tunnels (
       id text PRIMARY KEY,
-      node_id text NOT NULL REFERENCES deployment_nodes(id) ON DELETE CASCADE,
+      node_id text REFERENCES deployment_nodes(id) ON DELETE CASCADE,
       name text NOT NULL,
       protocol text NOT NULL,
       local_host text NOT NULL,
@@ -310,20 +310,8 @@ export async function migrate() {
       CONSTRAINT frp_tunnels_remote_port_check CHECK (remote_port BETWEEN 1 AND 65535)
     );
   `);
+  await pool.query(`ALTER TABLE frp_tunnels ALTER COLUMN node_id DROP NOT NULL;`);
   await pool.query(`CREATE INDEX IF NOT EXISTS frp_tunnels_node_id_idx ON frp_tunnels(node_id);`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS frp_tunnels_protocol_remote_port_idx ON frp_tunnels(protocol, remote_port);`);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS frp_worker_states (
-      node_id text PRIMARY KEY REFERENCES deployment_nodes(id) ON DELETE CASCADE,
-      desired_revision text,
-      applied_revision text,
-      process_status text NOT NULL DEFAULT 'stopped',
-      frpc_version text,
-      last_error text,
-      last_reported_at timestamptz,
-      updated_at timestamptz NOT NULL DEFAULT now()
-    );
-  `);
-  await pool.query(`ALTER TABLE frp_worker_states ADD COLUMN IF NOT EXISTS desired_revision text;`);
+  await pool.query(`DROP TABLE IF EXISTS frp_worker_states;`);
 }
