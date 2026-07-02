@@ -2542,10 +2542,6 @@ th {
   cursor: default;
 }
 
-.dns-client-tabs .dns-default-client-tab {
-  margin-left: auto;
-}
-
 .dns-page-loading {
   min-height: 240px;
   display: grid;

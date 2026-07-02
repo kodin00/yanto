@@ -16,11 +16,11 @@ export const AuditView = memo(function AuditView(props: Props) {
   return (
     <section className="panel audit-panel">
       <div className="panel-head">
-        <h2>Audit log</h2>
+        <h2>Logs</h2>
         <span className="count">{auditEntries.length} events</span>
       </div>
       <AuditTable entries={visibleAuditEntries} />
-      <Pagination label="Audit events" page={auditPage} totalItems={auditEntries.length} onPageChange={setAuditPage} />
+      <Pagination label="Log events" page={auditPage} totalItems={auditEntries.length} onPageChange={setAuditPage} />
     </section>
   );
 });

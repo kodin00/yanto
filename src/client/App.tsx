@@ -178,7 +178,9 @@ function projectWithoutSecret(project: Project | ProjectWithDeployToken): Projec
 }
 
 function viewTitle(view: View) {
-  return view === "dns" ? "DNS" : view[0].toUpperCase() + view.slice(1);
+  if (view === "dns") return "DNS";
+  if (view === "audit") return "Logs";
+  return view[0].toUpperCase() + view.slice(1);
 }
 
 function shortSha(sha: string) {
@@ -1210,6 +1212,7 @@ export function App() {
     dnsClientIdRef.current = clientId;
     setDnsClientId(clientId);
     setDnsPage(1);
+    setDnsRecords([]);
     setViewLoading((current) => ({ ...current, dns: true }));
     try {
       const records = clientId ? await api.cloudflareClientDnsRecords(clientId) : [];
@@ -1429,14 +1432,14 @@ export function App() {
           {[
             ["dashboard", Activity, "Dashboard"],
             ["projects", GitBranch, "Projects"],
-            ["deployments", Boxes, "Deployments"],
             ["containers", Container, "Containers"],
-            ["hostnames", Globe2, "Hostnames"],
-            ["frp", Network, "FRP"],
             ...(multiNodeEnabled ? [["nodes", Server, "Nodes"] as const] : []),
-            ["backups", Archive, "Backups"],
+            ["deployments", Boxes, "Deployments"],
+            ["hostnames", Globe2, "Hostnames"],
             ["dns", Globe2, "DNS"],
-            ["audit", FileClock, "Audit"],
+            ["frp", Network, "FRP"],
+            ["audit", FileClock, "Logs"],
+            ["backups", Archive, "Backups"],
             ["settings", Settings, "Settings"]
           ].map(([id, Icon, label]) => (
             <button key={id as string} className={view === id ? "active" : ""} type="button" onClick={() => setView(id as View)}>

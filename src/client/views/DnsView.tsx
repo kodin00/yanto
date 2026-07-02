@@ -93,7 +93,7 @@ export const DnsView = memo(function DnsView(props: Props) {
   const orderedClients = useMemo(() => [...clients].sort((left, right) => {
     const leftIsDefault = left.name.trim().toLowerCase() === "default cloudflare";
     const rightIsDefault = right.name.trim().toLowerCase() === "default cloudflare";
-    return Number(leftIsDefault) - Number(rightIsDefault);
+    return Number(rightIsDefault) - Number(leftIsDefault);
   }), [clients]);
   const diagnosticsByHostname = useMemo(() => Object.fromEntries(diagnostics.map((diagnostic) => [diagnostic.hostname.toLowerCase(), diagnostic])), [diagnostics]);
   const yantoRecordKeys = useMemo(() => new Set(diagnostics.flatMap((diagnostic) => {
@@ -216,7 +216,7 @@ export const DnsView = memo(function DnsView(props: Props) {
               </tr>
             </thead>
             <tbody>
-              {visibleRecords.map((record) => {
+              {!loading && visibleRecords.map((record) => {
                 const diagnostic = diagnosticsByHostname[record.name.toLowerCase()];
                 const recordKey = `${record.name.toLowerCase()}|${record.type.toLowerCase()}|${record.content.toLowerCase()}`;
                 const yantoManaged = yantoRecordKeys.has(recordKey);
@@ -259,7 +259,7 @@ export const DnsView = memo(function DnsView(props: Props) {
                 </tr>
               );
               })}
-              {!visibleRecords.length ? (
+              {loading || !visibleRecords.length ? (
                 <tr>
                   <td colSpan={7}>{loading ? "Loading DNS records..." : ready ? "No DNS records found." : "Choose a Cloudflare client first."}</td>
                 </tr>
