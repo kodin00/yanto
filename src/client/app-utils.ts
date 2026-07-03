@@ -1,4 +1,4 @@
-import type { ContainerInfo, Deployment, Project } from "../shared/types";
+import type { CloudflareTunnelAssignment, ContainerInfo, Deployment, Project } from "../shared/types";
 import type { ProjectEnvVariable } from "./lib/api";
 
 export const pageSize = 10;
@@ -127,12 +127,22 @@ export function isProtectedYantoContainer(container: ContainerInfo) {
   return /^yanto-(app|postgres)-\d+$/.test(container.name);
 }
 
-function internalTcpPort(ports: string) {
-  const published = ports.match(/->(\d+)\/tcp\b/);
-  if (published?.[1]) return published[1];
+export function containerTcpPorts(ports: string) {
+  const detected = new Set<number>();
+  for (const match of ports.matchAll(/(\d+)(?:-(\d+))?\/tcp\b/g)) {
+    const start = Number(match[1]);
+    const end = Number(match[2] ?? match[1]);
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end > 65535 || end < start) continue;
+    for (let port = start; port <= end && port - start < 100; port += 1) detected.add(port);
+  }
+  return [...detected].sort((left, right) => left - right);
+}
 
-  const internal = ports.match(/(?:^|,\s*)(\d+)\/tcp\b/);
-  return internal?.[1] ?? "";
+export function cloudflareAssignmentTcpPorts(assignment: CloudflareTunnelAssignment, containers: ContainerInfo[]) {
+  const matching = containers.filter((container) => assignment.targetType === "compose_service"
+    ? container.composeProject === assignment.composeProject && container.composeService === assignment.composeService
+    : container.name === assignment.containerName);
+  return [...new Set(matching.flatMap((container) => containerTcpPorts(container.ports)))].sort((left, right) => left - right);
 }
 
 export function cloudflareServiceUrl(project: Project, containers: ContainerInfo[]) {
@@ -147,7 +157,7 @@ export function cloudflareServiceUrl(project: Project, containers: ContainerInfo
   const target = candidates[0];
   if (!target) return "";
 
-  const port = internalTcpPort(target.ports);
+  const port = containerTcpPorts(target.ports)[0];
   return port ? `http://${target.name}:${port}` : "";
 }
 

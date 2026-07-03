@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
 import type { CloudflareClient, CloudflareRoute, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareZone, ContainerInfo, Project } from "../../shared/types";
+import { cloudflareAssignmentTcpPorts } from "../app-utils";
 import { api } from "../lib/api";
 import { Button, CustomSelect, StatusBadge, TextField, ToggleField } from "../components/ui";
 
@@ -18,7 +19,7 @@ export function HostnamesView({ projects, containers, toast }: { projects: Proje
   const [clientForm, setClientForm] = useState({ name: "", accountId: "", zoneId: "", apiToken: "" });
   const [tunnelForm, setTunnelForm] = useState({ clientId: "", name: "" });
   const [assignmentForm, setAssignmentForm] = useState({ tunnelId: "", target: "" });
-  const [hostnameForm, setHostnameForm] = useState({ tunnelId: "", assignmentId: "", zoneId: "", hostname: "", protocol: "http" as "http" | "https", port: "3000", noTlsVerify: false });
+  const [hostnameForm, setHostnameForm] = useState({ tunnelId: "", assignmentId: "", zoneId: "", hostname: "", protocol: "http" as "http" | "https", port: "", noTlsVerify: false });
 
   const load = async () => {
     const [nextClients, nextTunnels, nextAssignments, nextHostnames] = await Promise.all([api.cloudflareClients(), api.cloudflareTunnels(), api.cloudflareAssignments(), api.cloudflareHostnames()]);
@@ -30,6 +31,11 @@ export function HostnamesView({ projects, containers, toast }: { projects: Proje
   const selectedTunnel = tunnels.find((item) => item.id === hostnameForm.tunnelId);
   const selectedClient = selectedTunnel ? clients.find((client) => client.id === selectedTunnel.clientId) : undefined;
   const tunnelAssignments = assignments.filter((item) => item.tunnelId === hostnameForm.tunnelId);
+  const selectedAssignment = assignments.find((item) => item.id === hostnameForm.assignmentId);
+  const selectedTargetPorts = useMemo(
+    () => selectedAssignment ? cloudflareAssignmentTcpPorts(selectedAssignment, containers) : [],
+    [containers, selectedAssignment]
+  );
   const clientOptions = useMemo(() => [{ label: "Choose client", value: "" }, ...clients.map((client) => ({ label: client.name, value: client.id }))], [clients]);
   const tunnelOptions = useMemo(() => [{ label: "Choose tunnel", value: "" }, ...tunnels.map((tunnel) => ({ label: tunnel.tunnelName, value: tunnel.id }))], [tunnels]);
   const zoneOptions = useMemo(() => {
@@ -40,7 +46,23 @@ export function HostnamesView({ projects, containers, toast }: { projects: Proje
     }
     return [{ label: selectedTunnel ? "Choose zone" : "Choose tunnel first", value: "" }, ...options];
   }, [selectedClient, selectedTunnel, zones]);
-  const assignmentOptions = useMemo(() => [{ label: hostnameForm.tunnelId ? "Choose assigned target" : "Choose tunnel first", value: "" }, ...tunnelAssignments.map((item) => ({ label: item.targetType === "compose_service" ? `${item.composeProject} / ${item.composeService}` : item.containerName ?? "Container", value: item.id }))], [hostnameForm.tunnelId, tunnelAssignments]);
+  const assignmentOptions = useMemo(() => [{ label: hostnameForm.tunnelId ? "Choose assigned target" : "Choose tunnel first", value: "" }, ...tunnelAssignments.map((item) => {
+    const label = item.targetType === "compose_service" ? `${item.composeProject} / ${item.composeService}` : item.containerName ?? "Container";
+    const ports = cloudflareAssignmentTcpPorts(item, containers);
+    const portLabel = ports.length === 1 ? ` · :${ports[0]}` : ports.length > 1 ? ` · ${ports.length} TCP ports` : "";
+    return { label: `${label}${portLabel}`, value: item.id };
+  })], [containers, hostnameForm.tunnelId, tunnelAssignments]);
+  const targetPortOptions = useMemo(
+    () => selectedTargetPorts.map((port) => ({ label: `${port} / TCP`, value: String(port) })),
+    [selectedTargetPorts]
+  );
+  useEffect(() => {
+    if (!selectedAssignment) return;
+    setHostnameForm((current) => {
+      if (selectedTargetPorts.includes(Number(current.port))) return current;
+      return { ...current, port: selectedTargetPorts[0] ? String(selectedTargetPorts[0]) : "" };
+    });
+  }, [selectedAssignment, selectedTargetPorts]);
   const targetOptions = useMemo(() => {
     const seen = new Set<string>();
     const options = containers.filter((container) => {
@@ -63,11 +85,17 @@ export function HostnamesView({ projects, containers, toast }: { projects: Proje
   async function selectHostnameTunnel(tunnelId: string) {
     const tunnel = tunnels.find((item) => item.id === tunnelId);
     const client = tunnel ? clients.find((item) => item.id === tunnel.clientId) : undefined;
-    setHostnameForm((current) => ({ ...current, tunnelId, assignmentId: "", zoneId: client?.zoneId ?? "" }));
+    setHostnameForm((current) => ({ ...current, tunnelId, assignmentId: "", zoneId: client?.zoneId ?? "", port: "" }));
     if (tunnel && !zones[tunnel.clientId]) {
       const next = await api.cloudflareZones(tunnel.clientId);
       setZones((current) => ({ ...current, [tunnel.clientId]: next }));
     }
+  }
+
+  function selectHostnameAssignment(assignmentId: string) {
+    const assignment = assignments.find((item) => item.id === assignmentId);
+    const port = assignment ? cloudflareAssignmentTcpPorts(assignment, containers)[0] : undefined;
+    setHostnameForm((current) => ({ ...current, assignmentId, port: port ? String(port) : "" }));
   }
 
   return (
@@ -89,7 +117,39 @@ export function HostnamesView({ projects, containers, toast }: { projects: Proje
       </> : null}
 
       {tab === "hostnames" ? <>
-        <section className="panel compact-form"><h3>Create route</h3><p className="muted">A route publishes a hostname to an assigned tunnel target and keeps Cloudflare DNS in sync.</p><div className="cf-manager-form hostname-form"><CustomSelect label="Tunnel" value={hostnameForm.tunnelId} options={tunnelOptions} onChange={(tunnelId) => void selectHostnameTunnel(tunnelId)} disabled={busy} /><CustomSelect label="Zone" value={hostnameForm.zoneId} options={zoneOptions} onChange={(zoneId) => setHostnameForm({ ...hostnameForm, zoneId })} disabled={busy || !selectedTunnel} /><CustomSelect label="Assigned target" value={hostnameForm.assignmentId} options={assignmentOptions} onChange={(assignmentId) => setHostnameForm({ ...hostnameForm, assignmentId })} disabled={busy || !hostnameForm.tunnelId} /><TextField label="Hostname" value={hostnameForm.hostname} onChange={(hostname) => setHostnameForm({ ...hostnameForm, hostname })} placeholder="app.example.com" /><CustomSelect<"http" | "https"> label="Protocol" value={hostnameForm.protocol} options={[{ label: "HTTP", value: "http" }, { label: "HTTPS", value: "https" }]} onChange={(protocol) => setHostnameForm({ ...hostnameForm, protocol })} disabled={busy} /><TextField label="Port" value={hostnameForm.port} onChange={(port) => setHostnameForm({ ...hostnameForm, port })} />{hostnameForm.protocol === "https" ? <ToggleField label="No TLS verify" value={hostnameForm.noTlsVerify} onChange={(noTlsVerify) => setHostnameForm({ ...hostnameForm, noTlsVerify })} /> : null}<Button disabled={busy || !hostnameForm.tunnelId || !hostnameForm.assignmentId || !hostnameForm.zoneId || !hostnameForm.hostname} icon={<Plus size={15} />} onClick={() => void act("Publishing route and DNS...", async () => { await api.createCloudflareHostname({ ...hostnameForm, port: Number(hostnameForm.port) }); setHostnameForm({ tunnelId: "", assignmentId: "", zoneId: "", hostname: "", protocol: "http", port: "3000", noTlsVerify: false }); })}>Create route</Button></div></section>
+        <section className="panel compact-form">
+          <h3>Create route</h3>
+          <p className="muted">A route publishes a hostname to an assigned tunnel target and keeps Cloudflare DNS in sync.</p>
+          <div className="cf-manager-form hostname-form">
+            <CustomSelect label="Tunnel" value={hostnameForm.tunnelId} options={tunnelOptions} onChange={(tunnelId) => void selectHostnameTunnel(tunnelId)} disabled={busy} />
+            <CustomSelect label="Zone" value={hostnameForm.zoneId} options={zoneOptions} onChange={(zoneId) => setHostnameForm({ ...hostnameForm, zoneId })} disabled={busy || !selectedTunnel} />
+            <CustomSelect label="Assigned target" value={hostnameForm.assignmentId} options={assignmentOptions} onChange={selectHostnameAssignment} disabled={busy || !hostnameForm.tunnelId} />
+            <TextField label="Hostname" value={hostnameForm.hostname} onChange={(hostname) => setHostnameForm({ ...hostnameForm, hostname })} placeholder="app.example.com" />
+            <CustomSelect<"http" | "https"> label="Protocol" value={hostnameForm.protocol} options={[{ label: "HTTP", value: "http" }, { label: "HTTPS", value: "https" }]} onChange={(protocol) => setHostnameForm({ ...hostnameForm, protocol })} disabled={busy} />
+            {selectedTargetPorts.length > 1 ? (
+              <CustomSelect label="Service port" value={hostnameForm.port} options={targetPortOptions} onChange={(port) => setHostnameForm({ ...hostnameForm, port })} disabled={busy} />
+            ) : (
+              <div className={`cf-detected-port ${selectedAssignment && !selectedTargetPorts.length ? "missing" : ""}`}>
+                <span>Service port</span>
+                <div>
+                  <strong>{selectedTargetPorts.length === 1 ? `${selectedTargetPorts[0]} / TCP` : selectedAssignment ? "No TCP port detected" : "Choose a target"}</strong>
+                  <small>{selectedTargetPorts.length === 1 ? "Detected from Docker" : selectedAssignment ? "Expose the service port in Docker Compose or the image." : "The target port will be detected automatically."}</small>
+                </div>
+              </div>
+            )}
+            {hostnameForm.protocol === "https" ? <ToggleField label="No TLS verify" value={hostnameForm.noTlsVerify} onChange={(noTlsVerify) => setHostnameForm({ ...hostnameForm, noTlsVerify })} /> : null}
+            <Button
+              disabled={busy || !hostnameForm.tunnelId || !hostnameForm.assignmentId || !hostnameForm.zoneId || !hostnameForm.hostname || !hostnameForm.port}
+              icon={<Plus size={15} />}
+              onClick={() => void act("Publishing route and DNS...", async () => {
+                await api.createCloudflareHostname({ ...hostnameForm, port: Number(hostnameForm.port) });
+                setHostnameForm({ tunnelId: "", assignmentId: "", zoneId: "", hostname: "", protocol: "http", port: "", noTlsVerify: false });
+              })}
+            >
+              Create route
+            </Button>
+          </div>
+        </section>
         <section className="panel"><h3>Managed routes & hostnames</h3><div className="cf-manager-list">{hostnames.map((route) => <div className="cf-manager-row" key={route.id}><div><a href={`https://${route.hostname}`} target="_blank" rel="noreferrer"><strong>{route.hostname}</strong></a><span>{route.serviceTarget}</span>{route.lastError ? <span className="danger-text">{route.lastError}</span> : null}</div><StatusBadge status={route.syncStatus} /><div className="actions">{route.syncStatus === "error" ? <Button variant="secondary" disabled={busy} onClick={() => void act("Retrying hostname synchronization...", async () => { await api.retryCloudflareHostname(route.id); })}>Retry</Button> : null}<Button variant="danger" disabled={busy} onClick={() => void act("Deleting hostname and DNS...", () => api.deleteCloudflareHostname(route.id))} icon={<Trash2 size={14} />}>Delete</Button></div></div>)}</div></section>
       </> : null}
     </section>

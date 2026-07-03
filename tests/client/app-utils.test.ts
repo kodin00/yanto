@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   bytes,
+  cloudflareAssignmentTcpPorts,
   cloudflareServiceUrl,
+  containerTcpPorts,
   dateTime,
   deploymentChanges,
   durationBetween,
@@ -17,7 +19,7 @@ import {
   totalPages,
   usedMemoryMb
 } from "../../src/client/app-utils";
-import type { ContainerInfo, Deployment, Project } from "../../src/shared/types";
+import type { CloudflareTunnelAssignment, ContainerInfo, Deployment, Project } from "../../src/shared/types";
 
 describe("bytes", () => {
   it("formats zero bytes", () => {
@@ -325,6 +327,41 @@ describe("cloudflareServiceUrl", () => {
       makeContainer({ name: "app-1", composeService: "app", ports: "0.0.0.0:3000->3000/tcp" })
     ];
     expect(cloudflareServiceUrl(project, containers)).toBe("http://app-1:3000");
+  });
+});
+
+describe("Cloudflare target ports", () => {
+  const composeAssignment = {
+    targetType: "compose_service",
+    composeProject: "shop",
+    composeService: "web",
+    containerName: null
+  } as CloudflareTunnelAssignment;
+
+  it("extracts unique internal TCP ports from Docker port output", () => {
+    expect(containerTcpPorts("0.0.0.0:8080->3000/tcp, [::]:8080->3000/tcp, 3001/tcp, 53/udp")).toEqual([3000, 3001]);
+  });
+
+  it("expands bounded TCP port ranges", () => {
+    expect(containerTcpPorts("4000-4002/tcp")).toEqual([4000, 4001, 4002]);
+  });
+
+  it("finds ports for every replica of an assigned Compose service", () => {
+    const containers = [
+      { name: "shop-web-1", composeProject: "shop", composeService: "web", ports: "3000/tcp" },
+      { name: "shop-web-2", composeProject: "shop", composeService: "web", ports: "3000/tcp, 3001/tcp" },
+      { name: "shop-worker-1", composeProject: "shop", composeService: "worker", ports: "9000/tcp" }
+    ] as ContainerInfo[];
+    expect(cloudflareAssignmentTcpPorts(composeAssignment, containers)).toEqual([3000, 3001]);
+  });
+
+  it("finds ports for a directly assigned container", () => {
+    const assignment = { targetType: "container", containerName: "standalone" } as CloudflareTunnelAssignment;
+    const containers = [
+      { name: "standalone", ports: "8080/tcp" },
+      { name: "another", ports: "9000/tcp" }
+    ] as ContainerInfo[];
+    expect(cloudflareAssignmentTcpPorts(assignment, containers)).toEqual([8080]);
   });
 });
 

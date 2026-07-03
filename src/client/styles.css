@@ -61,6 +61,13 @@
 .cf-manager-tunnel > .cf-manager-row { border: 0; border-radius: 0; }
 .cf-assignment-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 14px; border-top: 1px solid var(--line-light); color: var(--muted); font-size: 12px; }
 .cf-assignment-row button { border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.cf-detected-port { display: grid; gap: 7px; }
+.cf-detected-port > span { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.cf-detected-port > div { min-height: 42px; display: grid; align-content: center; gap: 1px; padding: 5px 12px; background: var(--field); border: 1px solid var(--line); }
+.cf-detected-port strong { font-size: 12px; }
+.cf-detected-port small { color: var(--muted); font-size: 10px; }
+.cf-detected-port.missing > div { background: var(--danger-bg); border-color: var(--red); }
+.cf-detected-port.missing strong { color: var(--red-dark); }
 
 @media (max-width: 700px) {
   .cf-manager-row { align-items: flex-start; flex-direction: column; }
