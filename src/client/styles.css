@@ -493,42 +493,65 @@ a.button {
 
 .dashboard,
 .settings-grid,
-.backup-layout,
-.frp-layout {
+.backup-layout {
   display: grid;
   gap: 16px;
   grid-template-columns: 1fr;
 }
 
-.frp-layout {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
+.frp-page {
+  padding: 0;
+  overflow: hidden;
 }
 
-.frp-server-panel,
-.frp-settings-panel,
-.frp-editor-panel,
-.frp-firewall-panel {
-  min-width: 0;
+.frp-page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 26px;
+  background:
+    linear-gradient(135deg, var(--hero-wash), transparent 58%),
+    var(--panel-strong);
 }
 
-.frp-tunnels-panel {
-  grid-column: 1 / -1;
+.frp-page-intro {
+  max-width: 620px;
+}
+
+.frp-page-intro h2 {
+  margin-top: 5px;
+  font-size: 27px;
+}
+
+.frp-page-intro p,
+.frp-section-title p,
+.frp-firewall-details summary p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.frp-server-controls {
+  display: grid;
+  justify-items: end;
+  gap: 12px;
 }
 
 .frp-stat-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  margin-bottom: 16px;
+  gap: 1px;
+  padding: 0 26px 22px;
+  background: var(--panel-strong);
 }
 
 .frp-stat-grid > div {
   display: grid;
   gap: 5px;
-  padding: 12px;
+  padding: 13px 14px;
   background: var(--field);
   border: 1px solid var(--line-light);
+  margin-right: -1px;
 }
 
 .frp-stat-grid span,
@@ -539,6 +562,74 @@ a.button {
 
 .frp-stat-grid strong {
   font-size: 14px;
+}
+
+.frp-server-error {
+  margin: 0 26px 22px;
+}
+
+.frp-page-section,
+.frp-firewall-details {
+  padding: 24px 26px;
+  border-top: 1px solid var(--line);
+}
+
+.frp-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.frp-section-head h3,
+.frp-firewall-details summary h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+
+.frp-section-head p {
+  margin: 4px 0 0;
+}
+
+.frp-section-title {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.frp-section-icon {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--green);
+  background: var(--success-bg);
+  border: 1px solid var(--line-light);
+}
+
+.frp-endpoint-form {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  align-items: end;
+  gap: 9px 16px;
+}
+
+.frp-endpoint-field {
+  min-width: 0;
+}
+
+.frp-endpoint-actions {
+  padding-bottom: 1px;
+}
+
+.frp-endpoint-form > p {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .frp-client-grid {
@@ -565,8 +656,32 @@ a.button {
 
 .frp-form-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(160px, 1.25fr) minmax(105px, 0.65fr) minmax(160px, 1fr) minmax(110px, 0.65fr) minmax(125px, 0.7fr);
   gap: 12px;
+}
+
+.frp-editor-footer {
+  display: grid;
+  grid-template-columns: minmax(270px, 0.8fr) minmax(240px, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.frp-editor-footer > p {
+  margin: 0;
+}
+
+.frp-editor-footer code {
+  color: var(--ink);
+}
+
+.frp-forwards-section {
+  padding-bottom: 26px;
+}
+
+.frp-table-wrap {
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
 }
 
 .frp-mapping {
@@ -578,7 +693,64 @@ a.button {
   display: block;
 }
 
-.frp-firewall-panel pre {
+.frp-firewall-details {
+  padding: 0;
+}
+
+.frp-firewall-details summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px 26px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.frp-firewall-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.frp-firewall-details summary:hover {
+  background: var(--field);
+}
+
+.frp-details-action {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.frp-details-action::after {
+  content: "+";
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.frp-firewall-details[open] .frp-details-action::after {
+  content: "−";
+}
+
+.frp-firewall-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 14px;
+  padding: 0 26px 24px;
+}
+
+.frp-firewall-content pre {
+  margin: 0;
   overflow-x: auto;
   padding: 12px;
   color: var(--terminal-ink);
@@ -2642,18 +2814,41 @@ th {
 
   .dashboard-main-grid,
   .settings-grid,
-  .dns-layout,
-  .frp-layout {
+  .dns-layout {
     grid-template-columns: 1fr;
   }
 
-  .frp-tunnels-panel {
+  .frp-page-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .frp-server-controls {
+    justify-items: start;
+  }
+
+  .frp-endpoint-form {
+    grid-template-columns: 1fr;
+  }
+
+  .frp-endpoint-form > p {
     grid-column: auto;
   }
 
-  .frp-stat-grid,
   .frp-form-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .frp-form-grid .field:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .frp-editor-footer {
+    grid-template-columns: 1fr;
+  }
+
+  .frp-editor-footer .actions {
+    justify-content: flex-end;
   }
 
   .ops-hero {
@@ -2766,6 +2961,69 @@ th {
 @media (max-width: 620px) {
   .main {
     padding: 16px;
+  }
+
+  .frp-page-head,
+  .frp-page-section {
+    padding: 20px 18px;
+  }
+
+  .frp-server-controls,
+  .frp-server-controls .actions,
+  .frp-endpoint-actions {
+    width: 100%;
+  }
+
+  .frp-server-controls .actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .frp-server-controls .actions .button,
+  .frp-endpoint-actions .button {
+    width: 100%;
+    min-width: 0;
+    padding-inline: 9px;
+  }
+
+  .frp-server-controls .actions .button:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .frp-endpoint-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .frp-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 0 18px 18px;
+  }
+
+  .frp-server-error {
+    margin: 0 18px 18px;
+  }
+
+  .frp-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .frp-form-grid .field:last-child {
+    grid-column: auto;
+  }
+
+  .frp-firewall-details summary {
+    align-items: flex-start;
+    padding: 18px;
+  }
+
+  .frp-firewall-content {
+    grid-template-columns: 1fr;
+    padding: 0 18px 18px;
+  }
+
+  .frp-details-action {
+    font-size: 0;
   }
 
   .topbar {
