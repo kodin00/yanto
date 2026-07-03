@@ -213,6 +213,7 @@ export type FrpTunnel = {
 export type FrpClientSetup = {
   serverAddr: string;
   serverPort: number;
+  authToken: string;
   tokenConfigured: boolean;
   tunnelCount: number;
   frpcToml: string;

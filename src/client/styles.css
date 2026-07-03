@@ -507,13 +507,11 @@ a.button {
 
 .frp-server-panel,
 .frp-settings-panel,
-.frp-clients-panel,
 .frp-editor-panel,
 .frp-firewall-panel {
   min-width: 0;
 }
 
-.frp-clients-panel,
 .frp-tunnels-panel {
   grid-column: 1 / -1;
 }
@@ -563,18 +561,6 @@ a.button {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.frp-empty-state {
-  display: grid;
-  justify-items: start;
-  gap: 12px;
-}
-
-.frp-presets {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 14px;
 }
 
 .frp-form-grid {
@@ -2661,7 +2647,6 @@ th {
     grid-template-columns: 1fr;
   }
 
-  .frp-clients-panel,
   .frp-tunnels-panel {
     grid-column: auto;
   }

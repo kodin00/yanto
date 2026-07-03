@@ -119,10 +119,7 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
                   {primaryRoute ? (
                     <>
                       {primaryDiagnostic ? (
-                        <>
-                          <StatusBadge status={primaryDiagnostic.dnsStatus} label={`DNS ${primaryDiagnostic.dnsStatus}`} />
-                          <StatusBadge status={primaryDiagnostic.tunnelStatus} label={`Tunnel ${primaryDiagnostic.tunnelStatus}`} />
-                        </>
+                        <StatusBadge status={primaryDiagnostic.tunnelStatus} label={`Tunnel ${primaryDiagnostic.tunnelStatus}`} />
                       ) : (
                         <StatusBadge status={primaryRoute.enabled ? "checking" : "disabled"} label={primaryRoute.enabled ? "Checking hostname" : "Route disabled"} />
                       )}

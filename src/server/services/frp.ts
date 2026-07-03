@@ -23,6 +23,10 @@ export type FrpTunnelInput = {
 type DashboardProxy = {
   name?: string;
   status?: string;
+  proxyType?: "tcp" | "udp";
+  conf?: {
+    remotePort?: number | string;
+  };
   trafficIn?: number;
   trafficOut?: number;
   traffic_in?: number;
@@ -157,7 +161,23 @@ export async function deleteFrpTunnel(id: string) {
 
 function proxyNames(proxy: DashboardProxy) {
   const name = proxy.name ?? "";
-  return [name, name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : name];
+  return [
+    name,
+    name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : name,
+    name.includes("/") ? name.slice(name.lastIndexOf("/") + 1) : name
+  ];
+}
+
+type FrpTunnelIdentity = Pick<FrpTunnelRow, "id" | "name" | "protocol" | "remotePort">;
+
+export function findFrpTunnelProxy(tunnel: FrpTunnelIdentity, proxies: DashboardProxy[]) {
+  const matching = proxies.filter((proxy) => {
+    if (proxy.proxyType && proxy.proxyType !== tunnel.protocol) return false;
+    if (proxyNames(proxy).some((name) => name === tunnel.id || name === tunnel.name)) return true;
+    const remotePort = Number(proxy.conf?.remotePort);
+    return Number.isInteger(remotePort) && remotePort === tunnel.remotePort;
+  });
+  return matching.find((proxy) => proxy.status?.toLowerCase() === "online") ?? matching[0];
 }
 
 function tunnelStatus(row: FrpTunnelRow, proxy?: DashboardProxy): FrpTunnelStatus {
@@ -296,6 +316,7 @@ export async function frpClientSetup(): Promise<FrpClientSetup> {
   return {
     serverAddr: settings.publicHost,
     serverPort: settings.bindPort,
+    authToken: token,
     tokenConfigured: Boolean(token),
     tunnelCount: tunnels.length,
     frpcToml,
@@ -313,7 +334,14 @@ async function dashboardData() {
   const clientRows = Array.isArray(clients) ? clients : clients.clients ?? [];
   const tcpRows = Array.isArray(tcp) ? tcp : tcp.proxies ?? [];
   const udpRows = Array.isArray(udp) ? udp : udp.proxies ?? [];
-  return { server, clients: clientRows, proxies: [...tcpRows, ...udpRows] };
+  return {
+    server,
+    clients: clientRows,
+    proxies: [
+      ...tcpRows.map((proxy) => ({ ...proxy, proxyType: "tcp" as const })),
+      ...udpRows.map((proxy) => ({ ...proxy, proxyType: "udp" as const }))
+    ]
+  };
 }
 
 async function frpServerStatus(): Promise<{ status: FrpServerStatus; dashboard: Awaited<ReturnType<typeof dashboardData>> | null }> {
@@ -359,7 +387,7 @@ export async function frpOverview(): Promise<FrpOverview> {
   const proxies = runtime.dashboard?.proxies ?? [];
 
   const tunnels: FrpTunnel[] = tunnelRows.map(({ tunnel, nodeName }) => {
-    const proxy = proxies.find((candidate) => proxyNames(candidate).includes(tunnel.id));
+    const proxy = findFrpTunnelProxy(tunnel, proxies);
     return {
       id: tunnel.id,
       nodeId: tunnel.nodeId,

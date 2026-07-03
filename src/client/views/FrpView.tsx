@@ -1,4 +1,4 @@
-import { Activity, Copy, Edit3, FileText, Gamepad2, Network, Play, Plus, Power, RotateCw, Terminal, Trash2 } from "lucide-react";
+import { Activity, Copy, Edit3, KeyRound, Network, Play, Plus, Power, RotateCw, Trash2, Waypoints } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { FrpOverview, FrpProtocol, FrpTunnel } from "../../shared/types";
@@ -28,8 +28,8 @@ const emptyForm: TunnelForm = {
   name: "",
   protocol: "tcp",
   localHost: "127.0.0.1",
-  localPort: "25565",
-  remotePort: "25565",
+  localPort: "",
+  remotePort: "",
   enabled: true
 };
 
@@ -87,28 +87,6 @@ export const FrpView = memo(function FrpView({ refreshKey, copyText, toast, setC
   }, [refresh, refreshKey]);
 
   const protocolOptions = useMemo(() => [{ value: "tcp" as const, label: "TCP" }, { value: "udp" as const, label: "UDP" }], []);
-
-  function nextPort(protocol: FrpProtocol) {
-    const settings = overview?.settings;
-    if (!settings) return 25565;
-    const used = new Set(overview?.tunnels.filter((tunnel) => tunnel.protocol === protocol).map((tunnel) => tunnel.remotePort));
-    for (let port = settings.portStart; port <= settings.portEnd; port++) {
-      if (!used.has(port)) return port;
-    }
-    return settings.portStart;
-  }
-
-  function applyPreset(kind: "java" | "bedrock") {
-    const protocol = kind === "java" ? "tcp" : "udp";
-    const preferred = kind === "java" && overview && overview.settings.portStart <= 25565 && overview.settings.portEnd >= 25565 ? 25565 : nextPort(protocol);
-    setForm({
-      ...emptyForm,
-      name: kind === "java" ? "Minecraft Java" : "Minecraft Bedrock",
-      protocol,
-      localPort: kind === "java" ? "25565" : "19132",
-      remotePort: String(preferred)
-    });
-  }
 
   async function saveSettings(event: FormEvent) {
     event.preventDefault();
@@ -176,14 +154,15 @@ export const FrpView = memo(function FrpView({ refreshKey, copyText, toast, setC
     }
   }
 
-  async function copyClientSetup(kind: "script" | "config") {
+  async function copyClientValue(kind: "token" | "config") {
     setBusy(`client-${kind}`);
     try {
       const setup = await api.frpClientSetup();
-      await copyText(kind === "script" ? setup.installScript : setup.frpcToml);
-      toast(kind === "script" ? "FRPC install script copied." : "frpc.toml copied.");
+      if (kind === "token" && !setup.authToken) throw new Error("FRP client token is not configured.");
+      await copyText(kind === "token" ? setup.authToken : setup.frpcToml);
+      toast(kind === "token" ? "FRP client token copied." : "frpc.toml copied.");
     } catch (error) {
-      toast(error instanceof Error ? error.message : "Unable to create FRPC setup.", "error");
+      toast(error instanceof Error ? error.message : "Unable to copy FRP client configuration.", "error");
     } finally {
       setBusy(null);
     }
@@ -219,34 +198,23 @@ export const FrpView = memo(function FrpView({ refreshKey, copyText, toast, setC
         <form className="form-grid" onSubmit={saveSettings}>
           <TextField label="VPS IP or DNS-only hostname" value={publicHost} onChange={(value) => { setPublicHost(value); endpointDirty.current = true; }} placeholder="203.0.113.10" />
           <p className="muted">Do not use a Cloudflare-proxied hostname. FRPC connects to port {settings?.bindPort ?? 7000}.</p>
-          <div className="actions"><Button type="submit" loading={busy === "settings"}>Save endpoint</Button></div>
+          <div className="actions">
+            <Button type="submit" loading={busy === "settings"}>Save endpoint</Button>
+            <Button variant="secondary" onClick={() => void copyClientValue("token")} loading={busy === "client-token"} icon={<KeyRound size={15} />}>Copy client token</Button>
+            <Button variant="secondary" onClick={() => void copyClientValue("config")} loading={busy === "client-config"} icon={<Copy size={15} />}>Copy frpc.toml</Button>
+          </div>
         </form>
       </section>
 
-      <section className="panel frp-clients-panel">
-        <div className="panel-head"><h2>Client setup</h2><Terminal size={19} /></div>
-        <div className="frp-empty-state">
-          <p className="muted">Copy the script to the client server, review `serverAddr`, `localIP`, `localPort`, and `remotePort`, then run it with sudo. Public ports must stay inside {settings?.portStart ?? 25560}-{settings?.portEnd ?? 25600} unless you change the VPS FRP range.</p>
-          <div className="actions">
-            <Button onClick={() => void copyClientSetup("script")} loading={busy === "client-script"} icon={<Copy size={15} />}>Copy client script</Button>
-            <Button variant="secondary" onClick={() => void copyClientSetup("config")} loading={busy === "client-config"} icon={<FileText size={15} />}>Copy frpc.toml</Button>
-          </div>
-        </div>
-      </section>
-
       <section className="panel frp-editor-panel">
-        <div className="panel-head"><h2>{form.id ? "Edit tunnel" : "Add tunnel"}</h2><Gamepad2 size={19} /></div>
-        <div className="frp-presets">
-          <Button variant="secondary" onClick={() => applyPreset("java")}>Minecraft Java</Button>
-          <Button variant="secondary" onClick={() => applyPreset("bedrock")}>Minecraft Bedrock</Button>
-        </div>
+        <div className="panel-head"><h2>{form.id ? "Edit tunnel" : "Add tunnel"}</h2><Waypoints size={19} /></div>
         <form className="form-grid" onSubmit={saveTunnel}>
           <div className="frp-form-grid">
-            <TextField label="Name" value={form.name} onChange={(name) => setForm((current) => ({ ...current, name }))} placeholder="Minecraft Java" />
+            <TextField label="Name" value={form.name} onChange={(name) => setForm((current) => ({ ...current, name }))} placeholder="Web server" />
             <CustomSelect label="Protocol" value={form.protocol} options={protocolOptions} onChange={(protocol) => setForm((current) => ({ ...current, protocol }))} />
             <TextField label="Local host" value={form.localHost} onChange={(localHost) => setForm((current) => ({ ...current, localHost }))} />
-            <TextField label="Local port" value={form.localPort} onChange={(localPort) => setForm((current) => ({ ...current, localPort: localPort.replace(/\D/g, "") }))} />
-            <TextField label="VPS public port" value={form.remotePort} onChange={(remotePort) => setForm((current) => ({ ...current, remotePort: remotePort.replace(/\D/g, "") }))} />
+            <TextField label="Local port" value={form.localPort} onChange={(localPort) => setForm((current) => ({ ...current, localPort: localPort.replace(/\D/g, "") }))} placeholder="3000" />
+            <TextField label="VPS public port" value={form.remotePort} onChange={(remotePort) => setForm((current) => ({ ...current, remotePort: remotePort.replace(/\D/g, "") }))} placeholder={String(settings?.portStart ?? 25560)} />
           </div>
           <p className="muted">Use the address as seen by `frpc` on the client server. For a service running on the same machine, `127.0.0.1` is usually right.</p>
           <ToggleField label="Enabled" value={form.enabled} onChange={(enabled) => setForm((current) => ({ ...current, enabled }))} description={`Allowed public range: ${settings?.portStart ?? 25560}–${settings?.portEnd ?? 25600}`} />
