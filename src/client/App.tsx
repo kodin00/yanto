@@ -18,11 +18,13 @@ import {
   Moon,
   Network,
   Play,
+  Plus,
   RefreshCw,
   Server,
   Settings,
   ShieldCheck,
   Sun,
+  Trash2,
 } from "lucide-react";
 import { DashboardView } from "./views";
 import { FormEvent, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -39,6 +41,7 @@ const ProjectsView = lazy(() => import("./views/ProjectsView").then(m => ({ defa
 const SettingsView = lazy(() => import("./views/SettingsView").then(m => ({ default: m.SettingsView })));
 import type { CloudflareClient, CloudflareDnsRecord, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, ContainerInfo, Deployment, DeploymentNode, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../shared/types";
 import {
+  cloudflareServiceUrl,
   endpoint,
   githubRepoNameFromUrl,
   githubWebhookEndpoint,
@@ -47,16 +50,18 @@ import {
   slugifyFolderName,
   totalPages
 } from "./app-utils";
-import { Button, ConfirmDialog, CustomSelect, LoadingInline, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast, ToggleField } from "./components/ui";
+import { Button, ConfirmDialog, CustomSelect, IconButton, LoadingInline, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast, ToggleField } from "./components/ui";
 import { EnvEditor, type ProjectEnvState } from "./components/EnvEditor";
 import { YantoBootLoader } from "./components/YantoBootLoader";
-import { api, type AuditLogEntry, type BackupRecord, type CloudflareDnsRecordPayload, type PostgresTarget } from "./lib/api";
+import { api, type AuditLogEntry, type BackupRecord, type CloudflareDnsRecordPayload, type CloudflareRoutePayload, type PostgresTarget } from "./lib/api";
 import packageJson from "../../package.json";
 
 type View = "dashboard" | "projects" | "deployments" | "containers" | "nodes" | "backups" | "hostnames" | "frp" | "dns" | "audit" | "settings";
 type ToastState = { message: string; kind?: "ok" | "error" | "loading" } | null;
 type LogModalState = { title: string; logs: string; streamPath?: string; live?: boolean; status?: string };
 type LogStreamPayload = { logs?: string; chunk?: string; status?: string; error?: string; done?: boolean };
+type CfRouteProtocol = "http" | "https";
+type CfRouteForm = { hostname: string; protocol: CfRouteProtocol; localTarget: string; noTlsVerify: boolean };
 type ProjectComposeState = { open: boolean; loading: boolean; available: boolean; source: "saved" | "file" | "empty" | null; message: string };
 type RollbackModalState = { project: Project; targetRef: string; preview: RollbackPreview | null; previewError: string | null; previewLoading: boolean };
 type ConfirmState = { title: string; body: string; label: string; danger?: boolean; loadingMessage?: string; successMessage?: string; action: () => Promise<void> };
@@ -145,6 +150,27 @@ function getInitialTheme(): ThemeMode {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+function parseCfServiceTarget(serviceTarget: string): Pick<CfRouteForm, "protocol" | "localTarget"> {
+  const match = serviceTarget.trim().match(/^(https?):\/\/(.+)$/);
+  if (!match) return { protocol: "http", localTarget: serviceTarget.trim() };
+  return { protocol: match[1] as CfRouteProtocol, localTarget: match[2] };
+}
+
+function buildCfRouteForm(hostname = "", serviceTarget = "", noTlsVerify = false): CfRouteForm {
+  const parsed = parseCfServiceTarget(serviceTarget);
+  return {
+    hostname,
+    protocol: parsed.protocol,
+    localTarget: parsed.localTarget,
+    noTlsVerify: parsed.protocol === "https" ? noTlsVerify : false
+  };
+}
+
+function cfRouteServiceTarget(form: CfRouteForm) {
+  const parsed = parseCfServiceTarget(form.localTarget);
+  return `${parsed.protocol === "https" ? "https" : form.protocol}://${parsed.localTarget}`;
+}
+
 function projectWithoutSecret(project: Project | ProjectWithDeployToken): Project {
   const copy: Partial<ProjectWithDeployToken> = { ...project };
   delete copy.deployToken;
@@ -190,6 +216,7 @@ export function App() {
   const [r2FormDirty, setR2FormDirty] = useState(false);
   const [cfForm, setCfForm] = useState({ accountId: "", zoneId: "", apiToken: "" });
   const [cfFormDirty, setCfFormDirty] = useState(false);
+  const [cfRoutes, setCfRoutes] = useState<CloudflareRoute[]>([]);
   const [systemLogs, setSystemLogs] = useState("");
   const [cleanupLogs, setCleanupLogs] = useState("");
   const [cleanupLogTitle, setCleanupLogTitle] = useState("Cleanup preview");
@@ -203,6 +230,8 @@ export function App() {
   const [projectCompose, setProjectCompose] = useState<ProjectComposeState>(emptyProjectComposeState);
   const [projectEditorModal, setProjectEditorModal] = useState<"compose" | "env" | null>(null);
   const [cfRoutesByProject, setCfRoutesByProject] = useState<Record<string, CloudflareRoute[]>>({});
+  const [cfRouteEditorOpen, setCfRouteEditorOpen] = useState(false);
+  const [cfRouteForm, setCfRouteForm] = useState<CfRouteForm>(buildCfRouteForm());
   const [rollbackModal, setRollbackModal] = useState<RollbackModalState | null>(null);
   const [logModal, setLogModal] = useState<LogModalState | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
@@ -796,6 +825,7 @@ export function App() {
 
   function openProject(project?: Project) {
     setProjectEditorModal(null);
+    setCfRouteEditorOpen(false);
     if (project) {
       setProjectForm({
         name: project.name,
@@ -811,12 +841,29 @@ export function App() {
       });
       setProjectEnv(emptyProjectEnvState);
       setProjectCompose(emptyProjectComposeState);
+      const projectRoutes = project.cloudflareRoutes ?? [];
+      const detectedServiceTarget = cloudflareServiceUrl(project, containersByProjectFolder.get(project.folderName) ?? []);
+      setCfRouteForm(buildCfRouteForm(projectRoutes[0]?.hostname ?? "", projectRoutes[0]?.serviceTarget || detectedServiceTarget, projectRoutes[0]?.noTlsVerify ?? false));
+      setCfRoutes(projectRoutes);
       setProjectModal(project);
+      void api.projectCfRoutes(project.id)
+        .then((routes) => {
+          setCfRoutes(routes);
+          setCfRoutesByProject((current) => ({ ...current, [project.id]: routes }));
+          if (routes.length) {
+            setCfRouteForm(buildCfRouteForm(routes[0].hostname, routes[0].serviceTarget, routes[0].noTlsVerify));
+          }
+        })
+        .catch((error) => {
+          setToast({ message: error instanceof Error ? error.message : "Unable to load Cloudflare routes.", kind: "error" });
+        });
       return;
     }
     setProjectForm({ ...emptyProject, targetNodeId: nodes[0]?.id ?? "node_master_local" });
     setProjectEnv(emptyProjectEnvState);
     setProjectCompose(emptyProjectComposeState);
+    setCfRoutes([]);
+    setCfRouteForm(buildCfRouteForm());
     setProjectModal("new");
   }
 
@@ -1093,6 +1140,86 @@ export function App() {
         }
       }
     });
+  }
+
+  async function publishCfRoute(projectId: string) {
+    setBusy("cf-route-publish");
+    setToast({ message: "Publishing Cloudflare route...", kind: "loading" });
+    try {
+      const serviceTarget = cfRouteServiceTarget(cfRouteForm);
+      const payload: CloudflareRoutePayload = {
+        hostname: cfRouteForm.hostname,
+        serviceTarget,
+        noTlsVerify: serviceTarget.startsWith("https://") ? cfRouteForm.noTlsVerify : false
+      };
+      const route = await api.publishCfRoute(projectId, payload);
+      setCfRoutes([route]);
+      setCfRoutesByProject((current) => ({ ...current, [projectId]: [route] }));
+      setProjects((current) => current.map((project) => (project.id === projectId ? { ...project, cloudflareRoutes: [route] } : project)));
+      const project = projects.find((item) => item.id === projectId);
+      setCfRouteForm(buildCfRouteForm(route.hostname, route.serviceTarget || (project ? cloudflareServiceUrl(project, containersByProjectFolder.get(project.folderName) ?? []) : ""), route.noTlsVerify));
+      setCfRouteEditorOpen(false);
+      void refreshRouteDiagnostics();
+      setToast({ message: `Hostname saved: https://${route.hostname}` });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to publish route.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function toggleCfRoute(route: CloudflareRoute) {
+    setBusy(`cf-route-toggle:${route.id}`);
+    setToast({ message: route.enabled ? "Disabling Cloudflare route..." : "Enabling Cloudflare route...", kind: "loading" });
+    try {
+      const updated = route.enabled ? await api.disableCfRoute(route.id) : await api.enableCfRoute(route.id);
+      setCfRoutes((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      if (updated.projectId) {
+        setCfRoutesByProject((current) => ({
+          ...current,
+          [updated.projectId!]: (current[updated.projectId!] ?? []).map((item) => (item.id === updated.id ? updated : item))
+        }));
+      }
+      setProjects((current) => current.map((project) => (
+        project.id === updated.projectId
+          ? { ...project, cloudflareRoutes: (project.cloudflareRoutes ?? []).map((item) => (item.id === updated.id ? updated : item)) }
+          : project
+      )));
+      void refreshRouteDiagnostics();
+      setToast({ message: route.enabled ? "Route disabled." : "Route enabled." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to update route.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function removeCfRoute(routeId: string) {
+    setBusy(`cf-route-delete:${routeId}`);
+    setToast({ message: "Deleting Cloudflare route...", kind: "loading" });
+    try {
+      await api.deleteCfRoute(routeId);
+      const deletedRoute = cfRoutes.find((route) => route.id === routeId);
+      setCfRoutes((current) => current.filter((route) => route.id !== routeId));
+      if (deletedRoute?.projectId) {
+        setCfRoutesByProject((current) => ({
+          ...current,
+          [deletedRoute.projectId!]: (current[deletedRoute.projectId!] ?? []).filter((route) => route.id !== routeId)
+        }));
+        setProjects((current) => current.map((project) => (
+          project.id === deletedRoute.projectId
+            ? { ...project, cloudflareRoutes: (project.cloudflareRoutes ?? []).filter((route) => route.id !== routeId) }
+            : project
+        )));
+      }
+      setCfRouteForm((current) => buildCfRouteForm("", current.localTarget));
+      void refreshRouteDiagnostics();
+      setToast({ message: "Route deleted." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to delete route.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function selectDnsClient(clientId: string) {
@@ -1791,6 +1918,100 @@ export function App() {
                   </button>
                 </section>
 
+                {projectModal !== "new" ? (
+                  <section className="project-edit-section cf-routes-section">
+                    <div className="cf-route-head">
+                      <div>
+                        <div className="section-kicker">Cloudflare Tunnel</div>
+                        <p className="muted">{cfSettingsReady ? "One public hostname can be attached to this project." : "Set Cloudflare Tunnel settings first."}</p>
+                      </div>
+                      <StatusBadge status={cfSettingsReady ? (cfRoutes.some((route) => route.enabled) ? "connected" : "idle") : "disabled"} />
+                    </div>
+                    <div className="cf-route-list compact">
+                      {cfRoutes.map((route) => (
+                        <div key={route.id} className="cf-route-row">
+                          <div className="cf-route-info">
+                            <a className="cf-route-hostname" href={`https://${route.hostname}`} target="_blank" rel="noopener noreferrer">
+                              https://{route.hostname}
+                            </a>
+                            <span className="cf-route-service">{route.serviceTarget}{route.noTlsVerify ? " · no TLS verify" : ""}</span>
+                            <StatusBadge status={route.enabled ? "enabled" : "disabled"} />
+                            {routeDiagnosticsByRouteId[route.id] ? (
+                              <>
+                                <StatusBadge status={routeDiagnosticsByRouteId[route.id].dnsStatus} label={`DNS ${routeDiagnosticsByRouteId[route.id].dnsStatus}`} />
+                                <StatusBadge status={routeDiagnosticsByRouteId[route.id].tunnelStatus} label={`Tunnel ${routeDiagnosticsByRouteId[route.id].tunnelStatus}`} />
+                                <StatusBadge status={routeDiagnosticsByRouteId[route.id].reachabilityStatus} label={`HTTPS ${routeDiagnosticsByRouteId[route.id].reachabilityStatus}`} />
+                              </>
+                            ) : null}
+                          </div>
+                          <div className="cf-route-actions">
+                            <IconButton label="Copy URL" onClick={() => void copyText(`https://${route.hostname}`)}><Copy size={14} /></IconButton>
+                            <Button variant="ghost" disabled={!cfSettingsReady || busy === `cf-route-toggle:${route.id}`} onClick={() => void toggleCfRoute(route)}>
+                              {route.enabled ? "Disable" : "Enable"}
+                            </Button>
+                            <IconButton label="Delete route" disabled={!cfSettingsReady || busy === `cf-route-delete:${route.id}`} onClick={() => void removeCfRoute(route.id)}><Trash2 size={14} /></IconButton>
+                          </div>
+                          {routeDiagnosticsByRouteId[route.id]?.messages.length ? (
+                            <p className="cf-route-diagnostic-message">{routeDiagnosticsByRouteId[route.id].messages[0]}</p>
+                          ) : null}
+                        </div>
+                      ))}
+                      {!cfRoutes.length ? <p className="muted">No public hostname configured.</p> : null}
+                    </div>
+                    {!cfRouteEditorOpen ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={!cfSettingsReady}
+                        onClick={() => setCfRouteEditorOpen(true)}
+                        icon={<Plus size={15} />}
+                      >
+                        {cfRoutes.length ? "Edit hostname" : "Configure hostname"}
+                      </Button>
+                    ) : null}
+                    {cfRouteEditorOpen ? (
+                      <div className="cf-route-add-form compact">
+                        <div className="cf-route-add-row">
+                          <TextField label="Hostname" value={cfRouteForm.hostname} onChange={(hostname) => setCfRouteForm((current) => ({ ...current, hostname }))} placeholder="app.example.com" disabled={!cfSettingsReady} />
+                          <TextField
+                            label="Local service target"
+                            value={cfRouteForm.localTarget}
+                            onChange={(localTarget) => {
+                              const parsed = parseCfServiceTarget(localTarget);
+                              setCfRouteForm((current) => ({
+                                ...current,
+                                protocol: parsed.protocol,
+                                localTarget: parsed.localTarget,
+                                noTlsVerify: parsed.protocol === "https" ? current.noTlsVerify : false
+                              }));
+                            }}
+                            placeholder="container-name:3000"
+                            disabled={!cfSettingsReady}
+                          />
+                          <CustomSelect<CfRouteProtocol>
+                            label="Protocol"
+                            value={cfRouteForm.protocol}
+                            options={[
+                              { label: "HTTP", value: "http" },
+                              { label: "HTTPS", value: "https" }
+                            ]}
+                            onChange={(protocol) => setCfRouteForm((current) => ({ ...current, protocol, noTlsVerify: protocol === "https" ? current.noTlsVerify : false }))}
+                            disabled={!cfSettingsReady}
+                          />
+                          {cfRouteForm.protocol === "https" ? (
+                            <ToggleField label="No TLS verify" value={cfRouteForm.noTlsVerify} onChange={(noTlsVerify) => setCfRouteForm((current) => ({ ...current, noTlsVerify }))} disabled={!cfSettingsReady} />
+                          ) : null}
+                          <Button disabled={!cfSettingsReady || !cfRouteForm.hostname || !cfRouteForm.localTarget} loading={busy === "cf-route-publish"} variant="secondary" onClick={() => void publishCfRoute(projectModal.id)} icon={<Plus size={15} />}>
+                            {busy === "cf-route-publish" ? "Saving" : cfRoutes.length ? "Save hostname" : "Publish"}
+                          </Button>
+                          <Button type="button" variant="ghost" onClick={() => setCfRouteEditorOpen(false)}>
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </section>
+                ) : null}
               </div>
             </div>
             <div className="actions project-edit-actions">
