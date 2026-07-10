@@ -204,12 +204,14 @@ export const api = {
   updateAiModel: (id: string, payload: Partial<{ displayName: string; enabled: boolean }>) =>
     request<AiModel>(`/api/ai/models/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
   deleteAiModel: (id: string) => request<void>(`/api/ai/models/${id}`, { method: "DELETE" }),
-  agentTasks: () => request<AgentTask[]>("/api/agent/tasks"),
+  agentTasks: (archived = false) => request<AgentTask[]>(`/api/agent/tasks${archived ? "?archived=true" : ""}`),
   agentTask: (id: string) => request<AgentTaskDetail>(`/api/agent/tasks/${id}`),
   createAgentTask: (payload: { projectId: string; modelId: string; title: string; prompt: string; sourceBranch: string; taskBranch: string; resumeExistingBranch: boolean; autoCommit: boolean; autoPush: boolean; autoCleanup: boolean }) =>
     request<AgentTaskDetail>("/api/agent/tasks", { method: "POST", body: JSON.stringify(payload) }),
   updateAgentTask: (id: string, payload: Partial<{ title: string; modelId: string; autoCommit: boolean; autoPush: boolean; autoCleanup: boolean }>) =>
     request<AgentTaskDetail>(`/api/agent/tasks/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  setAgentTaskArchived: (id: string, archived: boolean) =>
+    request<AgentTaskDetail>(`/api/agent/tasks/${id}/archive`, { method: "PATCH", body: JSON.stringify({ archived }) }),
   deleteAgentTask: (id: string, force = false) => request<void>(`/api/agent/tasks/${id}${force ? "?force=true" : ""}`, { method: "DELETE" }),
   runAgentTask: (id: string, message?: string) => request<AgentRun>(`/api/agent/tasks/${id}/run`, { method: "POST", body: JSON.stringify(message ? { message } : {}) }),
   stopAgentTask: (id: string) => request<{ ok: true }>(`/api/agent/tasks/${id}/stop`, { method: "POST" }),

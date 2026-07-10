@@ -161,7 +161,7 @@ function task(id: string, overrides: Partial<AgentTaskRow> = {}): AgentTaskRow {
     sourceBranch: "main", taskBranch: `task/${id}`, sourceSha: null, worktreePath: null, codexThreadId: null,
     resumeExistingBranch: false, autoCommit: false, autoPush: false, autoCleanup: false, lastError: "previous error",
     createdAt: new Date("2026-01-01T00:00:00Z"), updatedAt: new Date("2026-01-01T00:00:00Z"), startedAt: null,
-    finishedAt: null, pushedAt: null, ...overrides
+    finishedAt: null, pushedAt: null, archivedAt: null, ...overrides
   };
 }
 
@@ -339,7 +339,7 @@ describe("agent task orchestration", () => {
     ]);
   });
 
-  it("preserves agent success and the worktree when automatic Git push fails", async () => {
+  it("moves an automatic Git push failure to done with a failed run badge", async () => {
     mocks.state.tasks[0] = task("agt_one", { autoCommit: true, autoPush: true });
     mocks.prepareTaskWorktree.mockResolvedValueOnce({ worktreePath: "/worktrees/agt_one", sourceSha: "abc123" });
     mocks.runAgentProvider.mockResolvedValueOnce("Implementation completed");
@@ -349,15 +349,15 @@ describe("agent task orchestration", () => {
 
     const accepted = await startAgentTask("agt_one");
 
-    await vi.waitFor(() => expect(mocks.state.tasks[0].status).toBe("review"));
+    await vi.waitFor(() => expect(mocks.state.tasks[0].status).toBe("done"));
     expect(mocks.state.tasks[0]).toMatchObject({
       worktreePath: "/worktrees/agt_one",
       lastError: "Git automation failed: origin unavailable"
     });
     expect(mocks.state.runs.find((candidate) => candidate.id === accepted.id)).toMatchObject({
-      status: "succeeded",
+      status: "failed",
       assistantText: "Implementation completed",
-      error: null
+      error: "Git automation failed: origin unavailable"
     });
     expect(mocks.state.messages).toContainEqual(expect.objectContaining({
       runId: accepted.id,
@@ -367,7 +367,7 @@ describe("agent task orchestration", () => {
     expect(mocks.cleanupTaskWorktree).not.toHaveBeenCalled();
   });
 
-  it("requires a clean post-push worktree before marking an automatic run done", async () => {
+  it("keeps a dirty post-push worktree as a failed result in done", async () => {
     mocks.state.tasks[0] = task("agt_one", { autoCommit: true, autoPush: true });
     mocks.prepareTaskWorktree.mockResolvedValueOnce({ worktreePath: "/worktrees/agt_one", sourceSha: "abc123" });
     mocks.runAgentProvider.mockResolvedValueOnce("Implementation completed");
@@ -378,10 +378,10 @@ describe("agent task orchestration", () => {
 
     await startAgentTask("agt_one");
 
-    await vi.waitFor(() => expect(mocks.state.tasks[0].status).toBe("review"));
+    await vi.waitFor(() => expect(mocks.state.tasks[0].status).toBe("done"));
     expect(mocks.state.tasks[0].pushedAt).toBeInstanceOf(Date);
     expect(mocks.state.tasks[0].lastError).toBe("Git automation failed: Branch pushed, but uncommitted changes remain in the worktree.");
-    expect(mocks.state.runs[0].status).toBe("succeeded");
+    expect(mocks.state.runs[0].status).toBe("failed");
   });
 
   it("marks an automatic run done only after push, cleanliness verification, and requested cleanup", async () => {
@@ -398,6 +398,17 @@ describe("agent task orchestration", () => {
     expect(mocks.taskGitPreview).toHaveBeenCalledTimes(2);
     expect(mocks.cleanupTaskWorktree).toHaveBeenCalledOnce();
     expect(mocks.state.tasks[0]).toMatchObject({ worktreePath: null, lastError: null });
+  });
+
+  it("archives done tasks after the retention window and allows restoring them", async () => {
+    mocks.state.tasks[0] = task("agt_one", { status: "done", updatedAt: new Date("2026-01-01T00:00:00Z") });
+    const { archiveCompletedAgentTasks, setAgentTaskArchived } = await loadService();
+
+    await expect(archiveCompletedAgentTasks(new Date("2026-01-05T00:00:00Z"))).resolves.toBe(1);
+    expect(mocks.state.tasks[0].archivedAt).toBeInstanceOf(Date);
+
+    await expect(setAgentTaskArchived("agt_one", false)).resolves.toMatchObject({ id: "agt_one", archivedAt: null });
+    expect(mocks.state.tasks[0].archivedAt).toBeNull();
   });
 
   it("does not clear lastError during a manual push outside accepted-run admission", async () => {
@@ -471,7 +482,7 @@ describe("agent task orchestration", () => {
     await expect(drainActiveAgentRuns(1_000)).resolves.toEqual({ drained: true, activeRunCount: 2 });
     expect(codexStop).toHaveBeenCalledOnce();
     expect(mocks.state.runs.every((candidate) => candidate.status === "canceled")).toBe(true);
-    expect(mocks.state.tasks.every((candidate) => candidate.status === "review")).toBe(true);
+    expect(mocks.state.tasks.every((candidate) => candidate.status === "done")).toBe(true);
   });
 
   it("removes only labeled containers for running rows before startup interruption", async () => {
@@ -499,7 +510,7 @@ describe("agent task orchestration", () => {
     ]), expect.any(Object));
     expect(mocks.runCommand).toHaveBeenNthCalledWith(2, "docker", ["rm", "-f", "ctr_running"], expect.any(Object));
     expect(mocks.state.runs[0].status).toBe("failed");
-    expect(mocks.state.tasks[0].status).toBe("review");
+    expect(mocks.state.tasks[0].status).toBe("done");
   });
 
   it("keeps interrupted ownership locked when orphan container removal fails", async () => {

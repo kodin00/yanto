@@ -49,7 +49,7 @@ describe("deleted agent task branch retention", () => {
       id, projectId: project.id, modelId: "aim_test", title: id, prompt: "Do it", status: "backlog", sourceBranch: "main",
       taskBranch, sourceSha: null, worktreePath: path.join(root, id), codexThreadId: null,
       resumeExistingBranch: false, autoCommit: false, autoPush: false, autoCleanup: false, lastError: null,
-      createdAt: new Date(), updatedAt: new Date(), startedAt: null, finishedAt: null, pushedAt: null
+      createdAt: new Date(), updatedAt: new Date(), startedAt: null, finishedAt: null, pushedAt: null, archivedAt: null
     };
   }
 

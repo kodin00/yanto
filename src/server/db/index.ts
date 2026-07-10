@@ -127,11 +127,14 @@ export async function migrate() {
       started_at timestamptz,
       finished_at timestamptz,
       pushed_at timestamptz,
+      archived_at timestamptz,
       CONSTRAINT agent_tasks_status_check CHECK (status IN ('backlog', 'running', 'review', 'done'))
     );
   `);
   await pool.query(`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS codex_thread_id text;`);
+  await pool.query(`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS archived_at timestamptz;`);
   await pool.query(`CREATE INDEX IF NOT EXISTS agent_tasks_status_created_idx ON agent_tasks(status, created_at DESC);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS agent_tasks_archived_updated_idx ON agent_tasks(archived_at, updated_at DESC);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS agent_tasks_project_idx ON agent_tasks(project_id);`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS agent_tasks_project_branch_idx ON agent_tasks(project_id, task_branch);`);
 

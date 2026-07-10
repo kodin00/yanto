@@ -99,10 +99,12 @@ export const agentTasks = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     startedAt: timestamp("started_at", { withTimezone: true }),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
-    pushedAt: timestamp("pushed_at", { withTimezone: true })
+    pushedAt: timestamp("pushed_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true })
   },
   (table) => [
     index("agent_tasks_status_created_idx").on(table.status, table.createdAt),
+    index("agent_tasks_archived_updated_idx").on(table.archivedAt, table.updatedAt),
     index("agent_tasks_project_idx").on(table.projectId),
     uniqueIndex("agent_tasks_project_branch_idx").on(table.projectId, table.taskBranch)
   ]

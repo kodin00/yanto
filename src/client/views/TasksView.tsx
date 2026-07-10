@@ -1,11 +1,11 @@
-import { Bot, Check, GitBranch, Play, Plus, RefreshCw, Settings2, Square, Trash2, Upload, X } from "lucide-react";
+import { Archive, ArchiveRestore, Bot, Check, CheckCircle2, ChevronDown, FileCode2, GitBranch, Play, Plus, RefreshCw, Settings2, Square, Trash2, Upload, Wrench, X, XCircle } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentGitPreview, AgentTask, AgentTaskDetail, AiProvider, AiProviderProtocol, CodexAccountStatus, Project, ProjectBranch } from "../../shared/types";
-import { Button, Modal, StatusBadge, TextAreaField, TextField, ToggleField } from "../components/ui";
+import type { AgentEvent, AgentGitPreview, AgentTask, AgentTaskDetail, AiProvider, AiProviderProtocol, CodexAccountStatus, Project, ProjectBranch } from "../../shared/types";
+import { Button, CustomSelect, Modal, StatusBadge, TextAreaField, TextField, ToggleField } from "../components/ui";
 import { api } from "../lib/api";
 
 type Props = { projects: Project[]; refreshKey: number; toast: (message: string, kind?: "ok" | "error" | "loading") => void };
-type Tab = "board" | "providers";
+type Tab = "board" | "archive" | "providers";
 
 const columns: Array<{ status: AgentTask["status"]; label: string; help: string }> = [
   { status: "backlog", label: "Backlog", help: "Ready to start" },
@@ -24,34 +24,60 @@ function slug(value: string) {
   return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48);
 }
 
+function TaskCard({ task, onSelect, onStart, onRestore }: { task: AgentTask; onSelect: () => void; onStart?: () => void; onRestore?: () => void }) {
+  return (
+    <article className={`agent-task-card ${task.archivedAt ? "archived" : ""}`} onClick={onSelect}>
+      <div className="agent-task-card-head"><StatusBadge status={task.latestRun?.status ?? task.status} /><small>{task.providerName}</small></div>
+      <h3>{task.title}</h3>
+      <p>{task.projectName}</p>
+      <div className="branch-line"><GitBranch size={13} /><span>{task.sourceBranch}</span><span>→</span><strong>{task.taskBranch}</strong></div>
+      {task.lastError ? <p className="agent-error">{task.lastError}</p> : null}
+      <footer>
+        <span>{task.archivedAt ? `Archived ${new Date(task.archivedAt).toLocaleDateString()}` : task.modelName}</span>
+        {onStart ? <button type="button" onClick={(event) => { event.stopPropagation(); onStart(); }}><Play size={13} /> Start</button> : null}
+        {onRestore ? <button type="button" onClick={(event) => { event.stopPropagation(); onRestore(); }}><ArchiveRestore size={13} /> Restore</button> : null}
+      </footer>
+    </article>
+  );
+}
+
 export function TasksView({ projects, refreshKey, toast }: Props) {
   const [tab, setTab] = useState<Tab>("board");
   const [tasks, setTasks] = useState<AgentTask[]>([]);
+  const [archivedTasks, setArchivedTasks] = useState<AgentTask[]>([]);
   const [providers, setProviders] = useState<AiProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
+  const toastRef = useRef(toast);
+
+  useEffect(() => { toastRef.current = toast; }, [toast]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [taskRows, providerRows] = await Promise.all([api.agentTasks(), api.aiProviders()]);
+      const [taskRows, archivedRows, providerRows] = await Promise.all([api.agentTasks(), api.agentTasks(true), api.aiProviders()]);
       setTasks(taskRows);
+      setArchivedTasks(archivedRows);
       setProviders(providerRows);
     } catch (error) {
-      toast(error instanceof Error ? error.message : "Unable to load AI tasks.", "error");
+      toastRef.current(error instanceof Error ? error.message : "Unable to load AI tasks.", "error");
     } finally { setLoading(false); }
-  }, [toast]);
+  }, []);
 
   useEffect(() => { void refresh(); }, [refresh, refreshKey]);
+  useEffect(() => {
+    const timer = window.setInterval(() => { void refresh(); }, 5 * 60 * 1_000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
 
   return (
     <div className="agent-page">
       <div className="agent-tabs">
         <button type="button" className={tab === "board" ? "active" : ""} onClick={() => setTab("board")}><Bot size={15} /> Board</button>
+        <button type="button" className={tab === "archive" ? "active" : ""} onClick={() => setTab("archive")}><Archive size={15} /> Archive {archivedTasks.length ? <span className="tab-count">{archivedTasks.length}</span> : null}</button>
         <button type="button" className={tab === "providers" ? "active" : ""} onClick={() => setTab("providers")}><Settings2 size={15} /> Providers</button>
         <div className="agent-tabs-actions">
-          <Button variant="secondary" onClick={() => void refresh()} icon={<RefreshCw size={15} />}>Refresh</Button>
           {tab === "board" ? <Button onClick={() => setCreateOpen(true)} icon={<Plus size={15} />}>New task</Button> : null}
         </div>
       </div>
@@ -64,25 +90,18 @@ export function TasksView({ projects, refreshKey, toast }: Props) {
               <section className={`kanban-column ${column.status}`} key={column.status}>
                 <header><div><h2>{column.label}</h2><p>{column.help}</p></div><span>{rows.length}</span></header>
                 <div className="kanban-stack">
-                  {rows.map((task) => (
-                    <article className="agent-task-card" key={task.id} onClick={() => setDetailId(task.id)}>
-                      <div className="agent-task-card-head"><StatusBadge status={task.latestRun?.status ?? task.status} /><small>{task.providerName}</small></div>
-                      <h3>{task.title}</h3>
-                      <p>{task.projectName}</p>
-                      <div className="branch-line"><GitBranch size={13} /><span>{task.sourceBranch}</span><span>→</span><strong>{task.taskBranch}</strong></div>
-                      {task.lastError ? <p className="agent-error">{task.lastError}</p> : null}
-                      <footer>
-                        <span>{task.modelName}</span>
-                        {task.status === "backlog" ? <button type="button" onClick={(event) => { event.stopPropagation(); void api.runAgentTask(task.id).then(() => refresh()).catch((error: Error) => toast(error.message, "error")); }}><Play size={13} /> Start</button> : null}
-                      </footer>
-                    </article>
-                  ))}
+                  {rows.map((task) => <TaskCard task={task} key={task.id} onSelect={() => setDetailId(task.id)} onStart={task.status === "backlog" ? () => { void api.runAgentTask(task.id).then(() => refresh()).catch((error: Error) => toast(error.message, "error")); } : undefined} />)}
                   {!rows.length ? <div className="kanban-empty">{loading ? "Loading…" : "No tasks"}</div> : null}
                 </div>
               </section>
             );
           })}
         </div>
+      ) : tab === "archive" ? (
+        <section className="task-archive">
+          <header><div><h2>Archived tasks</h2><p>Done tasks move here automatically after three days.</p></div><span>{archivedTasks.length}</span></header>
+          {archivedTasks.length ? <div className="task-archive-grid">{archivedTasks.map((task) => <TaskCard task={task} key={task.id} onSelect={() => setDetailId(task.id)} onRestore={() => { void api.setAgentTaskArchived(task.id, false).then(() => refresh()).catch((error: Error) => toast(error.message, "error")); }} />)}</div> : <div className="kanban-empty">{loading ? "Loading…" : "No archived tasks"}</div>}
+        </section>
       ) : <ProviderPanel providers={providers} refresh={refresh} toast={toast} />}
 
       {createOpen ? <CreateTaskModal projects={projects.filter((project) => Boolean(project.gitUrl))} providers={providers} onClose={() => setCreateOpen(false)} onCreated={async (task) => { setCreateOpen(false); await refresh(); setDetailId(task.id); }} toast={toast} /> : null}
@@ -95,21 +114,36 @@ function CreateTaskModal({ projects, providers, onClose, onCreated, toast }: { p
   const models = providers.flatMap((provider) => provider.enabled ? provider.models.filter((model) => model.enabled).map((model) => ({ ...model, providerName: provider.name })) : []);
   const [form, setForm] = useState({ projectId: projects[0]?.id ?? "", modelId: models[0]?.id ?? "", title: "", prompt: "", sourceBranch: projects[0]?.branch ?? "master", taskBranch: "", resumeExistingBranch: false, autoCommit: false, autoPush: false, autoCleanup: false });
   const [branches, setBranches] = useState<ProjectBranch[]>([]);
+  const [branchesLoading, setBranchesLoading] = useState(Boolean(projects[0]?.id));
   const [branchTouched, setBranchTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const project = projects.find((row) => row.id === form.projectId);
+  const toastRef = useRef(toast);
+
+  useEffect(() => { toastRef.current = toast; }, [toast]);
 
   useEffect(() => {
     if (!form.projectId) return;
-    setBranches([]);
+    let active = true;
+    setBranchesLoading(true);
     void api.projectAgentBranches(form.projectId).then((rows) => {
+      if (!active) return;
       setBranches(rows);
       const preferred = rows.find((row) => row.name === project?.branch)?.name ?? rows[0]?.name ?? project?.branch ?? "master";
-      setForm((current) => ({ ...current, sourceBranch: preferred }));
-    }).catch((error: Error) => toast(error.message, "error"));
-  }, [form.projectId, project?.branch, toast]);
+      setForm((current) => ({
+        ...current,
+        sourceBranch: rows.some((row) => row.name === current.sourceBranch) ? current.sourceBranch : preferred
+      }));
+    }).catch((error: Error) => {
+      if (active) toastRef.current(error.message, "error");
+    }).finally(() => {
+      if (active) setBranchesLoading(false);
+    });
+    return () => { active = false; };
+  }, [form.projectId, project?.branch]);
 
-  const remoteTaskBranchExists = branches.some((branch) => branch.remote && branch.name === form.taskBranch.trim());
+  const writesToSource = form.taskBranch.trim() === form.sourceBranch;
+  const remoteTaskBranchExists = !writesToSource && branches.some((branch) => branch.remote && branch.name === form.taskBranch.trim());
   async function create() {
     setBusy(true);
     try {
@@ -126,10 +160,11 @@ function CreateTaskModal({ projects, providers, onClose, onCreated, toast }: { p
           <TextAreaField label="Instructions" value={form.prompt} onChange={(prompt) => setForm({ ...form, prompt })} placeholder="Describe the outcome, constraints, and checks to run." />
         </div>
         <div className="agent-create-config">
-          <label className="field"><span>Project</span><select value={form.projectId} onChange={(event) => setForm({ ...form, projectId: event.target.value })}>{projects.map((row) => <option value={row.id} key={row.id}>{row.name}</option>)}</select></label>
-          <label className="field"><span>Model</span><select value={form.modelId} onChange={(event) => setForm({ ...form, modelId: event.target.value })}>{models.map((model) => <option value={model.id} key={model.id}>{model.providerName} · {model.displayName}</option>)}</select></label>
-          <label className="field"><span>Source branch</span><select value={form.sourceBranch} onChange={(event) => setForm({ ...form, sourceBranch: event.target.value })}>{branches.map((branch) => <option value={branch.name} key={branch.name}>{branch.name}{branch.remote ? " · origin" : ""}</option>)}</select></label>
-          <TextField label="Task branch" value={form.taskBranch} onChange={(taskBranch) => { setBranchTouched(true); setForm({ ...form, taskBranch }); }} placeholder="task/health-checks" />
+          <CustomSelect label="Project" value={form.projectId} options={projects.map((row) => ({ label: row.name, value: row.id }))} onChange={(projectId) => setForm({ ...form, projectId })} />
+          <CustomSelect label="Model" value={form.modelId} options={models.map((model) => ({ label: `${model.providerName} · ${model.displayName}`, value: model.id }))} onChange={(modelId) => setForm({ ...form, modelId })} />
+          <CustomSelect label="Source branch" value={form.sourceBranch} options={branches.map((branch) => ({ label: `${branch.name}${branch.remote ? " · origin" : ""}`, value: branch.name }))} onChange={(sourceBranch) => setForm({ ...form, sourceBranch })} disabled={branchesLoading} placeholder={branchesLoading ? "Loading branches…" : "No branches found"} />
+          <TextField label="Push branch" value={form.taskBranch} onChange={(taskBranch) => { setBranchTouched(true); setForm({ ...form, taskBranch }); }} placeholder="task/health-checks or main" />
+          <p className="branch-target-note">Set this to the source branch to let the task commit and push directly to it.</p>
           {remoteTaskBranchExists ? <ToggleField label="Resume existing branch" description="The branch already exists on origin." value={form.resumeExistingBranch} onChange={(resumeExistingBranch) => setForm({ ...form, resumeExistingBranch })} /> : null}
           <ToggleField label="Auto-commit on success" value={form.autoCommit} onChange={(autoCommit) => setForm({ ...form, autoCommit, autoPush: autoCommit ? form.autoPush : false, autoCleanup: autoCommit ? form.autoCleanup : false })} />
           <ToggleField label="Auto-push after commit" value={form.autoPush} disabled={!form.autoCommit} onChange={(autoPush) => setForm({ ...form, autoPush, autoCleanup: autoPush ? form.autoCleanup : false })} />
@@ -138,15 +173,84 @@ function CreateTaskModal({ projects, providers, onClose, onCreated, toast }: { p
       </div>
       {!projects.length ? <p className="agent-error">Register a project with a Git URL before creating an AI task.</p> : null}
       {!models.length ? <p className="agent-error">Add an enabled provider model first.</p> : null}
-      <div className="actions"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={busy} disabled={!form.projectId || !form.modelId || !form.title.trim() || !form.prompt.trim() || !form.sourceBranch || !form.taskBranch.trim() || (remoteTaskBranchExists && !form.resumeExistingBranch)} onClick={() => void create()}>Create task</Button></div>
+      <div className="actions"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={busy} disabled={branchesLoading || !form.projectId || !form.modelId || !form.title.trim() || !form.prompt.trim() || !form.sourceBranch || !form.taskBranch.trim() || (remoteTaskBranchExists && !form.resumeExistingBranch)} onClick={() => void create()}>Create task</Button></div>
     </Modal>
+  );
+}
+
+type ActivityEvent = Pick<AgentEvent, "runId" | "sequence" | "kind" | "payload"> & { createdAt?: string };
+type ToolEntry = { key: string; label: string; detail: string; status: "running" | "completed" | "failed"; kind: "tool" | "file" };
+
+function compactDetail(value: unknown) {
+  if (value === undefined || value === null || value === "") return "";
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  return text.replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
+function toolActivityEntries(events: ActivityEvent[], running: boolean): ToolEntry[] {
+  const results = new Map(events.filter((event) => event.kind === "tool_result" && typeof event.payload.id === "string").map((event) => [String(event.payload.id), event]));
+  const pairedResults = new Set<string>();
+  const entries: ToolEntry[] = [];
+
+  for (const event of events) {
+    if (event.kind === "tool_call") {
+      const id = typeof event.payload.id === "string" ? event.payload.id : undefined;
+      const result = id ? results.get(id) : undefined;
+      if (id && result) pairedResults.add(id);
+      const payload = result?.payload ?? event.payload;
+      const failed = payload.isError === true || Boolean(payload.error) || ["failed", "error"].includes(String(payload.status ?? "").toLowerCase());
+      const label = String(event.payload.name ?? event.payload.tool ?? (event.payload.type === "web_search" ? "Web search" : event.payload.type === "todo" ? "Task plan" : "Tool"));
+      const detail = compactDetail(event.payload.command ?? event.payload.query ?? event.payload.input ?? event.payload.server ?? event.payload.path ?? event.payload.items);
+      entries.push({ key: `${event.runId}:${event.sequence}`, label, detail, status: failed ? "failed" : result || event.payload.status === "completed" ? "completed" : running ? "running" : "completed", kind: "tool" });
+    }
+    if (event.kind === "tool_result") {
+      const id = typeof event.payload.id === "string" ? event.payload.id : undefined;
+      if (id && pairedResults.has(id)) continue;
+      const exitCode = typeof event.payload.exitCode === "number" ? event.payload.exitCode : null;
+      const failed = event.payload.isError === true || Boolean(event.payload.error) || (exitCode !== null && exitCode !== 0) || ["failed", "error"].includes(String(event.payload.status ?? "").toLowerCase());
+      const label = String(event.payload.name ?? (event.payload.type === "command" ? "Shell command" : "Tool result"));
+      const detail = compactDetail(event.payload.command ?? event.payload.input ?? event.payload.path);
+      entries.push({ key: `${event.runId}:${event.sequence}`, label, detail, status: failed ? "failed" : "completed", kind: "tool" });
+    }
+    if (event.kind === "file_change") {
+      entries.push({ key: `${event.runId}:${event.sequence}`, label: "File changes", detail: compactDetail(event.payload.path ?? event.payload.changes), status: "completed", kind: "file" });
+    }
+  }
+  return entries;
+}
+
+function ToolActivity({ events, running }: { events: ActivityEvent[]; running: boolean }) {
+  const entries = toolActivityEntries(events, running);
+  const [open, setOpen] = useState(running);
+  useEffect(() => { if (running) setOpen(true); }, [running]);
+  if (!entries.length) return null;
+  const failed = entries.filter((entry) => entry.status === "failed").length;
+  return (
+    <details className="task-events" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>
+        <span className="task-events-icon"><Wrench size={14} /></span>
+        <span><strong>Tools used</strong><small>{running ? "Activity updates live" : `${entries.length} operation${entries.length === 1 ? "" : "s"}`}</small></span>
+        {failed ? <span className="task-events-failed">{failed} failed</span> : <span className="task-events-count">{entries.length}</span>}
+        <ChevronDown className="task-events-chevron" size={15} />
+      </summary>
+      <div className="task-event-list">
+        {entries.map((entry) => (
+          <div className={`task-event-row ${entry.status}`} key={entry.key}>
+            <span className="task-event-state">{entry.status === "failed" ? <XCircle size={14} /> : entry.status === "running" ? <span className="task-event-pulse" /> : <CheckCircle2 size={14} />}</span>
+            <span className="task-event-kind">{entry.kind === "file" ? <FileCode2 size={13} /> : <Wrench size={13} />}</span>
+            <div><strong>{entry.label}</strong>{entry.detail ? <code title={entry.detail}>{entry.detail}</code> : null}</div>
+            <small>{entry.status}</small>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 
 function TaskDetailModal({ taskId, providers, onClose, refreshBoard, toast }: { taskId: string; providers: AiProvider[]; onClose: () => void; refreshBoard: () => Promise<void>; toast: Props["toast"] }) {
   const [task, setTask] = useState<AgentTaskDetail | null>(null);
   const [liveText, setLiveText] = useState("");
-  const [eventLog, setEventLog] = useState<string[]>([]);
+  const [eventLog, setEventLog] = useState<ActivityEvent[]>([]);
   const [followUp, setFollowUp] = useState("");
   const [git, setGit] = useState<AgentGitPreview | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
@@ -157,6 +261,13 @@ function TaskDetailModal({ taskId, providers, onClose, refreshBoard, toast }: { 
   const load = useCallback(async () => {
     const detail = await api.agentTask(taskId);
     setTask(detail);
+    const persistedEvents = detail.events.map((event) => ({ runId: event.runId, sequence: event.sequence, kind: event.kind, payload: event.payload, createdAt: event.createdAt }));
+    setEventLog(persistedEvents);
+    eventDedup.current = {
+      runId: detail.latestRun?.id ?? null,
+      keys: new Set(persistedEvents.map((event) => `${event.runId}:${event.sequence}`)),
+      order: persistedEvents.map((event) => `${event.runId}:${event.sequence}`)
+    };
     if (detail.worktreePath && detail.status !== "running") {
       const preview = await api.agentTaskGit(taskId).catch(() => null);
       setGit(preview);
@@ -166,7 +277,7 @@ function TaskDetailModal({ taskId, providers, onClose, refreshBoard, toast }: { 
   useEffect(() => { void load().catch((error: Error) => toast(error.message, "error")); }, [load, toast]);
   useEffect(() => {
     if (task?.status !== "running") return;
-    type StreamEvent = { runId?: string; sequence?: number; kind?: string; payload?: Record<string, unknown>; done?: boolean };
+    type StreamEvent = { runId?: string; sequence?: number; kind?: string; payload?: Record<string, unknown>; createdAt?: string; done?: boolean };
     let source: EventSource | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let disposed = false;
@@ -198,8 +309,8 @@ function TaskDetailModal({ taskId, providers, onClose, refreshBoard, toast }: { 
       if (!remember(event)) return;
       if (event.kind === "assistant_delta" && typeof event.payload?.delta === "string") {
         setLiveText((current) => current + event.payload!.delta);
-      } else if (event.kind && event.kind !== "snapshot") {
-        setEventLog((current) => [...current.slice(-199), `${event.kind}: ${JSON.stringify(event.payload ?? {})}`]);
+      } else if (event.runId && typeof event.sequence === "number" && event.kind && event.kind !== "snapshot" && event.kind !== "codex_thread") {
+        setEventLog((current) => [...current.slice(-199), { runId: event.runId!, sequence: event.sequence!, kind: event.kind!, payload: event.payload ?? {}, createdAt: event.createdAt }]);
       }
       if (event.done) finish();
     };
@@ -261,14 +372,14 @@ function TaskDetailModal({ taskId, providers, onClose, refreshBoard, toast }: { 
   const allModels = providers.flatMap((provider) => provider.models.map((model) => ({ ...model, label: `${provider.name} · ${model.displayName}` })));
   return (
     <Modal title={task.title} size="wide" onClose={onClose} closeOnEscape={task.status !== "running"}>
-      <div className="task-pipeline"><span>{task.projectName}</span><code>origin/{task.sourceBranch}</code><span>→</span><code>{task.taskBranch}</code><StatusBadge status={task.status} /></div>
+      <div className="task-pipeline"><span>{task.projectName}</span><code>origin/{task.sourceBranch}</code><span>→</span><code>{task.taskBranch}</code><StatusBadge status={task.latestRun?.status ?? task.status} /></div>
       <div className="task-detail-grid">
         <section className="task-conversation">
           <div className="task-messages">
             {task.messages.map((message) => <article className={`task-message ${message.role}`} key={message.id}><strong>{message.role === "user" ? "You" : "Agent"}</strong><pre>{message.content}</pre></article>)}
             {liveText ? <article className="task-message assistant live"><strong>Agent · live</strong><pre>{liveText}</pre></article> : null}
           </div>
-          {eventLog.length ? <details className="task-events"><summary>Live tool activity ({eventLog.length})</summary><pre>{eventLog.join("\n")}</pre></details> : null}
+          <ToolActivity events={eventLog} running={task.status === "running"} />
           <TextAreaField label={task.status === "backlog" ? "Instructions" : "Follow-up instruction"} value={followUp} onChange={setFollowUp} placeholder="Ask the agent to adjust or continue…" />
           <div className="actions">
             {task.status === "running" ? <Button variant="danger" loading={busy === "stop"} onClick={() => void action("stop", () => api.stopAgentTask(task.id))} icon={<Square size={14} />}>Stop run</Button> : <Button loading={busy === "run"} onClick={() => void action("run", async () => { await api.runAgentTask(task.id, followUp.trim() || undefined); setFollowUp(""); })} icon={<Play size={14} />}>{task.status === "backlog" ? "Start" : "Run follow-up"}</Button>}
@@ -276,7 +387,7 @@ function TaskDetailModal({ taskId, providers, onClose, refreshBoard, toast }: { 
         </section>
         <aside className="task-review-panel">
           <h3>Run settings</h3>
-          <label className="field"><span>Model</span><select value={task.modelId} disabled={task.status === "running"} onChange={(event) => void action("settings", () => api.updateAgentTask(task.id, { modelId: event.target.value }))}>{allModels.map((model) => <option value={model.id} key={model.id}>{model.label}</option>)}</select></label>
+          <CustomSelect label="Model" value={task.modelId} options={allModels.map((model) => ({ label: model.label, value: model.id }))} disabled={task.status === "running"} onChange={(modelId) => void action("settings", () => api.updateAgentTask(task.id, { modelId }))} />
           <ToggleField label="Auto-commit" value={task.autoCommit} disabled={task.status === "running"} onChange={(autoCommit) => void action("settings", () => api.updateAgentTask(task.id, { autoCommit, ...(autoCommit ? {} : { autoPush: false, autoCleanup: false }) }))} />
           <ToggleField label="Auto-push" value={task.autoPush} disabled={task.status === "running" || !task.autoCommit} onChange={(autoPush) => void action("settings", () => api.updateAgentTask(task.id, { autoPush, ...(autoPush ? {} : { autoCleanup: false }) }))} />
           <ToggleField label="Auto-clean" value={task.autoCleanup} disabled={task.status === "running" || !task.autoPush} onChange={(autoCleanup) => void action("settings", () => api.updateAgentTask(task.id, { autoCleanup }))} />
@@ -291,6 +402,7 @@ function TaskDetailModal({ taskId, providers, onClose, refreshBoard, toast }: { 
               <Button variant="ghost" loading={busy === "cleanup"} onClick={() => void action("cleanup", () => api.cleanupAgentTask(task.id))}>Clean worktree</Button>
             </>
           ) : <p className="muted">Loading Git state…</p>}
+          {task.archivedAt ? <Button variant="secondary" loading={busy === "restore"} onClick={() => void action("restore", () => api.setAgentTaskArchived(task.id, false))} icon={<ArchiveRestore size={14} />}>Restore to board</Button> : null}
           {task.status !== "running" ? <Button variant="danger" onClick={() => void action("delete", async () => { await api.deleteAgentTask(task.id); onClose(); })} icon={<Trash2 size={14} />}>Delete task</Button> : null}
         </aside>
       </div>
@@ -355,7 +467,7 @@ function ProviderPanel({ providers, refresh, toast }: { providers: AiProvider[];
         <hr />
         <h2>Register provider</h2><p className="muted">Keys are encrypted at rest and never returned to the browser.</p>
         <TextField label="Name" value={form.name} onChange={(name) => setForm({ ...form, name })} placeholder="OpenAI production" />
-        <label className="field"><span>Protocol</span><select value={form.protocol} onChange={(event) => { const protocol = event.target.value as AiProviderProtocol; setForm({ ...form, protocol, baseUrl: protocol === "anthropic_messages" ? "https://api.anthropic.com" : "https://api.openai.com/v1" }); }}>{protocolOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label>
+        <CustomSelect<AiProviderProtocol> label="Protocol" value={form.protocol} options={protocolOptions} onChange={(protocol) => setForm({ ...form, protocol, baseUrl: protocol === "anthropic_messages" ? "https://api.anthropic.com" : "https://api.openai.com/v1" })} />
         <TextField label="Base URL" value={form.baseUrl} onChange={(baseUrl) => setForm({ ...form, baseUrl })} />
         <TextField label="API key" type="password" value={form.apiKey} onChange={(apiKey) => setForm({ ...form, apiKey })} autoComplete="off" />
         <Button loading={busy === "create"} disabled={!form.name.trim() || !form.apiKey.trim()} onClick={() => void action("create", async () => { await api.createAiProvider(form); setForm({ ...form, name: "", apiKey: "" }); })}>Register provider</Button>

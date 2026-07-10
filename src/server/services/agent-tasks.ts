@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, ne } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { agentEvents, agentMessages, agentRuns, agentTasks, aiModels, aiProviders, projects, type AgentTaskRow } from "../db/schema.js";
 import { config } from "../config.js";
@@ -90,17 +90,29 @@ function taskView(row: {
   return { ...row.task, projectName: row.projectName, modelName: row.modelName, providerName: row.providerName, latestRun };
 }
 
-async function taskRows(taskId?: string) {
+async function taskRows(taskId?: string, archived?: boolean) {
   const query = db.select({ task: agentTasks, projectName: projects.name, modelName: aiModels.displayName, providerName: aiProviders.name })
     .from(agentTasks)
     .innerJoin(projects, eq(agentTasks.projectId, projects.id))
     .innerJoin(aiModels, eq(agentTasks.modelId, aiModels.id))
     .innerJoin(aiProviders, eq(aiModels.providerId, aiProviders.id));
-  return taskId ? query.where(eq(agentTasks.id, taskId)).limit(1) : query.orderBy(desc(agentTasks.createdAt));
+  if (taskId) return query.where(eq(agentTasks.id, taskId)).limit(1);
+  if (archived === true) return query.where(isNotNull(agentTasks.archivedAt)).orderBy(desc(agentTasks.archivedAt));
+  if (archived === false) return query.where(isNull(agentTasks.archivedAt)).orderBy(desc(agentTasks.createdAt));
+  return query.orderBy(desc(agentTasks.createdAt));
 }
 
-export async function listAgentTasks() {
-  const rows = await taskRows();
+export async function archiveCompletedAgentTasks(now = new Date()) {
+  const cutoff = new Date(now.getTime() - (3 * 24 * 60 * 60 * 1_000));
+  const archived = await db.update(agentTasks).set({ archivedAt: now })
+    .where(and(eq(agentTasks.status, "done"), isNull(agentTasks.archivedAt), lte(agentTasks.updatedAt, cutoff)))
+    .returning({ id: agentTasks.id });
+  return archived.length;
+}
+
+export async function listAgentTasks(archived = false) {
+  await archiveCompletedAgentTasks();
+  const rows = await taskRows(undefined, archived);
   const runs = rows.length ? await db.select().from(agentRuns).where(inArray(agentRuns.taskId, rows.map((row) => row.task.id))).orderBy(desc(agentRuns.startedAt)) : [];
   return rows.map((row) => taskView(row, runs.find((run) => run.taskId === row.task.id) ?? null));
 }
@@ -112,7 +124,10 @@ export async function getAgentTask(id: string) {
     db.select().from(agentMessages).where(eq(agentMessages.taskId, id)).orderBy(asc(agentMessages.createdAt)),
     db.select().from(agentRuns).where(eq(agentRuns.taskId, id)).orderBy(desc(agentRuns.startedAt))
   ]);
-  return { ...taskView(row, runs[0] ?? null), messages, runs };
+  const events = runs[0]
+    ? await db.select().from(agentEvents).where(eq(agentEvents.runId, runs[0].id)).orderBy(asc(agentEvents.sequence))
+    : [];
+  return { ...taskView(row, runs[0] ?? null), messages, runs, events };
 }
 
 export async function createAgentTask(input: CreateAgentTaskInput) {
@@ -121,7 +136,6 @@ export async function createAgentTask(input: CreateAgentTaskInput) {
   if (!project.gitUrl) throw new HttpError(400, "AI tasks require a Git-backed project.");
   await resolveProviderModel(input.modelId);
   if (!input.title.trim() || !input.prompt.trim()) throw new HttpError(400, "Task title and instructions are required.");
-  if (input.sourceBranch.trim() === input.taskBranch.trim()) throw new HttpError(400, "Task branch must differ from the source branch.");
   if (input.autoPush && !input.autoCommit) throw new HttpError(400, "Auto-push requires auto-commit.");
   if (input.autoCleanup && !input.autoPush) throw new HttpError(400, "Auto-cleanup requires auto-push.");
   const id = createId("agt");
@@ -172,6 +186,22 @@ export async function updateAgentTask(id: string, input: Partial<Pick<CreateAgen
       ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
       autoCommit, autoPush, autoCleanup, updatedAt: new Date()
     }).where(eq(agentTasks.id, id));
+    return getAgentTask(id);
+  });
+}
+
+export async function setAgentTaskArchived(id: string, archived: boolean) {
+  const initial = await getAgentTask(id);
+  if (!initial) return undefined;
+  return withAgentLifecycleLock([
+    agentProjectLifecycleKey(initial.projectId),
+    agentTaskLifecycleKey(id)
+  ], async () => {
+    const current = await getAgentTask(id);
+    if (!current) return undefined;
+    if (current.status === "running") throw new HttpError(409, "Stop the active run before archiving the task.");
+    if (archived && current.status !== "done") throw new HttpError(409, "Only done tasks can be archived.");
+    await db.update(agentTasks).set({ archivedAt: archived ? new Date() : null, updatedAt: new Date() }).where(eq(agentTasks.id, id));
     return getAgentTask(id);
   });
 }
@@ -389,21 +419,22 @@ async function executeAgentRun(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       taskError = `Git automation failed: ${message}`;
-      finalTaskStatus = "review";
+      finalTaskStatus = "done";
       logger.error("agent Git automation failed", { taskId, runId, error: message });
     }
 
     await reconcileTerminalRun(taskId, runId, {
-      runStatus: "succeeded",
+      runStatus: taskError ? "failed" : "succeeded",
       taskStatus: finalTaskStatus,
       assistantText,
+      runError: taskError,
       taskError,
       pushedAt,
       worktreeCleaned
     });
     await recordPostRunEvent(taskId, runId, "run_finished", {
-      status: "succeeded",
-      error: null,
+      status: taskError ? "failed" : "succeeded",
+      error: taskError ?? null,
       assistantText
     });
     if (taskError) {
@@ -418,7 +449,7 @@ async function executeAgentRun(
     // the nested block above. Reaching this catch means provider/setup failure.
     await reconcileTerminalRun(taskId, runId, {
       runStatus: canceled ? "canceled" : "failed",
-      taskStatus: "review",
+      taskStatus: "done",
       assistantText,
       runError: message,
       taskError: message
@@ -428,7 +459,7 @@ async function executeAgentRun(
       error: message,
       assistantText
     });
-    await recordPostRunEvent(taskId, runId, "task_finished", { status: "review", error: message }, true);
+    await recordPostRunEvent(taskId, runId, "task_finished", { status: "done", error: message }, true);
     logger.error("agent run failed", { taskId, runId, canceled, error: message });
   } finally {
     clearTimeout(timeout);
@@ -466,7 +497,7 @@ export async function startAgentTask(id: string, followUp?: string) {
       run = await db.transaction(async (tx) => {
         const now = new Date();
         const [claimedTask] = await tx.update(agentTasks).set({
-          status: "running", lastError: null, startedAt: now, finishedAt: null, updatedAt: now
+          status: "running", archivedAt: null, lastError: null, startedAt: now, finishedAt: null, updatedAt: now
         }).where(and(eq(agentTasks.id, id), ne(agentTasks.status, "running"))).returning({ id: agentTasks.id });
         if (!claimedTask) throw new HttpError(409, "Task already has an active run.");
 
@@ -642,7 +673,7 @@ export async function recoverInterruptedAgentRuns() {
     const now = new Date();
     await db.transaction(async (tx) => {
       await tx.update(agentRuns).set({ status: "failed", error: message, finishedAt: now }).where(eq(agentRuns.id, run.id));
-      await tx.update(agentTasks).set({ status: "review", lastError: message, finishedAt: now, updatedAt: now }).where(eq(agentTasks.id, run.taskId));
+      await tx.update(agentTasks).set({ status: "done", lastError: message, finishedAt: now, updatedAt: now }).where(eq(agentTasks.id, run.taskId));
     });
     recovered += 1;
   }

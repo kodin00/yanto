@@ -1,6 +1,6 @@
 import { Check, ChevronDown, Loader2, X } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 type ButtonProps = {
   children: ReactNode;
@@ -94,16 +94,19 @@ export function CustomSelect<T extends string>({
   value,
   options,
   onChange,
-  disabled
+  disabled,
+  placeholder = "No options available"
 }: {
   label: string;
   value: T;
   options: { label: string; value: T }[];
   onChange: (value: T) => void;
   disabled?: boolean;
+  placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
+  const menuId = useId();
 
   useEffect(() => {
     const close = (event: MouseEvent) => {
@@ -116,21 +119,43 @@ export function CustomSelect<T extends string>({
   }, []);
 
   const selected = options.find((option) => option.value === value) ?? options[0];
+  const unavailable = disabled || options.length === 0;
+
+  useEffect(() => {
+    if (unavailable) setOpen(false);
+  }, [unavailable]);
 
   return (
     <div className="field custom-select" ref={ref}>
       <span>{label}</span>
-      <button type="button" className="select-trigger" onClick={() => setOpen((current) => !current)} disabled={disabled}>
-        <span>{selected.label}</span>
+      <button
+        type="button"
+        className="select-trigger"
+        onClick={() => setOpen((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setOpen(false);
+          if ((event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") && !open) {
+            event.preventDefault();
+            setOpen(true);
+          }
+        }}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={menuId}
+        disabled={unavailable}
+      >
+        <span>{selected?.label ?? placeholder}</span>
         <ChevronDown size={16} />
       </button>
       {open ? (
-        <div className="select-menu">
+        <div className="select-menu" id={menuId} role="listbox" aria-label={label}>
           {options.map((option) => (
             <button
               type="button"
               key={option.value}
               className={option.value === value ? "selected" : ""}
+              role="option"
+              aria-selected={option.value === value}
               onClick={() => {
                 onChange(option.value);
                 setOpen(false);

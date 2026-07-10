@@ -50,7 +50,7 @@ describe("agent worktrees", () => {
       id: "agt_test", projectId: project.id, modelId: "aim_test", title: "Test", prompt: "Do it", status: "backlog",
       sourceBranch: "main", taskBranch: "task/test", sourceSha: null, worktreePath: path.join(root, "worktree"),
       resumeExistingBranch: false, autoCommit: false, autoPush: false, autoCleanup: false, lastError: null,
-      createdAt: new Date(), updatedAt: new Date(), startedAt: null, finishedAt: null, pushedAt: null, ...overrides
+      createdAt: new Date(), updatedAt: new Date(), startedAt: null, finishedAt: null, pushedAt: null, archivedAt: null, ...overrides
     };
   }
 
@@ -91,5 +91,19 @@ describe("agent worktrees", () => {
     const prepared = await prepareTaskWorktree(project, { ...row, resumeExistingBranch: true });
     expect(git(prepared.worktreePath, "branch", "--show-current")).toBe("task/existing");
     await cleanupTaskWorktree(project, { ...row, resumeExistingBranch: true, worktreePath: prepared.worktreePath });
+  });
+
+  it("allows a task to commit and push directly to its source branch", async () => {
+    const row = task({ taskBranch: "main" });
+    const prepared = await prepareTaskWorktree(project, row);
+    expect(git(prepared.worktreePath, "branch", "--show-current")).toBe("main");
+
+    await fs.writeFile(path.join(prepared.worktreePath, "direct.txt"), "direct source change\n");
+    const activeTask = { ...row, sourceSha: prepared.sourceSha, worktreePath: prepared.worktreePath };
+    const commit = await commitTaskWorktree(project, activeTask, "change source directly");
+    await expect(pushTaskWorktree(project, activeTask)).resolves.toBe(commit);
+    expect(git(remote, "rev-parse", "refs/heads/main")).toBe(commit);
+
+    await cleanupTaskWorktree(project, activeTask);
   });
 });

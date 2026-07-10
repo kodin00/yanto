@@ -4,7 +4,7 @@ import { requireAuth } from "../auth.js";
 import { actor, asyncRoute, routeParam, sendStreamEvent, startEventStream } from "../http-utils.js";
 import { recordAuditLog } from "../services/audit.js";
 import { agentEventBus, type AgentLiveEvent } from "../services/agent-events.js";
-import { agentTaskEvents, branchesForProject, cleanupAgentTask, commitAgentTask, createAgentTask, deleteAgentTask, getAgentTask, gitPreviewForTask, listAgentTasks, pushAgentTask, startAgentTask, stopAgentTask, updateAgentTask } from "../services/agent-tasks.js";
+import { agentTaskEvents, branchesForProject, cleanupAgentTask, commitAgentTask, createAgentTask, deleteAgentTask, getAgentTask, gitPreviewForTask, listAgentTasks, pushAgentTask, setAgentTaskArchived, startAgentTask, stopAgentTask, updateAgentTask } from "../services/agent-tasks.js";
 
 const router = Router();
 const taskInput = z.object({
@@ -13,7 +13,10 @@ const taskInput = z.object({
   autoCommit: z.boolean().optional().default(false), autoPush: z.boolean().optional().default(false), autoCleanup: z.boolean().optional().default(false)
 });
 
-router.get("/api/agent/tasks", requireAuth, asyncRoute(async (_req, res) => { res.json(await listAgentTasks()); }));
+router.get("/api/agent/tasks", requireAuth, asyncRoute(async (req, res) => {
+  const archived = z.enum(["true", "false"]).optional().parse(req.query.archived) === "true";
+  res.json(await listAgentTasks(archived));
+}));
 router.post("/api/agent/tasks", requireAuth, asyncRoute(async (req, res) => {
   const task = await createAgentTask(taskInput.parse(req.body));
   await recordAuditLog({ actor: actor(req), action: "agent_task.create", entityType: "agent_task", entityId: task.id, projectId: task.projectId });
@@ -27,6 +30,13 @@ router.get("/api/agent/tasks/:id", requireAuth, asyncRoute(async (req, res) => {
 router.patch("/api/agent/tasks/:id", requireAuth, asyncRoute(async (req, res) => {
   const task = await updateAgentTask(routeParam(req, "id"), z.object({ title: z.string().trim().min(1).max(200).optional(), modelId: z.string().min(1).optional(), autoCommit: z.boolean().optional(), autoPush: z.boolean().optional(), autoCleanup: z.boolean().optional() }).parse(req.body));
   if (!task) { res.status(404).json({ message: "Task not found." }); return; }
+  res.json(task);
+}));
+router.patch("/api/agent/tasks/:id/archive", requireAuth, asyncRoute(async (req, res) => {
+  const archived = z.object({ archived: z.boolean() }).parse(req.body).archived;
+  const task = await setAgentTaskArchived(routeParam(req, "id"), archived);
+  if (!task) { res.status(404).json({ message: "Task not found." }); return; }
+  await recordAuditLog({ actor: actor(req), action: archived ? "agent_task.archive" : "agent_task.restore", entityType: "agent_task", entityId: task.id, projectId: task.projectId });
   res.json(task);
 }));
 router.delete("/api/agent/tasks/:id", requireAuth, asyncRoute(async (req, res) => {

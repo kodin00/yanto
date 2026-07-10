@@ -95,6 +95,24 @@ export async function prepareTaskWorktree(project: ProjectRow, task: AgentTaskRo
   await fs.mkdir(path.dirname(worktreePath), { recursive: true });
   const localExists = await refExists(project, `refs/heads/${taskBranch}`);
   const remoteExists = await refExists(project, `refs/remotes/origin/${taskBranch}`);
+  if (sourceBranch === taskBranch) {
+    const primaryBranch = await git(project, ["branch", "--show-current"]);
+    if (primaryBranch === taskBranch) {
+      const primaryChanges = await git(project, ["status", "--porcelain=v1"]);
+      if (primaryChanges) {
+        throw new HttpError(409, `Cannot use source branch ${taskBranch} while the primary checkout has uncommitted changes.`);
+      }
+    }
+    if (localExists) {
+      await git(project, ["worktree", "add", "--force", worktreePath, taskBranch]);
+      if (remoteExists) await git(project, ["merge", "--ff-only", `origin/${taskBranch}`], { cwd: worktreePath });
+    } else if (remoteExists) {
+      await git(project, ["worktree", "add", "--track", "-b", taskBranch, worktreePath, `origin/${taskBranch}`]);
+    } else {
+      throw new HttpError(409, `Source branch ${taskBranch} does not exist locally or on origin.`);
+    }
+    return { worktreePath, sourceSha };
+  }
   if (localExists) {
     if (!task.sourceSha) {
       if (!task.resumeExistingBranch || !remoteExists) {

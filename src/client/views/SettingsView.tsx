@@ -1,7 +1,7 @@
 import { Cloud, Copy, DatabaseZap, GitBranch, GitPullRequest, KeyRound, RefreshCw, Server, Settings, ShieldCheck, Trash2 } from "lucide-react";
 import { memo } from "react";
 import type { FormEvent } from "react";
-import { Button, LogViewer, StatusBadge, TextAreaField, TextField, ToggleField } from "../components/ui";
+import { Button, CustomSelect, LogViewer, StatusBadge, TextAreaField, TextField, ToggleField } from "../components/ui";
 import { api } from "../lib/api";
 import type { McpAccessLevel, McpAccessToken } from "../../shared/types";
 import type { CfFormState, ConfirmState, CreatedMcpTokenState, McpTokenFormState, R2FormState, SettingsState } from "./types";
@@ -189,14 +189,7 @@ export const SettingsView = memo(function SettingsView(props: Props) {
           <form className="form-grid compact-form" onSubmit={createMcpToken} autoComplete="off">
             <div className="settings-form-pair">
               <TextField label="Token name" value={mcpTokenForm.name} onChange={(name) => updateMcpTokenForm({ name })} placeholder="Codex local" autoComplete="off" />
-              <label className="field">
-                <span>Access level</span>
-                <select value={mcpTokenForm.accessLevel} onChange={(event) => updateMcpTokenForm({ accessLevel: event.target.value as McpAccessLevel })}>
-                  <option value="read">Read</option>
-                  <option value="write">Write</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </label>
+              <CustomSelect<McpAccessLevel> label="Access level" value={mcpTokenForm.accessLevel} options={[{ label: "Read", value: "read" }, { label: "Write", value: "write" }, { label: "Admin", value: "admin" }]} onChange={(accessLevel) => updateMcpTokenForm({ accessLevel })} />
             </div>
             <p className="muted">Scopes are hierarchical: write includes read; admin includes both. Destructive and secret-reveal MCP tools still require <code>confirm: true</code>.</p>
             <div className="actions">

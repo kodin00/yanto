@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import type { CloudflareClient, CloudflareRoute, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareZone, ContainerInfo, Project } from "../../shared/types";
 import { cloudflareAssignmentTcpPorts } from "../app-utils";
 import { api } from "../lib/api";
@@ -8,7 +8,7 @@ import { Button, CustomSelect, StatusBadge, TextField, ToggleField } from "../co
 type Tab = "hostnames" | "tunnels" | "clients";
 type Toast = (message: string, kind?: "ok" | "error" | "loading") => void;
 
-export function HostnamesView({ projects, containers, toast }: { projects: Project[]; containers: ContainerInfo[]; toast: Toast }) {
+export function HostnamesView({ projects, containers, refreshKey, toast }: { projects: Project[]; containers: ContainerInfo[]; refreshKey: number; toast: Toast }) {
   const [tab, setTab] = useState<Tab>("hostnames");
   const [clients, setClients] = useState<CloudflareClient[]>([]);
   const [tunnels, setTunnels] = useState<CloudflareTunnel[]>([]);
@@ -26,7 +26,7 @@ export function HostnamesView({ projects, containers, toast }: { projects: Proje
     setClients(nextClients); setTunnels(nextTunnels); setAssignments(nextAssignments); setHostnames(nextHostnames);
   };
 
-  useEffect(() => { void load().catch((error) => toast(error instanceof Error ? error.message : "Unable to load Cloudflare data.", "error")); }, []);
+  useEffect(() => { void load().catch((error) => toast(error instanceof Error ? error.message : "Unable to load Cloudflare data.", "error")); }, [refreshKey]);
 
   const selectedTunnel = tunnels.find((item) => item.id === hostnameForm.tunnelId);
   const selectedClient = selectedTunnel ? clients.find((client) => client.id === selectedTunnel.clientId) : undefined;
@@ -100,7 +100,7 @@ export function HostnamesView({ projects, containers, toast }: { projects: Proje
 
   return (
     <section className="cloudflare-manager">
-      <div className="panel-head"><div><h2>Cloudflare</h2><p className="muted">Client-owned tunnels, isolated Docker networks, and public hostnames.</p></div><Button variant="secondary" onClick={() => void load()} icon={<RefreshCw size={15} />}>Refresh</Button></div>
+      <div className="panel-head"><div><h2>Cloudflare</h2><p className="muted">Client-owned tunnels, isolated Docker networks, and public hostnames.</p></div></div>
       <div className="cloudflare-tabs">
         {(["hostnames", "tunnels", "clients"] as Tab[]).map((item) => <button type="button" className={tab === item ? "active" : ""} onClick={() => setTab(item)} key={item}>{item === "tunnels" ? "Tunnels & Networks" : item[0].toUpperCase() + item.slice(1)}</button>)}
       </div>

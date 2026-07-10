@@ -89,6 +89,15 @@ export type AgentMessage = {
   createdAt: string;
 };
 
+export type AgentEvent = {
+  id: string;
+  runId: string;
+  sequence: number;
+  kind: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+};
+
 export type AgentTask = {
   id: string;
   projectId: string;
@@ -114,12 +123,14 @@ export type AgentTask = {
   startedAt: string | null;
   finishedAt: string | null;
   pushedAt: string | null;
+  archivedAt: string | null;
   latestRun: AgentRun | null;
 };
 
 export type AgentTaskDetail = AgentTask & {
   messages: AgentMessage[];
   runs: AgentRun[];
+  events: AgentEvent[];
 };
 
 export type AgentGitFile = {

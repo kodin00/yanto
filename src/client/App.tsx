@@ -251,6 +251,7 @@ export function App() {
   const [auditPage, setAuditPage] = useState(1);
   const [frpRefreshKey, setFrpRefreshKey] = useState(0);
   const [tasksRefreshKey, setTasksRefreshKey] = useState(0);
+  const [hostnamesRefreshKey, setHostnamesRefreshKey] = useState(0);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -387,6 +388,7 @@ export function App() {
       const [projectRows, containerRows] = await Promise.all([api.projects(), fetchContainerRows()]);
       setProjects(projectRows);
       if (containerRows) setContainers(containerRows);
+      setHostnamesRefreshKey((current) => current + 1);
       return;
     }
 
@@ -1620,7 +1622,7 @@ export function App() {
           />
         ) : null}
 
-        {view === "hostnames" ? <HostnamesView projects={projects} containers={containers} toast={(message, kind) => setToast({ message, kind })} /> : null}
+        {view === "hostnames" ? <HostnamesView projects={projects} containers={containers} refreshKey={hostnamesRefreshKey} toast={(message, kind) => setToast({ message, kind })} /> : null}
 
         {view === "frp" ? (
           <FrpView

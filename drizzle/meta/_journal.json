@@ -43,6 +43,13 @@
       "when": 1783671511002,
       "tag": "0005_agent_run_reliability",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783671511003,
+      "tag": "0006_agent_task_archive",
+      "breakpoints": true
     }
   ]
 }

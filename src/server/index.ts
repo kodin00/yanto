@@ -28,7 +28,7 @@ import mcpTokensRouter from "./routes/mcp-tokens.js";
 import mcpRouter from "./mcp/http.js";
 import aiProvidersRouter from "./routes/ai-providers.js";
 import agentTasksRouter from "./routes/agent-tasks.js";
-import { drainActiveAgentRuns, recoverInterruptedAgentRuns } from "./services/agent-tasks.js";
+import { archiveCompletedAgentTasks, drainActiveAgentRuns, recoverInterruptedAgentRuns } from "./services/agent-tasks.js";
 
 const app = express();
 
@@ -136,6 +136,13 @@ async function main() {
   await ensureLocalMasterNode();
   await recoverInterruptedDeployments();
   await recoverInterruptedAgentRuns();
+  await archiveCompletedAgentTasks();
+  const taskArchiveTimer = setInterval(() => {
+    void archiveCompletedAgentTasks().catch((error) => {
+      logger.error("automatic agent task archival failed", { error: error instanceof Error ? error.message : String(error) });
+    });
+  }, 60 * 60 * 1_000);
+  taskArchiveTimer.unref();
   const server = app.listen(config.port, () => {
     logger.info("server started", { port: config.port });
     void ensureEnabledCloudflaredConnectors()
@@ -154,6 +161,7 @@ async function main() {
   let shutdownPromise: Promise<void> | undefined;
   const shutdown = (signal: string) => shutdownPromise ??= (async () => {
     logger.info("shutdown starting", { signal });
+    clearInterval(taskArchiveTimer);
     const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));
     const drained = await drainActiveAgentRuns(config.agentShutdownTimeoutMs);
     if (!drained.drained) {
