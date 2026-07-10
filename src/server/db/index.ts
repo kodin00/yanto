@@ -83,9 +83,11 @@ export async function migrate() {
       enabled boolean NOT NULL DEFAULT true,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now(),
-      CONSTRAINT ai_providers_protocol_check CHECK (protocol IN ('openai_responses', 'openai_chat', 'anthropic_messages'))
+      CONSTRAINT ai_providers_protocol_check CHECK (protocol IN ('openai_responses', 'openai_chat', 'anthropic_messages', 'codex_account'))
     );
   `);
+  await pool.query(`ALTER TABLE ai_providers DROP CONSTRAINT IF EXISTS ai_providers_protocol_check;`);
+  await pool.query(`ALTER TABLE ai_providers ADD CONSTRAINT ai_providers_protocol_check CHECK (protocol IN ('openai_responses', 'openai_chat', 'anthropic_messages', 'codex_account'));`);
   await pool.query(`CREATE INDEX IF NOT EXISTS ai_providers_created_at_idx ON ai_providers(created_at DESC);`);
 
   await pool.query(`
@@ -114,6 +116,7 @@ export async function migrate() {
       task_branch text NOT NULL,
       source_sha text,
       worktree_path text,
+      codex_thread_id text,
       resume_existing_branch boolean NOT NULL DEFAULT false,
       auto_commit boolean NOT NULL DEFAULT false,
       auto_push boolean NOT NULL DEFAULT false,
@@ -127,6 +130,7 @@ export async function migrate() {
       CONSTRAINT agent_tasks_status_check CHECK (status IN ('backlog', 'running', 'review', 'done'))
     );
   `);
+  await pool.query(`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS codex_thread_id text;`);
   await pool.query(`CREATE INDEX IF NOT EXISTS agent_tasks_status_created_idx ON agent_tasks(status, created_at DESC);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS agent_tasks_project_idx ON agent_tasks(project_id);`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS agent_tasks_project_branch_idx ON agent_tasks(project_id, task_branch);`);

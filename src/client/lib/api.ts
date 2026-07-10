@@ -1,4 +1,4 @@
-import type { AgentGitPreview, AgentRun, AgentTask, AgentTaskDetail, AiModel, AiProvider, AiProviderProtocol, AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, ContainerInfo, Deployment, DeploymentNode, FrpClientSetup, FrpOverview, FrpSettings, FrpTunnel, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectBranch, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../../shared/types";
+import type { AgentGitPreview, AgentRun, AgentTask, AgentTaskDetail, AiModel, AiProvider, AiProviderProtocol, AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, CodexAccountStatus, ContainerInfo, Deployment, DeploymentNode, FrpClientSetup, FrpOverview, FrpSettings, FrpTunnel, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectBranch, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -188,6 +188,11 @@ export const api = {
       body: JSON.stringify({ content })
     }),
   aiProviders: () => request<AiProvider[]>("/api/ai/providers"),
+  codexStatus: () => request<CodexAccountStatus>("/api/ai/codex/status"),
+  startCodexLogin: () => request<CodexAccountStatus["login"]>("/api/ai/codex/login/start", { method: "POST" }),
+  cancelCodexLogin: () => request<{ ok: true }>("/api/ai/codex/login/cancel", { method: "POST" }),
+  logoutCodex: () => request<{ ok: true }>("/api/ai/codex/logout", { method: "POST" }),
+  refreshCodexModels: () => request<{ ok: true; models: Array<{ id: string; name: string }> }>("/api/ai/codex/models/refresh", { method: "POST" }),
   createAiProvider: (payload: { name: string; protocol: AiProviderProtocol; baseUrl: string; apiKey: string; enabled?: boolean }) =>
     request<AiProvider>("/api/ai/providers", { method: "POST", body: JSON.stringify(payload) }),
   updateAiProvider: (id: string, payload: Partial<{ name: string; protocol: AiProviderProtocol; baseUrl: string; apiKey: string; enabled: boolean }>) =>

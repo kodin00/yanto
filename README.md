@@ -44,13 +44,15 @@ Docker socket access is powerful. Run this only for your own trusted admin dashb
 
 The **AI Tasks** tab adds a single-admin, Git-backed coding workspace:
 
-- Register OpenAI Responses, OpenAI-compatible Chat Completions, or Anthropic Messages providers. API keys are encrypted at rest; model IDs can be fetched or entered manually.
+- Sign in with a ChatGPT/Codex account using the device-code flow, or register OpenAI Responses, OpenAI-compatible Chat Completions, and Anthropic Messages providers. API keys are encrypted at rest; model IDs can be fetched or entered manually.
 - Create a task from a registered Git project, choose the freshly fetched source branch, and create or explicitly resume a task branch.
 - Each task gets a real Git worktree under `/projects/.yanto-worktrees`. The project's deployment checkout is never switched by an agent task.
 - Model tools are limited to scoped file operations and shell commands in a disposable Docker container. The sandbox receives only the task worktree, with no Docker socket, parent Git metadata, or Git credentials.
 - Review streamed activity, continue the persistent task conversation, inspect/select changed files, commit, push, and clean the worktree. Auto-commit, auto-push, and auto-clean are independent per-task switches and default off.
 
 AI tasks require a project with a Git URL and run on the local master node. Set an optional **Agent runner image** on the project when its tests require a toolchain beyond the bundled Node.js, Python, Git, and ripgrep runtime.
+
+Codex account sessions are stored in the persistent `yanto_codex` volume. Open **AI Tasks → Providers → Sign in with Codex**, follow the verification link, then refresh the available models. Codex runs use Yanto's bundled agent image in an isolated container; Git commit and push credentials remain owned by Yanto outside that container.
 
 ## Multi-Node Runtime
 
@@ -117,6 +119,7 @@ Important environment variables:
 - `COMMAND_OUTPUT_MAX_BYTES`, default `2097152`, caps in-memory command output while still streaming deployment logs
 - `DEPLOYMENT_LOG_MAX_CHARS`, default `500000`, keeps recent deployment logs bounded in Postgres
 - `AGENT_DEFAULT_IMAGE`, default `yanto:local`, used when a project has no agent runner image
+- `CODEX_HOME`, default `/data/codex`, persistent Codex account and conversation storage
 - `AGENT_MAX_CONCURRENT_RUNS`, default `2`
 - `AGENT_MAX_TURNS`, default `40` provider/tool iterations per run
 - `AGENT_RUN_TIMEOUT_MS`, default `3600000`

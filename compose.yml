@@ -32,6 +32,7 @@ services:
       FRP_DASHBOARD_URL: http://frps:7500
       FRP_CONTAINER_NAME: yanto-frps
       AGENT_DEFAULT_IMAGE: ${AGENT_DEFAULT_IMAGE:-yanto:local}
+      CODEX_HOME: /data/codex
       AGENT_MAX_CONCURRENT_RUNS: ${AGENT_MAX_CONCURRENT_RUNS:-2}
       AGENT_MAX_TURNS: ${AGENT_MAX_TURNS:-40}
       AGENT_RUN_TIMEOUT_MS: ${AGENT_RUN_TIMEOUT_MS:-3600000}
@@ -43,6 +44,7 @@ services:
       - yanto_ssh:/data/ssh
       - yanto_backups:/data/backups
       - yanto_frp:/data/frp:ro
+      - yanto_codex:/data/codex
     depends_on:
       postgres:
         condition: service_healthy
@@ -103,3 +105,4 @@ volumes:
   yanto_ssh:
   yanto_backups:
   yanto_frp:
+  yanto_codex:

@@ -3,7 +3,8 @@ import { z } from "zod";
 import { requireAuth } from "../auth.js";
 import { actor, asyncRoute, routeParam } from "../http-utils.js";
 import { recordAuditLog } from "../services/audit.js";
-import { addAiModel, createAiProvider, deleteAiModel, deleteAiProvider, discoverAiModels, listAiProviders, updateAiModel, updateAiProvider } from "../services/ai-providers.js";
+import { cancelCodexLogin, getCodexAccountStatus, listCodexModels, logoutCodexAccount, startCodexLogin } from "../services/codex-auth.js";
+import { addAiModel, createAiProvider, deleteAiModel, deleteAiProvider, discoverAiModels, listAiProviders, setCodexProviderEnabled, syncCodexProvider, updateAiModel, updateAiProvider } from "../services/ai-providers.js";
 
 const router = Router();
 const protocol = z.enum(["openai_responses", "openai_chat", "anthropic_messages"]);
@@ -17,6 +18,38 @@ const providerInput = z.object({
 const modelInput = z.object({ modelId: z.string().trim().min(1).max(250), displayName: z.string().trim().max(250).optional() });
 
 router.get("/api/ai/providers", requireAuth, asyncRoute(async (_req, res) => { res.json(await listAiProviders()); }));
+
+router.get("/api/ai/codex/status", requireAuth, asyncRoute(async (_req, res) => {
+  const status = await getCodexAccountStatus();
+  if (status.connected) await syncCodexProvider([], true);
+  res.json(status);
+}));
+
+router.post("/api/ai/codex/login/start", requireAuth, asyncRoute(async (req, res) => {
+  const login = await startCodexLogin();
+  await recordAuditLog({ actor: actor(req), action: "codex.login.start", entityType: "ai_provider" });
+  res.json(login);
+}));
+
+router.post("/api/ai/codex/login/cancel", requireAuth, asyncRoute(async (_req, res) => {
+  await cancelCodexLogin();
+  res.json({ ok: true });
+}));
+
+router.post("/api/ai/codex/logout", requireAuth, asyncRoute(async (req, res) => {
+  await logoutCodexAccount();
+  await setCodexProviderEnabled(false);
+  await recordAuditLog({ actor: actor(req), action: "codex.logout", entityType: "ai_provider" });
+  res.json({ ok: true });
+}));
+
+router.post("/api/ai/codex/models/refresh", requireAuth, asyncRoute(async (_req, res) => {
+  const status = await getCodexAccountStatus();
+  if (!status.connected) { res.status(409).json({ message: "Sign in with Codex first." }); return; }
+  const models = await listCodexModels();
+  await syncCodexProvider(models, true);
+  res.json({ ok: true, models });
+}));
 
 router.post("/api/ai/providers", requireAuth, asyncRoute(async (req, res) => {
   const provider = await createAiProvider(providerInput.parse(req.body));

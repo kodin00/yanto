@@ -8,6 +8,7 @@ import { createId } from "./tokens.js";
 import { resolveProviderModel } from "./ai-providers.js";
 import { AgentSandbox } from "./agent-tools.js";
 import { runAgentProvider } from "./agent-provider-runner.js";
+import { runCodexAccount } from "./codex-account-runner.js";
 import { agentEventBus } from "./agent-events.js";
 import { cleanupTaskWorktree, commitTaskWorktree, fetchProjectBranches, prepareTaskWorktree, pushTaskWorktree, taskGitPreview } from "./agent-worktrees.js";
 
@@ -155,21 +156,39 @@ async function executeAgentRun(taskId: string, runId: string, controller: AbortC
     await db.update(agentTasks).set({ worktreePath: prepared.worktreePath, sourceSha: prepared.sourceSha, updatedAt: new Date() }).where(eq(agentTasks.id, taskId));
     await recordEvent(taskId, runId, "worktree_ready", { path: prepared.worktreePath, sourceSha: prepared.sourceSha, branch: detail.taskBranch });
 
-    sandbox = new AgentSandbox(runId, prepared.worktreePath, project.agentImage.trim() || config.agentDefaultImage);
-    activeRuns.set(taskId, { runId, controller, sandbox });
-    await sandbox.start();
-    await recordEvent(taskId, runId, "sandbox_started", { image: project.agentImage.trim() || config.agentDefaultImage });
     const messages = detail.messages.slice(-50).map((message) => ({ role: message.role === "assistant" ? "assistant" as const : "user" as const, content: message.content }));
-    assistantText = await runAgentProvider({
-      protocol: resolved.provider.protocol as never,
-      baseUrl: resolved.provider.baseUrl,
-      apiKey: resolved.apiKey,
-      model: resolved.model.modelId,
-      messages,
-      sandbox,
-      signal: controller.signal,
-      event: (kind, payload) => recordEvent(taskId, runId, kind, payload)
-    });
+    if (resolved.provider.protocol === "codex_account") {
+      activeRuns.set(taskId, { runId, controller });
+      await recordEvent(taskId, runId, "sandbox_started", { image: config.agentDefaultImage, runtime: "codex" });
+      const lastUserMessage = [...detail.messages].reverse().find((message) => message.role === "user")?.content ?? detail.prompt;
+      const result = await runCodexAccount({
+        runId, worktreePath: prepared.worktreePath, prompt: lastUserMessage, model: resolved.model.modelId,
+        threadId: detail.codexThreadId, signal: controller.signal,
+        event: async (kind, payload) => {
+          if (kind === "codex_thread" && typeof payload.threadId === "string") {
+            await db.update(agentTasks).set({ codexThreadId: payload.threadId, updatedAt: new Date() }).where(eq(agentTasks.id, taskId));
+          }
+          await recordEvent(taskId, runId, kind, payload);
+        }
+      });
+      assistantText = result.assistantText;
+      if (result.threadId) await db.update(agentTasks).set({ codexThreadId: result.threadId, updatedAt: new Date() }).where(eq(agentTasks.id, taskId));
+    } else {
+      sandbox = new AgentSandbox(runId, prepared.worktreePath, project.agentImage.trim() || config.agentDefaultImage);
+      activeRuns.set(taskId, { runId, controller, sandbox });
+      await sandbox.start();
+      await recordEvent(taskId, runId, "sandbox_started", { image: project.agentImage.trim() || config.agentDefaultImage });
+      assistantText = await runAgentProvider({
+        protocol: resolved.provider.protocol as never,
+        baseUrl: resolved.provider.baseUrl,
+        apiKey: resolved.apiKey,
+        model: resolved.model.modelId,
+        messages,
+        sandbox,
+        signal: controller.signal,
+        event: (kind, payload) => recordEvent(taskId, runId, kind, payload)
+      });
+    }
     await finishRun(taskId, runId, "succeeded", assistantText);
     providerCompleted = true;
 

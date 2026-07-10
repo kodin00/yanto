@@ -79,7 +79,7 @@ async function searchFiles(root: string, relativePath: string, query: string) {
   return matches.join("\n") || "No matches found.";
 }
 
-async function hostPathFor(containerPath: string) {
+export async function resolveHostMountPath(containerPath: string) {
   const hostname = process.env.HOSTNAME;
   if (!hostname) return containerPath;
   const inspected = await runCommand("docker", ["inspect", hostname, "--format", "{{json .Mounts}}"], { maxOutputBytes: 256 * 1024, timeoutMs: 10_000 });
@@ -102,7 +102,7 @@ export class AgentSandbox {
   }
 
   async start() {
-    const hostPath = await hostPathFor(this.worktreePath);
+    const hostPath = await resolveHostMountPath(this.worktreePath);
     const result = await runCommand("docker", [
       "run", "-d", "--rm", "--name", this.containerName,
       "--workdir", "/workspace", "--network", "bridge",

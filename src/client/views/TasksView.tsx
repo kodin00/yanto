@@ -1,6 +1,6 @@
 import { Bot, Check, GitBranch, Play, Plus, RefreshCw, Settings2, Square, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import type { AgentGitPreview, AgentTask, AgentTaskDetail, AiProvider, AiProviderProtocol, Project, ProjectBranch } from "../../shared/types";
+import type { AgentGitPreview, AgentTask, AgentTaskDetail, AiProvider, AiProviderProtocol, CodexAccountStatus, Project, ProjectBranch } from "../../shared/types";
 import { Button, Modal, StatusBadge, TextAreaField, TextField, ToggleField } from "../components/ui";
 import { api } from "../lib/api";
 
@@ -227,6 +227,30 @@ function ProviderPanel({ providers, refresh, toast }: { providers: AiProvider[];
   const [form, setForm] = useState<{ name: string; protocol: AiProviderProtocol; baseUrl: string; apiKey: string }>({ name: "", protocol: "openai_responses", baseUrl: "https://api.openai.com/v1", apiKey: "" });
   const [modelDrafts, setModelDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
+  const [codex, setCodex] = useState<CodexAccountStatus | null>(null);
+  const codexProvider = providers.find((provider) => provider.protocol === "codex_account");
+
+  useEffect(() => {
+    let active = true;
+    void api.codexStatus().then(async (status) => { if (active) setCodex(status); if (status.connected) await refresh(); }).catch(() => undefined);
+    return () => { active = false; };
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!codex?.login || codex.connected) return;
+    const timer = window.setInterval(() => {
+      void api.codexStatus().then(async (status) => {
+        setCodex(status);
+        if (status.connected) {
+          window.clearInterval(timer);
+          await api.refreshCodexModels();
+          await refresh();
+          toast("Codex account connected.", "ok");
+        }
+      }).catch(() => undefined);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [codex?.connected, codex?.login, refresh, toast]);
   async function action(name: string, fn: () => Promise<unknown>) {
     setBusy(name);
     try { await fn(); await refresh(); }
@@ -236,6 +260,24 @@ function ProviderPanel({ providers, refresh, toast }: { providers: AiProvider[];
   return (
     <div className="provider-layout">
       <section className="panel provider-create">
+        <div className="codex-connect">
+          <div><h2>Codex account</h2><p className="muted">Use your ChatGPT/Codex subscription. No API key needed.</p></div>
+          {codex?.connected ? (
+            <>
+              <StatusBadge status="success" label="Connected" />
+              <p className="muted">{codex.email || "Codex account"}{codex.planType ? ` · ${codex.planType}` : ""}</p>
+              <div className="actions"><Button loading={busy === "codex-models"} onClick={() => void action("codex-models", () => api.refreshCodexModels())} icon={<RefreshCw size={14} />}>Refresh models</Button><Button variant="ghost" loading={busy === "codex-logout"} onClick={() => void action("codex-logout", async () => { await api.logoutCodex(); setCodex(await api.codexStatus()); })}>Sign out</Button></div>
+            </>
+          ) : codex?.login ? (
+            <div className="codex-device-code">
+              <p>Open the verification page and enter:</p><code>{codex.login.userCode}</code>
+              <a className="button" href={codex.login.verificationUrl} target="_blank" rel="noreferrer">Open Codex sign-in</a>
+              <Button variant="ghost" onClick={() => void action("codex-cancel", async () => { await api.cancelCodexLogin(); setCodex(await api.codexStatus()); })}>Cancel</Button>
+            </div>
+          ) : <Button loading={busy === "codex-login"} onClick={() => void action("codex-login", async () => { const login = await api.startCodexLogin(); setCodex({ connected: false, email: null, planType: null, login }); })}>Sign in with Codex</Button>}
+          {codexProvider?.models.length ? <p className="muted">{codexProvider.models.length} models available</p> : null}
+        </div>
+        <hr />
         <h2>Register provider</h2><p className="muted">Keys are encrypted at rest and never returned to the browser.</p>
         <TextField label="Name" value={form.name} onChange={(name) => setForm({ ...form, name })} placeholder="OpenAI production" />
         <label className="field"><span>Protocol</span><select value={form.protocol} onChange={(event) => { const protocol = event.target.value as AiProviderProtocol; setForm({ ...form, protocol, baseUrl: protocol === "anthropic_messages" ? "https://api.anthropic.com" : "https://api.openai.com/v1" }); }}>{protocolOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label>
@@ -244,7 +286,7 @@ function ProviderPanel({ providers, refresh, toast }: { providers: AiProvider[];
         <Button loading={busy === "create"} disabled={!form.name.trim() || !form.apiKey.trim()} onClick={() => void action("create", async () => { await api.createAiProvider(form); setForm({ ...form, name: "", apiKey: "" }); })}>Register provider</Button>
       </section>
       <div className="provider-list">
-        {providers.map((provider) => (
+        {providers.filter((provider) => provider.protocol !== "codex_account").map((provider) => (
           <section className="panel provider-card" key={provider.id}>
             <header><div><h2>{provider.name}</h2><p>{protocolOptions.find((option) => option.value === provider.protocol)?.label} · {provider.baseUrl}</p></div><StatusBadge status={provider.enabled ? "success" : "disabled"} label={provider.enabled ? "Enabled" : "Disabled"} /></header>
             <div className="actions"><Button variant="secondary" loading={busy === `discover:${provider.id}`} onClick={() => void action(`discover:${provider.id}`, () => api.discoverAiModels(provider.id))} icon={<RefreshCw size={14} />}>Fetch models</Button><Button variant="ghost" onClick={() => void action(`toggle:${provider.id}`, () => api.updateAiProvider(provider.id, { enabled: !provider.enabled }))}>{provider.enabled ? "Disable" : "Enable"}</Button><Button variant="danger" onClick={() => void action(`delete:${provider.id}`, () => api.deleteAiProvider(provider.id))} icon={<Trash2 size={14} />}>Delete</Button></div>
@@ -252,7 +294,7 @@ function ProviderPanel({ providers, refresh, toast }: { providers: AiProvider[];
             <div className="provider-model-add"><input value={modelDrafts[provider.id] ?? ""} onChange={(event) => setModelDrafts({ ...modelDrafts, [provider.id]: event.target.value })} placeholder="Manual model ID" /><Button variant="secondary" disabled={!modelDrafts[provider.id]?.trim()} onClick={() => void action(`add:${provider.id}`, async () => { await api.addAiModel(provider.id, { modelId: modelDrafts[provider.id] }); setModelDrafts({ ...modelDrafts, [provider.id]: "" }); })} icon={<Plus size={14} />}>Add</Button></div>
           </section>
         ))}
-        {!providers.length ? <section className="panel"><p className="muted">No providers registered.</p></section> : null}
+        {!providers.some((provider) => provider.protocol !== "codex_account") ? <section className="panel"><p className="muted">No API-key providers registered.</p></section> : null}
       </div>
     </div>
   );

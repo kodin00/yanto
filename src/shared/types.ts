@@ -34,7 +34,14 @@ export type Project = {
   updatedAt: string;
 };
 
-export type AiProviderProtocol = "openai_responses" | "openai_chat" | "anthropic_messages";
+export type AiProviderProtocol = "openai_responses" | "openai_chat" | "anthropic_messages" | "codex_account";
+
+export type CodexAccountStatus = {
+  connected: boolean;
+  email: string | null;
+  planType: string | null;
+  login: { loginId: string; verificationUrl: string; userCode: string } | null;
+};
 
 export type AiModel = {
   id: string;
@@ -96,6 +103,7 @@ export type AgentTask = {
   taskBranch: string;
   sourceSha: string | null;
   worktreePath: string | null;
+  codexThreadId: string | null;
   resumeExistingBranch: boolean;
   autoCommit: boolean;
   autoPush: boolean;

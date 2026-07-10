@@ -29,6 +29,13 @@
       "when": 1783671511000,
       "tag": "0003_agent_workspace",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1783671511001,
+      "tag": "0004_codex_account",
+      "breakpoints": true
     }
   ]
 }

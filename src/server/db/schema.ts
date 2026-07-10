@@ -88,6 +88,7 @@ export const agentTasks = pgTable(
     taskBranch: text("task_branch").notNull(),
     sourceSha: text("source_sha"),
     worktreePath: text("worktree_path"),
+    codexThreadId: text("codex_thread_id"),
     resumeExistingBranch: boolean("resume_existing_branch").notNull().default(false),
     autoCommit: boolean("auto_commit").notNull().default(false),
     autoPush: boolean("auto_push").notNull().default(false),

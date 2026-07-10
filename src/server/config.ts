@@ -45,6 +45,7 @@ export const config = {
   commandOutputMaxBytes: Number(process.env.COMMAND_OUTPUT_MAX_BYTES ?? 2 * 1024 * 1024),
   deploymentLogMaxChars: Number(process.env.DEPLOYMENT_LOG_MAX_CHARS ?? 500_000),
   agentDefaultImage: process.env.AGENT_DEFAULT_IMAGE ?? "yanto:local",
+  codexHome: path.resolve(process.env.CODEX_HOME ?? "/data/codex"),
   agentMaxConcurrentRuns: Math.max(1, Number(process.env.AGENT_MAX_CONCURRENT_RUNS ?? 2)),
   agentMaxTurns: Math.max(1, Number(process.env.AGENT_MAX_TURNS ?? 40)),
   agentRunTimeoutMs: Math.max(60_000, Number(process.env.AGENT_RUN_TIMEOUT_MS ?? 60 * 60 * 1000)),

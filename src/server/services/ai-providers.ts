@@ -7,7 +7,8 @@ import { HttpError } from "../http-utils.js";
 import { decrypt, encrypt } from "./crypto.js";
 import { createId } from "./tokens.js";
 
-export type AiProviderProtocol = "openai_responses" | "openai_chat" | "anthropic_messages";
+export type AiProviderProtocol = "openai_responses" | "openai_chat" | "anthropic_messages" | "codex_account";
+export const CODEX_PROVIDER_ID = "aip_codex_account";
 
 export type AiProviderInput = {
   name: string;
@@ -18,6 +19,7 @@ export type AiProviderInput = {
 };
 
 function normalizeBaseUrl(value: string, protocol: AiProviderProtocol) {
+  if (protocol === "codex_account") return "";
   const fallback = protocol === "anthropic_messages" ? "https://api.anthropic.com" : "https://api.openai.com/v1";
   const raw = value.trim() || fallback;
   let url: URL;
@@ -60,6 +62,7 @@ export async function getAiProvider(id: string) {
 }
 
 export async function createAiProvider(input: AiProviderInput) {
+  if (input.protocol === "codex_account") throw new HttpError(400, "Use Sign in with Codex to register a Codex account.");
   if (!input.apiKey?.trim()) throw new HttpError(400, "API key is required.");
   const [provider] = await db.insert(aiProviders).values({
     id: createId("aip"),
@@ -77,6 +80,7 @@ export async function createAiProvider(input: AiProviderInput) {
 export async function updateAiProvider(id: string, input: Partial<AiProviderInput>) {
   const current = await getAiProvider(id);
   if (!current) return undefined;
+  if (current.protocol === "codex_account") throw new HttpError(400, "Manage this provider with the Codex account controls.");
   const protocol = input.protocol ?? current.protocol as AiProviderProtocol;
   const [provider] = await db.update(aiProviders).set({
     ...(input.name !== undefined ? { name: input.name.trim() } : {}),
@@ -91,6 +95,7 @@ export async function updateAiProvider(id: string, input: Partial<AiProviderInpu
 }
 
 export async function deleteAiProvider(id: string) {
+  if (id === CODEX_PROVIDER_ID) throw new HttpError(400, "Sign out from the Codex account controls instead.");
   try {
     await db.delete(aiProviders).where(eq(aiProviders.id, id));
   } catch (error) {
@@ -144,12 +149,29 @@ export async function resolveProviderModel(modelId: string) {
     .innerJoin(aiProviders, eq(aiModels.providerId, aiProviders.id))
     .where(eq(aiModels.id, modelId)).limit(1);
   if (!row || !row.provider.enabled || !row.model.enabled) throw new HttpError(400, "Selected provider model is unavailable.");
-  return { ...row, apiKey: decrypt(row.provider.apiKey) };
+  return { ...row, apiKey: row.provider.protocol === "codex_account" ? "" : decrypt(row.provider.apiKey) };
+}
+
+export async function syncCodexProvider(models: Array<{ id: string; name: string }>, enabled: boolean) {
+  const now = new Date();
+  await db.insert(aiProviders).values({
+    id: CODEX_PROVIDER_ID, name: "Codex account", protocol: "codex_account", baseUrl: "", apiKey: "", enabled,
+    createdAt: now, updatedAt: now
+  }).onConflictDoUpdate({ target: aiProviders.id, set: { name: "Codex account", enabled, updatedAt: now } });
+  for (const model of models.length ? models : [{ id: "default", name: "Codex default" }]) {
+    await addAiModel(CODEX_PROVIDER_ID, model.id, model.name);
+  }
+  return CODEX_PROVIDER_ID;
+}
+
+export async function setCodexProviderEnabled(enabled: boolean) {
+  await db.update(aiProviders).set({ enabled, updatedAt: new Date() }).where(eq(aiProviders.id, CODEX_PROVIDER_ID));
 }
 
 export async function discoverAiModels(providerId: string) {
   const provider = await getAiProvider(providerId);
   if (!provider) throw new HttpError(404, "Provider not found.");
+  if (provider.protocol === "codex_account") throw new HttpError(400, "Refresh Codex models from the Codex account card.");
   const apiKey = decrypt(provider.apiKey);
   const discovered: Array<{ id: string; name: string }> = [];
   if (provider.protocol === "anthropic_messages") {
