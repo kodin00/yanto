@@ -36,10 +36,116 @@ export const projects = pgTable(
     deployToken: text("deploy_token").notNull(),
     sshPrivateKeyPath: text("ssh_private_key_path"),
     sshPublicKey: text("ssh_public_key"),
+    agentImage: text("agent_image").notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
   },
   (table) => [index("projects_created_at_idx").on(table.createdAt), index("projects_folder_name_idx").on(table.folderName)]
+);
+
+export const aiProviders = pgTable(
+  "ai_providers",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    protocol: text("protocol").notNull(),
+    baseUrl: text("base_url").notNull(),
+    apiKey: text("api_key").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [index("ai_providers_created_at_idx").on(table.createdAt)]
+);
+
+export const aiModels = pgTable(
+  "ai_models",
+  {
+    id: text("id").primaryKey(),
+    providerId: text("provider_id").notNull().references(() => aiProviders.id, { onDelete: "cascade" }),
+    modelId: text("model_id").notNull(),
+    displayName: text("display_name").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    uniqueIndex("ai_models_provider_model_idx").on(table.providerId, table.modelId),
+    index("ai_models_provider_idx").on(table.providerId)
+  ]
+);
+
+export const agentTasks = pgTable(
+  "agent_tasks",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    modelId: text("model_id").notNull().references(() => aiModels.id, { onDelete: "restrict" }),
+    title: text("title").notNull(),
+    prompt: text("prompt").notNull(),
+    status: text("status").notNull().default("backlog"),
+    sourceBranch: text("source_branch").notNull(),
+    taskBranch: text("task_branch").notNull(),
+    sourceSha: text("source_sha"),
+    worktreePath: text("worktree_path"),
+    resumeExistingBranch: boolean("resume_existing_branch").notNull().default(false),
+    autoCommit: boolean("auto_commit").notNull().default(false),
+    autoPush: boolean("auto_push").notNull().default(false),
+    autoCleanup: boolean("auto_cleanup").notNull().default(false),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    pushedAt: timestamp("pushed_at", { withTimezone: true })
+  },
+  (table) => [
+    index("agent_tasks_status_created_idx").on(table.status, table.createdAt),
+    index("agent_tasks_project_idx").on(table.projectId),
+    uniqueIndex("agent_tasks_project_branch_idx").on(table.projectId, table.taskBranch)
+  ]
+);
+
+export const agentRuns = pgTable(
+  "agent_runs",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id").notNull().references(() => agentTasks.id, { onDelete: "cascade" }),
+    status: text("status").notNull(),
+    providerProtocol: text("provider_protocol").notNull(),
+    modelName: text("model_name").notNull(),
+    assistantText: text("assistant_text").notNull().default(""),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true })
+  },
+  (table) => [index("agent_runs_task_started_idx").on(table.taskId, table.startedAt), index("agent_runs_status_idx").on(table.status)]
+);
+
+export const agentMessages = pgTable(
+  "agent_messages",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id").notNull().references(() => agentTasks.id, { onDelete: "cascade" }),
+    runId: text("run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    role: text("role").notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [index("agent_messages_task_created_idx").on(table.taskId, table.createdAt)]
+);
+
+export const agentEvents = pgTable(
+  "agent_events",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+    kind: text("kind").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [uniqueIndex("agent_events_run_sequence_idx").on(table.runId, table.sequence)]
 );
 
 export const deployments = pgTable(
@@ -227,6 +333,11 @@ export const frpTunnels = pgTable(
 
 export type ProjectRow = typeof projects.$inferSelect;
 export type NewProjectRow = typeof projects.$inferInsert;
+export type AiProviderRow = typeof aiProviders.$inferSelect;
+export type AiModelRow = typeof aiModels.$inferSelect;
+export type AgentTaskRow = typeof agentTasks.$inferSelect;
+export type AgentRunRow = typeof agentRuns.$inferSelect;
+export type AgentMessageRow = typeof agentMessages.$inferSelect;
 export type DeploymentNodeRow = typeof deploymentNodes.$inferSelect;
 export type NewDeploymentNodeRow = typeof deploymentNodes.$inferInsert;
 export type DeploymentRow = typeof deployments.$inferSelect;

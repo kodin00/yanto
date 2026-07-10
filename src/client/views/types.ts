@@ -1,7 +1,7 @@
 import type { CloudflarePublicSettings, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, R2PublicSettings, SetupWizardStatus } from "../../shared/types";
 import type { SshKeyStatus } from "../lib/api";
 
-export type View = "dashboard" | "projects" | "deployments" | "containers" | "nodes" | "backups" | "hostnames" | "frp" | "dns" | "audit" | "settings";
+export type View = "dashboard" | "projects" | "tasks" | "deployments" | "containers" | "nodes" | "backups" | "hostnames" | "frp" | "dns" | "audit" | "settings";
 export type ToastState = { message: string; kind?: "ok" | "error" | "loading" } | null;
 export type ConfirmState = { title: string; body: string; label: string; danger?: boolean; loadingMessage?: string; successMessage?: string; action: () => Promise<void> };
 

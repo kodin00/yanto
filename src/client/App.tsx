@@ -2,6 +2,7 @@ import {
   Activity,
   Archive,
   Boxes,
+  Bot,
   ChevronLeft,
   ChevronRight,
   Container,
@@ -39,6 +40,7 @@ const FrpView = lazy(() => import("./views/FrpView").then(m => ({ default: m.Frp
 const NodesView = lazy(() => import("./views/NodesView").then(m => ({ default: m.NodesView })));
 const ProjectsView = lazy(() => import("./views/ProjectsView").then(m => ({ default: m.ProjectsView })));
 const SettingsView = lazy(() => import("./views/SettingsView").then(m => ({ default: m.SettingsView })));
+const TasksView = lazy(() => import("./views/TasksView").then(m => ({ default: m.TasksView })));
 import type { CloudflareClient, CloudflareDnsRecord, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, ContainerInfo, Deployment, DeploymentNode, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../shared/types";
 import {
   cloudflareServiceUrl,
@@ -56,7 +58,7 @@ import { YantoBootLoader } from "./components/YantoBootLoader";
 import { api, type AuditLogEntry, type BackupRecord, type CloudflareDnsRecordPayload, type CloudflareRoutePayload, type PostgresTarget } from "./lib/api";
 import packageJson from "../../package.json";
 
-type View = "dashboard" | "projects" | "deployments" | "containers" | "nodes" | "backups" | "hostnames" | "frp" | "dns" | "audit" | "settings";
+type View = "dashboard" | "projects" | "tasks" | "deployments" | "containers" | "nodes" | "backups" | "hostnames" | "frp" | "dns" | "audit" | "settings";
 type ToastState = { message: string; kind?: "ok" | "error" | "loading" } | null;
 type LogModalState = { title: string; logs: string; streamPath?: string; live?: boolean; status?: string };
 type LogStreamPayload = { logs?: string; chunk?: string; status?: string; error?: string; done?: boolean };
@@ -82,7 +84,8 @@ const emptyProject = {
   autoStart: true,
   manualDeployEnabled: true,
   githubWebhookEnabled: true,
-  targetNodeId: "node_master_local"
+  targetNodeId: "node_master_local",
+  agentImage: ""
 };
 
 const emptySshKeySettings = {
@@ -247,6 +250,7 @@ export function App() {
   const [dnsPage, setDnsPage] = useState(1);
   const [auditPage, setAuditPage] = useState(1);
   const [frpRefreshKey, setFrpRefreshKey] = useState(0);
+  const [tasksRefreshKey, setTasksRefreshKey] = useState(0);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -364,6 +368,12 @@ export function App() {
 
     if (targetView === "deployments") {
       setDeployments(await api.deployments());
+      return;
+    }
+
+    if (targetView === "tasks") {
+      setProjects(await api.projects());
+      setTasksRefreshKey((current) => current + 1);
       return;
     }
 
@@ -837,7 +847,8 @@ export function App() {
         autoStart: project.autoStart,
         manualDeployEnabled: project.manualDeployEnabled,
         githubWebhookEnabled: project.githubWebhookEnabled,
-        targetNodeId: project.targetNodeId || "node_master_local"
+        targetNodeId: project.targetNodeId || "node_master_local",
+        agentImage: project.agentImage || ""
       });
       setProjectEnv(emptyProjectEnvState);
       setProjectCompose(emptyProjectComposeState);
@@ -1448,6 +1459,7 @@ export function App() {
           {[
             ["dashboard", Activity, "Dashboard"],
             ["projects", GitBranch, "Projects"],
+            ["tasks", Bot, "AI Tasks"],
             ["containers", Container, "Containers"],
             ...(multiNodeEnabled ? [["nodes", Server, "Nodes"] as const] : []),
             ["deployments", Boxes, "Deployments"],
@@ -1552,6 +1564,8 @@ export function App() {
             setProjectPage={setProjectPage}
           />
         ) : null}
+
+        {view === "tasks" ? <TasksView projects={projects} refreshKey={tasksRefreshKey} toast={(message, kind) => setToast({ message, kind })} /> : null}
 
         {view === "deployments" ? (
           <DeploymentsView
@@ -1870,6 +1884,7 @@ export function App() {
                   <TextField label="Compose file" value={projectForm.composeFile} onChange={(composeFile) => setProjectForm((current) => ({ ...current, composeFile }))} placeholder="docker-compose.yml" required />
                 </div>
                 <TextField label="Folder name" value={projectForm.folderName} onChange={(folderName) => setProjectForm((current) => ({ ...current, folderName }))} placeholder={slugifyFolderName(projectForm.name) || "Auto from project name"} />
+                <TextField label="Agent runner image" value={projectForm.agentImage} onChange={(agentImage) => setProjectForm((current) => ({ ...current, agentImage }))} placeholder="Default: yanto:local" />
                 {multiNodeEnabled ? (
                   <CustomSelect label="Deployment node" value={projectForm.targetNodeId} options={nodeOptions} onChange={(targetNodeId) => setProjectForm((current) => ({ ...current, targetNodeId }))} />
                 ) : null}

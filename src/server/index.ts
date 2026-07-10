@@ -26,6 +26,9 @@ import systemRouter from "./routes/system.js";
 import frpRouter from "./routes/frp.js";
 import mcpTokensRouter from "./routes/mcp-tokens.js";
 import mcpRouter from "./mcp/http.js";
+import aiProvidersRouter from "./routes/ai-providers.js";
+import agentTasksRouter from "./routes/agent-tasks.js";
+import { recoverInterruptedAgentRuns } from "./services/agent-tasks.js";
 
 const app = express();
 
@@ -104,6 +107,8 @@ app.use(cloudflareRouter);
 app.use(systemRouter);
 app.use(frpRouter);
 app.use(mcpTokensRouter);
+app.use(aiProvidersRouter);
+app.use(agentTasksRouter);
 
 app.use((error: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   void next;
@@ -130,6 +135,7 @@ async function main() {
   await migrate();
   await ensureLocalMasterNode();
   await recoverInterruptedDeployments();
+  await recoverInterruptedAgentRuns();
   const server = app.listen(config.port, () => {
     logger.info("server started", { port: config.port });
     void ensureEnabledCloudflaredConnectors()

@@ -44,6 +44,12 @@ export const config = {
   commandTimeoutMs: Number(process.env.COMMAND_TIMEOUT_MS ?? 60 * 60 * 1000),
   commandOutputMaxBytes: Number(process.env.COMMAND_OUTPUT_MAX_BYTES ?? 2 * 1024 * 1024),
   deploymentLogMaxChars: Number(process.env.DEPLOYMENT_LOG_MAX_CHARS ?? 500_000),
+  agentDefaultImage: process.env.AGENT_DEFAULT_IMAGE ?? "yanto:local",
+  agentMaxConcurrentRuns: Math.max(1, Number(process.env.AGENT_MAX_CONCURRENT_RUNS ?? 2)),
+  agentMaxTurns: Math.max(1, Number(process.env.AGENT_MAX_TURNS ?? 40)),
+  agentRunTimeoutMs: Math.max(60_000, Number(process.env.AGENT_RUN_TIMEOUT_MS ?? 60 * 60 * 1000)),
+  agentCommandTimeoutMs: Math.max(1_000, Number(process.env.AGENT_COMMAND_TIMEOUT_MS ?? 10 * 60 * 1000)),
+  agentCommandOutputMaxBytes: Math.max(16_384, Number(process.env.AGENT_COMMAND_OUTPUT_MAX_BYTES ?? 512 * 1024)),
   sshStrictHostKeyChecking: process.env.SSH_STRICT_HOST_KEY_CHECKING ?? "accept-new",
   cookieSecure:
     process.env.COOKIE_SECURE === undefined

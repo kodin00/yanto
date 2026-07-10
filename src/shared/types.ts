@@ -27,10 +27,116 @@ export type Project = {
   githubWebhookEnabled: boolean;
   targetNodeId: string;
   sshPublicKey: string | null;
+  agentImage: string;
   containerCount?: number;
   cloudflareRoutes?: CloudflareRoute[];
   createdAt: string;
   updatedAt: string;
+};
+
+export type AiProviderProtocol = "openai_responses" | "openai_chat" | "anthropic_messages";
+
+export type AiModel = {
+  id: string;
+  providerId: string;
+  modelId: string;
+  displayName: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AiProvider = {
+  id: string;
+  name: string;
+  protocol: AiProviderProtocol;
+  baseUrl: string;
+  hasApiKey: boolean;
+  enabled: boolean;
+  models: AiModel[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AgentTaskStatus = "backlog" | "running" | "review" | "done";
+export type AgentRunStatus = "running" | "succeeded" | "failed" | "canceled";
+
+export type AgentRun = {
+  id: string;
+  taskId: string;
+  status: AgentRunStatus;
+  providerProtocol: AiProviderProtocol;
+  modelName: string;
+  assistantText: string;
+  error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+};
+
+export type AgentMessage = {
+  id: string;
+  taskId: string;
+  runId: string | null;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: string;
+};
+
+export type AgentTask = {
+  id: string;
+  projectId: string;
+  projectName: string;
+  modelId: string;
+  modelName: string;
+  providerName: string;
+  title: string;
+  prompt: string;
+  status: AgentTaskStatus;
+  sourceBranch: string;
+  taskBranch: string;
+  sourceSha: string | null;
+  worktreePath: string | null;
+  resumeExistingBranch: boolean;
+  autoCommit: boolean;
+  autoPush: boolean;
+  autoCleanup: boolean;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  pushedAt: string | null;
+  latestRun: AgentRun | null;
+};
+
+export type AgentTaskDetail = AgentTask & {
+  messages: AgentMessage[];
+  runs: AgentRun[];
+};
+
+export type AgentGitFile = {
+  path: string;
+  status: string;
+  additions: number | null;
+  deletions: number | null;
+  binary: boolean;
+};
+
+export type AgentGitPreview = {
+  branch: string;
+  baseBranch: string;
+  headSha: string;
+  isClean: boolean;
+  ahead: number;
+  behind: number;
+  files: AgentGitFile[];
+  diff: string;
+};
+
+export type ProjectBranch = {
+  name: string;
+  sha: string;
+  remote: boolean;
 };
 
 export type ProjectWithDeployToken = Project & {

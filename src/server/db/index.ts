@@ -70,7 +70,108 @@ export async function migrate() {
   await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS manual_deploy_enabled boolean NOT NULL DEFAULT true;`);
   await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS github_webhook_enabled boolean NOT NULL DEFAULT true;`);
   await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS target_node_id text NOT NULL DEFAULT 'node_master_local';`);
+  await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS agent_image text NOT NULL DEFAULT '';`);
   await pool.query(`UPDATE projects SET target_node_id = 'node_master_local' WHERE target_node_id IS NULL OR target_node_id = '';`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ai_providers (
+      id text PRIMARY KEY,
+      name text NOT NULL,
+      protocol text NOT NULL,
+      base_url text NOT NULL,
+      api_key text NOT NULL,
+      enabled boolean NOT NULL DEFAULT true,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT ai_providers_protocol_check CHECK (protocol IN ('openai_responses', 'openai_chat', 'anthropic_messages'))
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS ai_providers_created_at_idx ON ai_providers(created_at DESC);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ai_models (
+      id text PRIMARY KEY,
+      provider_id text NOT NULL REFERENCES ai_providers(id) ON DELETE CASCADE,
+      model_id text NOT NULL,
+      display_name text NOT NULL,
+      enabled boolean NOT NULL DEFAULT true,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS ai_models_provider_model_idx ON ai_models(provider_id, model_id);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS ai_models_provider_idx ON ai_models(provider_id);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agent_tasks (
+      id text PRIMARY KEY,
+      project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      model_id text NOT NULL REFERENCES ai_models(id) ON DELETE RESTRICT,
+      title text NOT NULL,
+      prompt text NOT NULL,
+      status text NOT NULL DEFAULT 'backlog',
+      source_branch text NOT NULL,
+      task_branch text NOT NULL,
+      source_sha text,
+      worktree_path text,
+      resume_existing_branch boolean NOT NULL DEFAULT false,
+      auto_commit boolean NOT NULL DEFAULT false,
+      auto_push boolean NOT NULL DEFAULT false,
+      auto_cleanup boolean NOT NULL DEFAULT false,
+      last_error text,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      started_at timestamptz,
+      finished_at timestamptz,
+      pushed_at timestamptz,
+      CONSTRAINT agent_tasks_status_check CHECK (status IN ('backlog', 'running', 'review', 'done'))
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS agent_tasks_status_created_idx ON agent_tasks(status, created_at DESC);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS agent_tasks_project_idx ON agent_tasks(project_id);`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS agent_tasks_project_branch_idx ON agent_tasks(project_id, task_branch);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agent_runs (
+      id text PRIMARY KEY,
+      task_id text NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
+      status text NOT NULL,
+      provider_protocol text NOT NULL,
+      model_name text NOT NULL,
+      assistant_text text NOT NULL DEFAULT '',
+      error text,
+      started_at timestamptz NOT NULL DEFAULT now(),
+      finished_at timestamptz,
+      CONSTRAINT agent_runs_status_check CHECK (status IN ('running', 'succeeded', 'failed', 'canceled'))
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS agent_runs_task_started_idx ON agent_runs(task_id, started_at DESC);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS agent_runs_status_idx ON agent_runs(status);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agent_messages (
+      id text PRIMARY KEY,
+      task_id text NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
+      run_id text REFERENCES agent_runs(id) ON DELETE SET NULL,
+      role text NOT NULL,
+      content text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT agent_messages_role_check CHECK (role IN ('user', 'assistant'))
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS agent_messages_task_created_idx ON agent_messages(task_id, created_at);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agent_events (
+      id text PRIMARY KEY,
+      run_id text NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+      sequence integer NOT NULL,
+      kind text NOT NULL,
+      payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS agent_events_run_sequence_idx ON agent_events(run_id, sequence);`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS deployments (

@@ -1,4 +1,4 @@
-import type { AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, ContainerInfo, Deployment, DeploymentNode, FrpClientSetup, FrpOverview, FrpSettings, FrpTunnel, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../../shared/types";
+import type { AgentGitPreview, AgentRun, AgentTask, AgentTaskDetail, AiModel, AiProvider, AiProviderProtocol, AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, ContainerInfo, Deployment, DeploymentNode, FrpClientSetup, FrpOverview, FrpSettings, FrpTunnel, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectBranch, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -133,7 +133,7 @@ export const api = {
   nodes: () => request<DeploymentNode[]>("/api/nodes"),
   workerJoinToken: () => request<{ token: string; command: string }>("/api/nodes/join-token", { method: "POST" }),
   createProject: (
-    payload: Pick<Project, "name" | "branch" | "folderName" | "composeFile" | "autoStart" | "manualDeployEnabled" | "githubWebhookEnabled" | "targetNodeId"> & {
+    payload: Pick<Project, "name" | "branch" | "folderName" | "composeFile" | "autoStart" | "manualDeployEnabled" | "githubWebhookEnabled" | "targetNodeId" | "agentImage"> & {
       gitUrl?: string | null;
       composeContent?: string | null;
     }
@@ -145,7 +145,7 @@ export const api = {
   updateProject: (
     id: string,
     payload: Partial<
-      Pick<Project, "name" | "branch" | "folderName" | "composeFile" | "autoStart" | "manualDeployEnabled" | "githubWebhookEnabled" | "targetNodeId"> & {
+      Pick<Project, "name" | "branch" | "folderName" | "composeFile" | "autoStart" | "manualDeployEnabled" | "githubWebhookEnabled" | "targetNodeId" | "agentImage"> & {
         gitUrl?: string | null;
         composeContent?: string | null;
       }
@@ -187,6 +187,33 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ content })
     }),
+  aiProviders: () => request<AiProvider[]>("/api/ai/providers"),
+  createAiProvider: (payload: { name: string; protocol: AiProviderProtocol; baseUrl: string; apiKey: string; enabled?: boolean }) =>
+    request<AiProvider>("/api/ai/providers", { method: "POST", body: JSON.stringify(payload) }),
+  updateAiProvider: (id: string, payload: Partial<{ name: string; protocol: AiProviderProtocol; baseUrl: string; apiKey: string; enabled: boolean }>) =>
+    request<AiProvider>(`/api/ai/providers/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteAiProvider: (id: string) => request<void>(`/api/ai/providers/${id}`, { method: "DELETE" }),
+  discoverAiModels: (id: string) => request<{ ok: true; models: Array<{ id: string; name: string }> }>(`/api/ai/providers/${id}/discover`, { method: "POST" }),
+  addAiModel: (providerId: string, payload: { modelId: string; displayName?: string }) =>
+    request<AiModel>(`/api/ai/providers/${providerId}/models`, { method: "POST", body: JSON.stringify(payload) }),
+  updateAiModel: (id: string, payload: Partial<{ displayName: string; enabled: boolean }>) =>
+    request<AiModel>(`/api/ai/models/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteAiModel: (id: string) => request<void>(`/api/ai/models/${id}`, { method: "DELETE" }),
+  agentTasks: () => request<AgentTask[]>("/api/agent/tasks"),
+  agentTask: (id: string) => request<AgentTaskDetail>(`/api/agent/tasks/${id}`),
+  createAgentTask: (payload: { projectId: string; modelId: string; title: string; prompt: string; sourceBranch: string; taskBranch: string; resumeExistingBranch: boolean; autoCommit: boolean; autoPush: boolean; autoCleanup: boolean }) =>
+    request<AgentTaskDetail>("/api/agent/tasks", { method: "POST", body: JSON.stringify(payload) }),
+  updateAgentTask: (id: string, payload: Partial<{ title: string; modelId: string; autoCommit: boolean; autoPush: boolean; autoCleanup: boolean }>) =>
+    request<AgentTaskDetail>(`/api/agent/tasks/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteAgentTask: (id: string, force = false) => request<void>(`/api/agent/tasks/${id}${force ? "?force=true" : ""}`, { method: "DELETE" }),
+  runAgentTask: (id: string, message?: string) => request<AgentRun>(`/api/agent/tasks/${id}/run`, { method: "POST", body: JSON.stringify(message ? { message } : {}) }),
+  stopAgentTask: (id: string) => request<{ ok: true }>(`/api/agent/tasks/${id}/stop`, { method: "POST" }),
+  projectAgentBranches: (projectId: string) => request<ProjectBranch[]>(`/api/projects/${projectId}/agent-branches`),
+  agentTaskGit: (id: string) => request<AgentGitPreview>(`/api/agent/tasks/${id}/git`),
+  commitAgentTask: (id: string, message: string, paths?: string[]) => request<{ sha: string }>(`/api/agent/tasks/${id}/commit`, { method: "POST", body: JSON.stringify({ message, paths }) }),
+  pushAgentTask: (id: string) => request<{ sha: string }>(`/api/agent/tasks/${id}/push`, { method: "POST" }),
+  cleanupAgentTask: (id: string, force = false) => request<void>(`/api/agent/tasks/${id}/worktree${force ? "?force=true" : ""}`, { method: "DELETE" }),
+  agentTaskEventStream: (id: string) => `/api/agent/tasks/${id}/events/stream`,
   deployments: (limit = 500) => request<Deployment[]>(`/api/deployments?limit=${limit}`),
   deploymentLogs: (id: string) => request<string>(`/api/deployments/${id}/logs`),
   deploymentLogStream: (id: string) => `/api/deployments/${id}/logs/stream`,

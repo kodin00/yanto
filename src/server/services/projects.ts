@@ -28,6 +28,7 @@ export type CreateProjectInput = {
   manualDeployEnabled?: boolean;
   githubWebhookEnabled?: boolean;
   targetNodeId?: string;
+  agentImage?: string;
 };
 
 export async function listProjects() {
@@ -96,6 +97,7 @@ export async function createProject(input: CreateProjectInput) {
       deployToken: createDeployToken(),
       sshPrivateKeyPath: null,
       sshPublicKey: null,
+      agentImage: input.agentImage?.trim() || "",
       createdAt: new Date(),
       updatedAt: new Date()
     })
@@ -125,6 +127,7 @@ export async function updateProject(id: string, input: Partial<CreateProjectInpu
   if (input.autoStart !== undefined) patch.autoStart = input.autoStart;
   if (input.manualDeployEnabled !== undefined) patch.manualDeployEnabled = input.manualDeployEnabled;
   if (input.githubWebhookEnabled !== undefined) patch.githubWebhookEnabled = input.githubWebhookEnabled;
+  if (input.agentImage !== undefined) patch.agentImage = input.agentImage.trim();
   if (input.targetNodeId !== undefined) {
     const targetNode = await assertDeployableNode(input.targetNodeId.trim() || config.localNodeId);
     patch.targetNodeId = targetNode.id;

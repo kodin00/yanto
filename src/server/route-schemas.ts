@@ -11,7 +11,8 @@ export const projectInput = z.object({
   autoStart: z.boolean().optional().default(true),
   manualDeployEnabled: z.boolean().optional().default(true),
   githubWebhookEnabled: z.boolean().optional().default(true),
-  targetNodeId: z.string().min(1).optional()
+  targetNodeId: z.string().min(1).optional(),
+  agentImage: z.string().max(500).optional().default("")
 });
 
 export const deploymentInput = z.object({
