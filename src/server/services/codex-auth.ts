@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
 import { config } from "../config.js";
+import { clearCodexTaskAuthentication } from "./codex-account-runner.js";
 
 export type CodexLogin = { loginId: string; verificationUrl: string; userCode: string };
 export type CodexAccountStatus = { connected: boolean; email: string | null; planType: string | null; login: CodexLogin | null };
@@ -100,6 +101,7 @@ export async function getCodexAccountStatus(): Promise<CodexAccountStatus> {
 
 export async function logoutCodexAccount() {
   await server.request("account/logout");
+  await clearCodexTaskAuthentication();
   server.login = null;
 }
 

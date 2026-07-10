@@ -96,29 +96,67 @@ export async function resolveHostMountPath(containerPath: string) {
 export class AgentSandbox {
   readonly containerName: string;
   private started = false;
+  private createAttempted = false;
+  private launchPromise?: Promise<void>;
+  private cleanupPromise?: Promise<void>;
+  private readonly taskId: string;
+  private readonly signal: AbortSignal;
+  private readonly abortListener: () => void;
 
-  constructor(private readonly runId: string, private readonly worktreePath: string, private readonly image: string) {
+  constructor(
+    private readonly runId: string,
+    private readonly worktreePath: string,
+    private readonly image: string,
+    options: { taskId?: string; signal?: AbortSignal } = {}
+  ) {
     this.containerName = `yanto-agent-${runId.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 48)}`;
+    this.taskId = options.taskId ?? runId;
+    this.signal = options.signal ?? new AbortController().signal;
+    this.abortListener = () => { void this.stop().catch(() => undefined); };
+    this.signal.addEventListener("abort", this.abortListener, { once: true });
   }
 
   async start() {
-    const hostPath = await resolveHostMountPath(this.worktreePath);
-    const result = await runCommand("docker", [
-      "run", "-d", "--rm", "--name", this.containerName,
-      "--workdir", "/workspace", "--network", "bridge",
-      "--memory", "4g", "--cpus", "2", "--pids-limit", "512",
-      "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-      "-v", `${hostPath}:/workspace`,
-      "--entrypoint", "sh", this.image, "-c", "while :; do sleep 3600; done"
-    ], { timeoutMs: 10 * 60 * 1000, maxOutputBytes: 512 * 1024 });
-    if (result.exitCode !== 0) throw new Error(result.output.trim() || `Unable to start agent image ${this.image}.`);
-    this.started = true;
+    if (this.launchPromise) return this.launchPromise;
+    this.launchPromise = (async () => {
+      this.signal.throwIfAborted();
+      const hostPath = await resolveHostMountPath(this.worktreePath);
+      this.signal.throwIfAborted();
+      this.createAttempted = true;
+      const created = await runCommand("docker", [
+        "create", "--name", this.containerName,
+        "--label", "com.yanto.agent=true",
+        "--label", `com.yanto.agent.run-id=${this.runId}`,
+        "--label", `com.yanto.agent.task-id=${this.taskId}`,
+        "--workdir", "/workspace", "--network", "bridge",
+        "--memory", "4g", "--cpus", "2", "--pids-limit", "512",
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+        "-v", `${hostPath}:/workspace`,
+        "--entrypoint", "sh", this.image, "-c", "while :; do sleep 3600; done"
+      ], { timeoutMs: 10 * 60 * 1000, maxOutputBytes: 512 * 1024 });
+      if (created.exitCode !== 0) throw new Error(created.output.trim() || `Unable to create agent image ${this.image}.`);
+      this.signal.throwIfAborted();
+      const started = await runCommand("docker", ["start", this.containerName], { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 });
+      if (started.exitCode !== 0) throw new Error(started.output.trim() || `Unable to start agent image ${this.image}.`);
+      this.started = true;
+      this.signal.throwIfAborted();
+    })();
+    return this.launchPromise;
   }
 
   async stop() {
-    if (!this.started) return;
-    this.started = false;
-    await runCommand("docker", ["rm", "-f", this.containerName], { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 });
+    if (this.cleanupPromise) return this.cleanupPromise;
+    this.cleanupPromise = (async () => {
+      this.signal.removeEventListener("abort", this.abortListener);
+      await this.launchPromise?.catch(() => undefined);
+      this.started = false;
+      if (!this.createAttempted) return;
+      const removed = await runCommand("docker", ["rm", "-f", this.containerName], { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 });
+      if (removed.exitCode !== 0 && !removed.output.toLowerCase().includes("no such container")) {
+        throw new Error(removed.output.trim() || `Unable to remove agent container ${this.containerName}.`);
+      }
+    })();
+    return this.cleanupPromise;
   }
 
   async execute(name: string, rawInput: unknown): Promise<string> {

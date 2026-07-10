@@ -1,4 +1,5 @@
 import { Codex, type ThreadItem, type ThreadOptions } from "@openai/codex-sdk";
+import { codexTaskConfig } from "./codex-sandbox.js";
 
 type Input = { prompt: string; model: string; threadId?: string | null };
 type Output = Record<string, unknown> & { type: string };
@@ -29,10 +30,10 @@ async function main() {
   const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
   delete env.OPENAI_API_KEY;
   delete env.CODEX_API_KEY;
-  const codex = new Codex({ env });
+  const codex = new Codex({ env, config: codexTaskConfig });
   const options: ThreadOptions = {
-    workingDirectory: "/workspace", skipGitRepoCheck: true, sandboxMode: "workspace-write",
-    approvalPolicy: "never", networkAccessEnabled: true,
+    workingDirectory: "/workspace", skipGitRepoCheck: true,
+    approvalPolicy: "never",
     ...(input.model && input.model !== "default" ? { model: input.model } : {})
   };
   const thread = input.threadId ? codex.resumeThread(input.threadId, options) : codex.startThread(options);

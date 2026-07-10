@@ -67,3 +67,15 @@ export async function ensureProjectsRoot() {
 export async function removeProjectDirectory(folderName: string) {
   await fs.rm(projectPath(folderName), { recursive: true, force: true });
 }
+
+export async function removeProjectWorktreeDirectory(folderName: string) {
+  const safeName = normalizeFolderName(folderName);
+  const worktreesRoot = path.resolve(config.projectsRoot, ".yanto-worktrees");
+  const target = path.resolve(worktreesRoot, safeName);
+  if (!target.startsWith(`${worktreesRoot}${path.sep}`)) {
+    throw new Error("Project worktree path must stay inside the configured worktree root.");
+  }
+  await fs.rmdir(target).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  });
+}

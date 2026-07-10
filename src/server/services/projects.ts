@@ -2,13 +2,16 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { cloudflareRoutes, projects } from "../db/schema.js";
+import { agentTasks, cloudflareRoutes, projects } from "../db/schema.js";
 import { createDeployToken, createId } from "./tokens.js";
 import { listContainers } from "./docker.js";
-import { ensureProjectsRoot, normalizeComposeFile, normalizeEnvFile, pathExists, projectPath, removeProjectDirectory, slugifyFolderName } from "./paths.js";
+import { ensureProjectsRoot, normalizeComposeFile, normalizeEnvFile, pathExists, projectPath, removeProjectDirectory, removeProjectWorktreeDirectory, slugifyFolderName } from "./paths.js";
 import { config } from "../config.js";
 import { assertDeployableNode } from "./nodes.js";
 import { assertComposePortsAvailable } from "./compose.js";
+import { HttpError } from "../http-utils.js";
+import { cleanupTaskWorktree, pruneTaskWorktrees } from "./agent-worktrees.js";
+import { agentProjectLifecycleKey, withAgentLifecycleLock } from "./agent-lifecycle.js";
 
 export function publicProject<T extends { deployToken: string }>(project: T): Omit<T, "deployToken"> {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructured to exclude from output
@@ -145,12 +148,23 @@ export async function updateProject(id: string, input: Partial<CreateProjectInpu
 }
 
 export async function deleteProject(id: string) {
-  const current = await getProject(id);
-  if (!current) {
-    return;
-  }
-  await db.delete(projects).where(eq(projects.id, id));
-  await removeProjectDirectory(current.folderName);
+  const folderName = await withAgentLifecycleLock([agentProjectLifecycleKey(id)], async () => {
+    const current = await getProject(id);
+    if (!current) return undefined;
+    const tasks = await db.select().from(agentTasks).where(eq(agentTasks.projectId, id));
+    if (tasks.some((task) => task.status === "running")) {
+      throw new HttpError(409, "Stop all active agent runs before deleting the project.");
+    }
+    for (const task of tasks) {
+      await cleanupTaskWorktree(current, task);
+    }
+    await pruneTaskWorktrees(current);
+    await db.delete(projects).where(eq(projects.id, id));
+    return current.folderName;
+  });
+  if (!folderName) return;
+  await removeProjectDirectory(folderName);
+  await removeProjectWorktreeDirectory(folderName);
 }
 
 export async function getProject(id: string) {

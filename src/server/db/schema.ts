@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { bigint, boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const deploymentNodes = pgTable(
@@ -120,7 +121,11 @@ export const agentRuns = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp("finished_at", { withTimezone: true })
   },
-  (table) => [index("agent_runs_task_started_idx").on(table.taskId, table.startedAt), index("agent_runs_status_idx").on(table.status)]
+  (table) => [
+    index("agent_runs_task_started_idx").on(table.taskId, table.startedAt),
+    index("agent_runs_status_idx").on(table.status),
+    uniqueIndex("agent_runs_one_running_per_task_idx").on(table.taskId).where(sql`${table.status} = 'running'`)
+  ]
 );
 
 export const agentMessages = pgTable(

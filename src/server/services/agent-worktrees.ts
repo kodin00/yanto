@@ -57,12 +57,23 @@ export async function fetchProjectBranches(project: ProjectRow): Promise<Project
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function taskWorktreePath(project: ProjectRow, task: AgentTaskRow) {
+export function taskWorktreePath(project: ProjectRow, task: AgentTaskRow) {
   return path.join(config.projectsRoot, ".yanto-worktrees", project.folderName, task.id);
 }
 
 async function refExists(project: ProjectRow, ref: string) {
   const result = await runCommand("git", ["show-ref", "--verify", "--quiet", ref], { cwd: project.localPath, maxOutputBytes: 32 * 1024 });
+  return result.exitCode === 0;
+}
+
+async function isAncestor(project: ProjectRow, ancestor: string, descendant: string) {
+  const result = await runCommand("git", ["merge-base", "--is-ancestor", ancestor, descendant], {
+    cwd: project.localPath,
+    maxOutputBytes: 32 * 1024
+  });
+  if (result.exitCode !== 0 && result.exitCode !== 1) {
+    throw new HttpError(400, result.output.trim() || `Unable to compare ${ancestor} with ${descendant}.`);
+  }
   return result.exitCode === 0;
 }
 
@@ -85,7 +96,16 @@ export async function prepareTaskWorktree(project: ProjectRow, task: AgentTaskRo
   const localExists = await refExists(project, `refs/heads/${taskBranch}`);
   const remoteExists = await refExists(project, `refs/remotes/origin/${taskBranch}`);
   if (localExists) {
-    if (!task.sourceSha) throw new HttpError(409, `Local branch ${taskBranch} already exists outside this task.`);
+    if (!task.sourceSha) {
+      if (!task.resumeExistingBranch || !remoteExists) {
+        throw new HttpError(409, `Local branch ${taskBranch} already exists outside this task.`);
+      }
+      const localRef = `refs/heads/${taskBranch}`;
+      const remoteRef = `refs/remotes/origin/${taskBranch}`;
+      if (!await isAncestor(project, localRef, remoteRef)) {
+        throw new HttpError(409, `Local branch ${taskBranch} has commits that are not on origin and cannot be resumed safely.`);
+      }
+    }
     await git(project, ["worktree", "add", worktreePath, taskBranch]);
     if (remoteExists) await git(project, ["merge", "--ff-only", `origin/${taskBranch}`], { cwd: worktreePath });
     return { worktreePath, sourceSha };
@@ -185,7 +205,11 @@ export async function pushTaskWorktree(project: ProjectRow, task: AgentTaskRow) 
 }
 
 export async function cleanupTaskWorktree(project: ProjectRow, task: AgentTaskRow, force = false) {
-  if (!task.worktreePath) return;
-  if (await pathExists(task.worktreePath)) await git(project, ["worktree", "remove", ...(force ? ["--force"] : []), task.worktreePath]);
-  await git(project, ["worktree", "prune"]);
+  const worktreePath = task.worktreePath || taskWorktreePath(project, task);
+  if (await pathExists(worktreePath)) await git(project, ["worktree", "remove", ...(force ? ["--force"] : []), worktreePath]);
+  await pruneTaskWorktrees(project);
+}
+
+export async function pruneTaskWorktrees(project: ProjectRow) {
+  if (await pathExists(project.localPath)) await git(project, ["worktree", "prune"]);
 }

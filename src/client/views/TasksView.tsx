@@ -1,5 +1,5 @@
 import { Bot, Check, GitBranch, Play, Plus, RefreshCw, Settings2, Square, Trash2, Upload, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentGitPreview, AgentTask, AgentTaskDetail, AiProvider, AiProviderProtocol, CodexAccountStatus, Project, ProjectBranch } from "../../shared/types";
 import { Button, Modal, StatusBadge, TextAreaField, TextField, ToggleField } from "../components/ui";
 import { api } from "../lib/api";
@@ -152,6 +152,7 @@ function TaskDetailModal({ taskId, providers, onClose, refreshBoard, toast }: { 
   const [selected, setSelected] = useState<string[]>([]);
   const [commitMessage, setCommitMessage] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const eventDedup = useRef<{ runId: string | null; keys: Set<string>; order: string[] }>({ runId: null, keys: new Set(), order: [] });
 
   const load = useCallback(async () => {
     const detail = await api.agentTask(taskId);
@@ -165,15 +166,89 @@ function TaskDetailModal({ taskId, providers, onClose, refreshBoard, toast }: { 
   useEffect(() => { void load().catch((error: Error) => toast(error.message, "error")); }, [load, toast]);
   useEffect(() => {
     if (task?.status !== "running") return;
-    const source = new EventSource(api.agentTaskEventStream(taskId));
-    source.onmessage = (message) => {
-      const data = JSON.parse(message.data) as { kind?: string; payload?: Record<string, unknown>; done?: boolean };
-      if (data.kind === "assistant_delta" && typeof data.payload?.delta === "string") setLiveText((current) => current + data.payload!.delta);
-      else if (data.kind && data.kind !== "snapshot") setEventLog((current) => [...current.slice(-199), `${data.kind}: ${JSON.stringify(data.payload ?? {})}`]);
-      if (data.done) { source.close(); setLiveText(""); void load(); void refreshBoard(); }
+    type StreamEvent = { runId?: string; sequence?: number; kind?: string; payload?: Record<string, unknown>; done?: boolean };
+    let source: EventSource | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let disposed = false;
+    let reconciling = false;
+    let finished = false;
+
+    const remember = (event: StreamEvent) => {
+      if (!event.runId || typeof event.sequence !== "number") return true;
+      const key = `${event.runId}:${event.sequence}`;
+      if (eventDedup.current.keys.has(key)) return false;
+      eventDedup.current.keys.add(key);
+      eventDedup.current.order.push(key);
+      if (eventDedup.current.order.length > 1_000) {
+        const oldest = eventDedup.current.order.shift();
+        if (oldest) eventDedup.current.keys.delete(oldest);
+      }
+      return true;
     };
-    source.onerror = () => source.close();
-    return () => source.close();
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      source?.close();
+      source = null;
+      setLiveText("");
+      void load();
+      void refreshBoard();
+    };
+    const applyEvent = (event: StreamEvent) => {
+      if (!remember(event)) return;
+      if (event.kind === "assistant_delta" && typeof event.payload?.delta === "string") {
+        setLiveText((current) => current + event.payload!.delta);
+      } else if (event.kind && event.kind !== "snapshot") {
+        setEventLog((current) => [...current.slice(-199), `${event.kind}: ${JSON.stringify(event.payload ?? {})}`]);
+      }
+      if (event.done) finish();
+    };
+    const connect = () => {
+      if (disposed) return;
+      source = new EventSource(api.agentTaskEventStream(taskId));
+      source.onmessage = (message) => {
+        let data: StreamEvent;
+        try { data = JSON.parse(message.data) as StreamEvent; } catch { return; }
+        if (data.kind === "snapshot") {
+          const runId = typeof data.payload?.runId === "string" ? data.payload.runId : null;
+          if (eventDedup.current.runId !== runId) {
+            eventDedup.current = { runId, keys: new Set(), order: [] };
+            setEventLog([]);
+            setLiveText("");
+          }
+          const events = Array.isArray(data.payload?.events) ? data.payload.events as StreamEvent[] : [];
+          events.forEach(applyEvent);
+          if (data.done) finish();
+          return;
+        }
+        applyEvent(data);
+      };
+      source.onerror = () => {
+        source?.close();
+        source = null;
+        if (disposed || finished || reconciling) return;
+        reconciling = true;
+        void api.agentTask(taskId).then(async (detail) => {
+          if (disposed) return;
+          if (detail.status === "running") {
+            setTask(detail);
+            retryTimer = setTimeout(connect, 750);
+          } else {
+            setLiveText("");
+            await load();
+            await refreshBoard();
+          }
+        }).catch(() => {
+          if (!disposed) retryTimer = setTimeout(connect, 1_500);
+        }).finally(() => { reconciling = false; });
+      };
+    };
+    connect();
+    return () => {
+      disposed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      source?.close();
+    };
   }, [task?.status, taskId, load, refreshBoard]);
 
   async function action(name: string, fn: () => Promise<unknown>) {

@@ -151,6 +151,11 @@ export async function migrate() {
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS agent_runs_task_started_idx ON agent_runs(task_id, started_at DESC);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS agent_runs_status_idx ON agent_runs(status);`);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS agent_runs_one_running_per_task_idx
+    ON agent_runs (task_id)
+    WHERE status = 'running';
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS agent_messages (

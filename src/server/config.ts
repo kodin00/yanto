@@ -49,8 +49,10 @@ export const config = {
   agentMaxConcurrentRuns: Math.max(1, Number(process.env.AGENT_MAX_CONCURRENT_RUNS ?? 2)),
   agentMaxTurns: Math.max(1, Number(process.env.AGENT_MAX_TURNS ?? 40)),
   agentRunTimeoutMs: Math.max(60_000, Number(process.env.AGENT_RUN_TIMEOUT_MS ?? 60 * 60 * 1000)),
+  agentShutdownTimeoutMs: Math.max(1_000, Number(process.env.AGENT_SHUTDOWN_TIMEOUT_MS ?? 30_000)),
   agentCommandTimeoutMs: Math.max(1_000, Number(process.env.AGENT_COMMAND_TIMEOUT_MS ?? 10 * 60 * 1000)),
   agentCommandOutputMaxBytes: Math.max(16_384, Number(process.env.AGENT_COMMAND_OUTPUT_MAX_BYTES ?? 512 * 1024)),
+  agentPersistedToolPayloadMaxBytes: Math.max(1_024, Number(process.env.AGENT_PERSISTED_TOOL_PAYLOAD_MAX_BYTES ?? 32 * 1024)),
   sshStrictHostKeyChecking: process.env.SSH_STRICT_HOST_KEY_CHECKING ?? "accept-new",
   cookieSecure:
     process.env.COOKIE_SECURE === undefined

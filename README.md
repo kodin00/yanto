@@ -52,7 +52,7 @@ The **AI Tasks** tab adds a single-admin, Git-backed coding workspace:
 
 AI tasks require a project with a Git URL and run on the local master node. Set an optional **Agent runner image** on the project when its tests require a toolchain beyond the bundled Node.js, Python, Git, and ripgrep runtime.
 
-Codex account sessions are stored in the persistent `yanto_codex` volume. Open **AI Tasks → Providers → Sign in with Codex**, follow the verification link, then refresh the available models. Codex runs use Yanto's bundled agent image in an isolated container; Git commit and push credentials remain owned by Yanto outside that container.
+Codex account sessions are stored per task in the persistent `yanto_codex` volume. Open **AI Tasks → Providers → Sign in with Codex**, follow the verification link, then refresh the available models. Before the first Codex-account run for an image, Yanto probes the image's real Codex permission profile with fake account/session sentinels. The run is refused if filesystem or network isolation cannot be verified. Task commands can write only the worktree, have direct network access disabled, and cannot read the mounted task Codex home. Git commit and push credentials remain owned by Yanto outside that container.
 
 ## Multi-Node Runtime
 
@@ -234,6 +234,12 @@ npm run db:push
 npm run typecheck
 npm test
 npm run lint
+```
+
+The real Codex runner-image isolation probe requires a running Docker daemon and a built agent image, so it is opt-in for local/CI verification:
+
+```bash
+YANTO_RUN_CODEX_SANDBOX_INTEGRATION=1 AGENT_DEFAULT_IMAGE=yanto:local npm run test:run -- tests/codex-sandbox-integration.test.ts
 ```
 
 ## GitHub Actions Deploy

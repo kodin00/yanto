@@ -28,7 +28,7 @@ import mcpTokensRouter from "./routes/mcp-tokens.js";
 import mcpRouter from "./mcp/http.js";
 import aiProvidersRouter from "./routes/ai-providers.js";
 import agentTasksRouter from "./routes/agent-tasks.js";
-import { recoverInterruptedAgentRuns } from "./services/agent-tasks.js";
+import { drainActiveAgentRuns, recoverInterruptedAgentRuns } from "./services/agent-tasks.js";
 
 const app = express();
 
@@ -151,13 +151,25 @@ async function main() {
       });
   });
 
-  const shutdown = async (signal: string) => {
+  let shutdownPromise: Promise<void> | undefined;
+  const shutdown = (signal: string) => shutdownPromise ??= (async () => {
     logger.info("shutdown starting", { signal });
-    server.close();
-    await new Promise((resolve) => setTimeout(resolve, 5_000));
+    const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));
+    const drained = await drainActiveAgentRuns(config.agentShutdownTimeoutMs);
+    if (!drained.drained) {
+      logger.error("agent run shutdown timed out", { signal, activeRunCount: drained.activeRunCount });
+      server.closeAllConnections();
+    }
+    await Promise.race([
+      serverClosed,
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, config.agentShutdownTimeoutMs);
+        timer.unref();
+      })
+    ]);
     await pool.end();
     process.exit(0);
-  };
+  })();
 
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));

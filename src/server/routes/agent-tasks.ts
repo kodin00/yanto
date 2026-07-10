@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "../auth.js";
 import { actor, asyncRoute, routeParam, sendStreamEvent, startEventStream } from "../http-utils.js";
 import { recordAuditLog } from "../services/audit.js";
-import { agentEventBus } from "../services/agent-events.js";
+import { agentEventBus, type AgentLiveEvent } from "../services/agent-events.js";
 import { agentTaskEvents, branchesForProject, cleanupAgentTask, commitAgentTask, createAgentTask, deleteAgentTask, getAgentTask, gitPreviewForTask, listAgentTasks, pushAgentTask, startAgentTask, stopAgentTask, updateAgentTask } from "../services/agent-tasks.js";
 
 const router = Router();
@@ -52,16 +52,60 @@ router.delete("/api/agent/tasks/:id/worktree", requireAuth, asyncRoute(async (re
 
 router.get("/api/agent/tasks/:id/events/stream", requireAuth, asyncRoute(async (req, res) => {
   const id = routeParam(req, "id");
-  const task = await getAgentTask(id);
-  if (!task) { res.status(404).json({ message: "Task not found." }); return; }
-  startEventStream(res);
-  sendStreamEvent(res, { kind: "snapshot", payload: { task, events: await agentTaskEvents(id) }, done: task.status !== "running" });
-  if (task.status !== "running") { res.end(); return; }
-  const unsubscribe = agentEventBus.subscribe(id, (event) => {
+  const buffered: AgentLiveEvent[] = [];
+  let direct = false;
+  let closed = false;
+  let unsubscribe = () => {};
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    unsubscribe();
+  };
+  const deliver = (event: AgentLiveEvent) => {
+    if (closed) return;
     sendStreamEvent(res, event);
-    if (event.done) { unsubscribe(); res.end(); }
+    if (event.done) { cleanup(); res.end(); }
+  };
+
+  unsubscribe = agentEventBus.subscribe(id, (event) => {
+    if (direct) deliver(event);
+    else buffered.push(event);
   });
-  req.on("close", unsubscribe);
+  req.once("close", cleanup);
+
+  try {
+    const task = await getAgentTask(id);
+    if (!task) { cleanup(); res.status(404).json({ message: "Task not found." }); return; }
+    const runId = task.latestRun?.id ?? null;
+    const events = await agentTaskEvents(id, runId ?? undefined);
+    const sequence = events.reduce((latest, event) => Math.max(latest, event.sequence), 0);
+
+    startEventStream(res);
+    sendStreamEvent(res, {
+      kind: "snapshot",
+      payload: { task, events, runId, sequence, watermark: { runId, sequence } },
+      done: task.status !== "running"
+    });
+
+    const delivered = new Set(events.map((event) => `${event.runId}:${event.sequence}`));
+    while (!closed && buffered.length) {
+      const pending = buffered.splice(0);
+      for (const event of pending) {
+        const key = `${event.runId}:${event.sequence}`;
+        if (delivered.has(key) || (event.runId === runId && event.sequence <= sequence)) continue;
+        delivered.add(key);
+        deliver(event);
+        if (closed) break;
+      }
+    }
+
+    if (closed) return;
+    if (task.status !== "running") { cleanup(); res.end(); return; }
+    direct = true;
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
 }));
 
 export default router;

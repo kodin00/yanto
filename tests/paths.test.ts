@@ -8,7 +8,7 @@ const testPaths = vi.hoisted(() => {
   return { projectsRoot };
 });
 
-import { normalizeFolderName, projectPath, removeProjectDirectory } from "../src/server/services/paths.js";
+import { normalizeFolderName, projectPath, removeProjectDirectory, removeProjectWorktreeDirectory } from "../src/server/services/paths.js";
 
 describe("project paths", () => {
   afterAll(async () => {
@@ -36,5 +36,23 @@ describe("project paths", () => {
     await removeProjectDirectory("delete-me");
 
     await expect(fs.access(target)).rejects.toThrow();
+  });
+
+  it("removes only an empty project worktree directory", async () => {
+    const target = path.join(testPaths.projectsRoot, ".yanto-worktrees", "delete-me");
+    await fs.mkdir(target, { recursive: true });
+
+    await removeProjectWorktreeDirectory("delete-me");
+
+    await expect(fs.access(target)).rejects.toThrow();
+  });
+
+  it("refuses to recursively discard leftover project worktree content", async () => {
+    const target = path.join(testPaths.projectsRoot, ".yanto-worktrees", "not-empty");
+    await fs.mkdir(target, { recursive: true });
+    await fs.writeFile(path.join(target, "leftover.txt"), "keep me\n", "utf8");
+
+    await expect(removeProjectWorktreeDirectory("not-empty")).rejects.toMatchObject({ code: "ENOTEMPTY" });
+    await expect(fs.readFile(path.join(target, "leftover.txt"), "utf8")).resolves.toBe("keep me\n");
   });
 });
