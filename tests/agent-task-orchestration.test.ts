@@ -95,6 +95,7 @@ const mocks = vi.hoisted(() => {
 
   const db = {
     select: vi.fn((selection?: unknown) => new SelectQuery(selection)),
+    selectDistinctOn: vi.fn((_columns: unknown, selection?: unknown) => new SelectQuery(selection)),
     insert,
     update,
     delete: vi.fn((table: object) => ({
@@ -140,7 +141,7 @@ vi.mock("../src/server/services/agent-worktrees.js", () => ({
 vi.mock("../src/server/services/agent-provider-runner.js", () => ({ runAgentProvider: mocks.runAgentProvider }));
 vi.mock("../src/server/services/codex-account-runner.js", () => ({ runCodexAccount: mocks.runCodexAccount }));
 vi.mock("../src/server/services/agent-tools.js", () => ({
-  AgentSandbox: class {
+  AgentWorkspace: class {
     start = mocks.sandboxStart;
     stop = mocks.sandboxStop;
   }
@@ -409,6 +410,40 @@ describe("agent task orchestration", () => {
 
     await expect(setAgentTaskArchived("agt_one", false)).resolves.toMatchObject({ id: "agt_one", archivedAt: null });
     expect(mocks.state.tasks[0].archivedAt).toBeNull();
+  });
+
+  it("loads only the latest run projection when listing tasks", async () => {
+    mocks.state.runs = [
+      run("agr_old", "agt_one", { status: "failed", startedAt: new Date("2026-01-01T00:00:00Z") }),
+      run("agr_latest", "agt_one", { status: "succeeded", startedAt: new Date("2026-01-02T00:00:00Z") })
+    ];
+    const { listAgentTasks } = await loadService();
+
+    await expect(listAgentTasks()).resolves.toEqual([
+      expect.objectContaining({ id: "agt_one", latestRun: expect.objectContaining({ id: "agr_latest" }) })
+    ]);
+    expect(mocks.db.selectDistinctOn).toHaveBeenCalledWith([expect.anything()]);
+  });
+
+  it("lists retained worktrees with host-visible paths without deleting task history", async () => {
+    mocks.state.tasks[0] = task("agt_one", {
+      status: "done",
+      worktreePath: "/projects/.yanto-worktrees/project/agt_one"
+    });
+    const { listAgentWorktrees } = await loadService();
+
+    await expect(listAgentWorktrees()).resolves.toEqual([
+      expect.objectContaining({
+        taskId: "agt_one",
+        taskTitle: "agt_one",
+        projectName: "Project",
+        branch: "task/agt_one",
+        hostPath: "~/projects/.yanto-worktrees/project/agt_one",
+        exists: false,
+        removable: true
+      })
+    ]);
+    expect(mocks.state.tasks).toHaveLength(1);
   });
 
   it("does not clear lastError during a manual push outside accepted-run admission", async () => {

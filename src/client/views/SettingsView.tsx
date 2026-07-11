@@ -419,7 +419,7 @@ export const SettingsView = memo(function SettingsView(props: Props) {
           <div className="panel-head">
             <h2>System log</h2>
             <Button variant="secondary" disabled={busy === "system-logs"} onClick={() => void refreshSystemLogs()} icon={<RefreshCw size={16} className={busy === "system-logs" ? "spin" : ""} />}>
-              Refresh
+              {busy === "system-logs" ? "Reloading log" : "Reload log"}
             </Button>
           </div>
           <LogViewer logs={systemLogs || "No system log entries recorded yet."} />

@@ -24,6 +24,17 @@ function mockFetch(body: unknown, options: { status?: number; contentType?: stri
   return globalThis.fetch as ReturnType<typeof vi.fn>;
 }
 
+function jsonResponse(body: unknown, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: status >= 200 && status < 300 ? "OK" : "Error",
+    headers: new Headers({ "content-type": "application/json" }),
+    json: vi.fn().mockResolvedValue(body),
+    text: vi.fn().mockResolvedValue(JSON.stringify(body))
+  };
+}
+
 describe("api client", () => {
   beforeEach(() => {
     (globalThis as { document: { cookie: string } }).document.cookie = "";
@@ -56,6 +67,39 @@ describe("api client", () => {
   });
 
   describe("request method", () => {
+    it("coalesces concurrent reads for the same resource", async () => {
+      const fetchMock = mockFetch([{ id: "p1" }]);
+
+      const [first, second] = await Promise.all([api.projects(), api.projects()]);
+
+      expect(first).toEqual(second);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not reuse a read that started before a mutation", async () => {
+      let resolveStaleRead!: (response: ReturnType<typeof jsonResponse>) => void;
+      const staleResponse = new Promise<ReturnType<typeof jsonResponse>>((resolve) => { resolveStaleRead = resolve; });
+      const fetchMock = vi.fn()
+        .mockImplementationOnce(() => staleResponse)
+        .mockResolvedValueOnce(jsonResponse({ ok: true }))
+        .mockResolvedValueOnce(jsonResponse([{ id: "fresh" }]));
+      globalThis.fetch = fetchMock;
+
+      const staleRead = api.projects();
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      await api.logout();
+      const freshRead = api.projects();
+      resolveStaleRead(jsonResponse([{ id: "stale" }]));
+
+      await expect(freshRead).resolves.toEqual([{ id: "fresh" }]);
+      await expect(staleRead).resolves.toEqual([{ id: "stale" }]);
+      expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
+        "/api/projects",
+        "/api/auth/logout",
+        "/api/projects"
+      ]);
+    });
+
     it("includes credentials: include", async () => {
       const fetchMock = mockFetch([]);
 

@@ -9,6 +9,19 @@ export type CodexLogin = { loginId: string; verificationUrl: string; userCode: s
 export type CodexAccountStatus = { connected: boolean; email: string | null; planType: string | null; login: CodexLogin | null };
 
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
+type CodexAccountSnapshot = Omit<CodexAccountStatus, "login">;
+type AccountReadRequest = { revision: number; promise: Promise<CodexAccountSnapshot> };
+
+const CODEX_ACCOUNT_CACHE_TTL_MS = 30_000;
+const CODEX_LOGIN_CACHE_TTL_MS = 1_000;
+let accountCache: { value: CodexAccountSnapshot; expiresAt: number } | null = null;
+let accountReadRequest: AccountReadRequest | null = null;
+let accountCacheRevision = 0;
+
+export function invalidateCodexAccountStatusCache() {
+  accountCache = null;
+  accountCacheRevision += 1;
+}
 
 class CodexAppServer {
   private child: ChildProcessWithoutNullStreams | null = null;
@@ -33,16 +46,18 @@ class CodexAppServer {
       child.once("exit", (_code, signal) => {
         if (this.child !== child) return;
         this.child = null;
+        invalidateCodexAccountStatusCache();
         const error = new Error(`Codex authentication service stopped${signal ? ` (${signal})` : ""}.`);
         for (const request of this.pending.values()) { clearTimeout(request.timer); request.reject(error); }
         this.pending.clear();
       });
       child.once("error", (error) => {
         if (this.child === child) this.child = null;
+        invalidateCodexAccountStatusCache();
         for (const request of this.pending.values()) { clearTimeout(request.timer); request.reject(error); }
         this.pending.clear();
       });
-      await this.rawRequest("initialize", { clientInfo: { name: "yanto", title: "Yanto", version: "0.9.0" } });
+      await this.rawRequest("initialize", { clientInfo: { name: "yanto", title: "Yanto", version: "0.11.0" } });
     })().finally(() => { this.starting = null; });
     return this.starting;
   }
@@ -59,7 +74,10 @@ class CodexAppServer {
       else request.resolve(message.result);
       return;
     }
-    if (message.method === "account/login/completed" || message.method === "account/updated") this.login = null;
+    if (message.method === "account/login/completed" || message.method === "account/updated") {
+      this.login = null;
+      invalidateCodexAccountStatusCache();
+    }
   }
 
   private rawRequest(method: string, params?: unknown) {
@@ -85,6 +103,7 @@ export async function startCodexLogin() {
   if (server.login) await server.request("account/login/cancel", { loginId: server.login.loginId }).catch(() => undefined);
   const result = await server.request<CodexLogin>("account/login/start", { type: "chatgptDeviceCode" });
   server.login = result;
+  invalidateCodexAccountStatusCache();
   return result;
 }
 
@@ -95,14 +114,49 @@ export async function cancelCodexLogin() {
 }
 
 export async function getCodexAccountStatus(): Promise<CodexAccountStatus> {
-  const result = await server.request<{ account: null | { type: string; email?: string | null; planType?: string } }>("account/read", { refreshToken: false });
-  return { connected: Boolean(result.account), email: result.account?.email ?? null, planType: result.account?.planType ?? null, login: server.login };
+  const now = Date.now();
+  if (accountCache && accountCache.expiresAt > now) return { ...accountCache.value, login: server.login };
+
+  const revision = accountCacheRevision;
+  let read = accountReadRequest?.revision === revision ? accountReadRequest : null;
+  if (!read) {
+    const promise = server.request<{ account: null | { type: string; email?: string | null; planType?: string } }>("account/read", { refreshToken: false })
+      .then((result) => {
+        const value = {
+          connected: Boolean(result.account),
+          email: result.account?.email ?? null,
+          planType: result.account?.planType ?? null
+        };
+        if (accountCacheRevision === revision) {
+          accountCache = {
+            value,
+            expiresAt: Date.now() + (server.login ? CODEX_LOGIN_CACHE_TTL_MS : CODEX_ACCOUNT_CACHE_TTL_MS)
+          };
+        }
+        return value;
+      })
+      .finally(() => {
+        if (accountReadRequest?.promise === promise) accountReadRequest = null;
+      });
+    read = { revision, promise };
+    accountReadRequest = read;
+  }
+
+  const value = await read.promise;
+  if (revision !== accountCacheRevision) return getCodexAccountStatus();
+  return { ...value, login: server.login };
+}
+
+export async function warmCodexAccountStatus() {
+  await getCodexAccountStatus();
 }
 
 export async function logoutCodexAccount() {
+  invalidateCodexAccountStatusCache();
   await server.request("account/logout");
   await clearCodexTaskAuthentication();
   server.login = null;
+  invalidateCodexAccountStatusCache();
 }
 
 export async function listCodexModels() {

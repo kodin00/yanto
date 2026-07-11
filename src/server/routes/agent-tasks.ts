@@ -4,7 +4,7 @@ import { requireAuth } from "../auth.js";
 import { actor, asyncRoute, routeParam, sendStreamEvent, startEventStream } from "../http-utils.js";
 import { recordAuditLog } from "../services/audit.js";
 import { agentEventBus, type AgentLiveEvent } from "../services/agent-events.js";
-import { agentTaskEvents, branchesForProject, cleanupAgentTask, commitAgentTask, createAgentTask, deleteAgentTask, getAgentTask, gitPreviewForTask, listAgentTasks, pushAgentTask, setAgentTaskArchived, startAgentTask, stopAgentTask, updateAgentTask } from "../services/agent-tasks.js";
+import { agentTaskEvents, branchesForProject, cleanupAgentTask, commitAgentTask, createAgentTask, deleteAgentTask, getAgentTask, gitPreviewForTask, listAgentTasks, listAgentWorktrees, pushAgentTask, setAgentTaskArchived, startAgentTask, stopAgentTask, updateAgentTask } from "../services/agent-tasks.js";
 
 const router = Router();
 const taskInput = z.object({
@@ -16,6 +16,15 @@ const taskInput = z.object({
 router.get("/api/agent/tasks", requireAuth, asyncRoute(async (req, res) => {
   const archived = z.enum(["true", "false"]).optional().parse(req.query.archived) === "true";
   res.json(await listAgentTasks(archived));
+}));
+router.get("/api/agent/worktrees", requireAuth, asyncRoute(async (_req, res) => {
+  res.json(await listAgentWorktrees());
+}));
+router.delete("/api/agent/worktrees/:taskId", requireAuth, asyncRoute(async (req, res) => {
+  const taskId = routeParam(req, "taskId");
+  await cleanupAgentTask(taskId, req.query.force === "true");
+  await recordAuditLog({ actor: actor(req), action: "agent_worktree.delete", entityType: "agent_task", entityId: taskId });
+  res.status(204).end();
 }));
 router.post("/api/agent/tasks", requireAuth, asyncRoute(async (req, res) => {
   const task = await createAgentTask(taskInput.parse(req.body));

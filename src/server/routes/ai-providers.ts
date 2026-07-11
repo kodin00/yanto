@@ -20,9 +20,7 @@ const modelInput = z.object({ modelId: z.string().trim().min(1).max(250), displa
 router.get("/api/ai/providers", requireAuth, asyncRoute(async (_req, res) => { res.json(await listAiProviders()); }));
 
 router.get("/api/ai/codex/status", requireAuth, asyncRoute(async (_req, res) => {
-  const status = await getCodexAccountStatus();
-  if (status.connected) await syncCodexProvider([], true);
-  res.json(status);
+  res.json(await getCodexAccountStatus());
 }));
 
 router.post("/api/ai/codex/login/start", requireAuth, asyncRoute(async (req, res) => {

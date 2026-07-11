@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => {
   return {
     getAgentTask: vi.fn(),
     agentTaskEvents: vi.fn(),
+    cleanupAgentTask: vi.fn(),
+    listAgentWorktrees: vi.fn(),
     subscribe: vi.fn((_taskId: string, next: (event: AgentLiveEvent) => void) => {
       listener = next;
       return () => { listener = undefined; };
@@ -25,14 +27,16 @@ vi.mock("../src/server/services/agent-events.js", () => ({ agentEventBus: { subs
 vi.mock("../src/server/services/agent-tasks.js", () => ({
   agentTaskEvents: mocks.agentTaskEvents,
   branchesForProject: vi.fn(),
-  cleanupAgentTask: vi.fn(),
+  cleanupAgentTask: mocks.cleanupAgentTask,
   commitAgentTask: vi.fn(),
   createAgentTask: vi.fn(),
   deleteAgentTask: vi.fn(),
   getAgentTask: mocks.getAgentTask,
   gitPreviewForTask: vi.fn(),
   listAgentTasks: vi.fn(),
+  listAgentWorktrees: mocks.listAgentWorktrees,
   pushAgentTask: vi.fn(),
+  setAgentTaskArchived: vi.fn(),
   startAgentTask: vi.fn(),
   stopAgentTask: vi.fn(),
   updateAgentTask: vi.fn()
@@ -53,6 +57,8 @@ describe("agent task event streaming", () => {
     mocks.resetListener();
     mocks.getAgentTask.mockResolvedValue({ id: "agt_test", status: "running", latestRun: { id: "agr_test" } });
     mocks.agentTaskEvents.mockResolvedValue([]);
+    mocks.cleanupAgentTask.mockResolvedValue(undefined);
+    mocks.listAgentWorktrees.mockResolvedValue([]);
   });
 
   afterEach(() => vi.restoreAllMocks());
@@ -121,6 +127,28 @@ describe("agent task event streaming", () => {
       expect(mocks.agentTaskEvents).toHaveBeenCalledWith("agt_test", "agr_test");
     } finally {
       controller.abort();
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+        server.closeAllConnections();
+      });
+    }
+  });
+
+  it("lists retained worktrees and removes one through the lifecycle service", async () => {
+    mocks.listAgentWorktrees.mockResolvedValueOnce([{ taskId: "agt_test", hostPath: "~/projects/.yanto-worktrees/demo/agt_test", removable: true }]);
+    const server = createApp().listen(0);
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Server did not start.");
+      const base = `http://127.0.0.1:${address.port}`;
+
+      const listed = await fetch(`${base}/api/agent/worktrees`);
+      await expect(listed.json()).resolves.toEqual([{ taskId: "agt_test", hostPath: "~/projects/.yanto-worktrees/demo/agt_test", removable: true }]);
+      const removed = await fetch(`${base}/api/agent/worktrees/agt_test?force=true`, { method: "DELETE" });
+
+      expect(removed.status).toBe(204);
+      expect(mocks.cleanupAgentTask).toHaveBeenCalledWith("agt_test", true);
+    } finally {
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
         server.closeAllConnections();

@@ -1,4 +1,4 @@
-import type { AgentGitPreview, AgentRun, AgentTask, AgentTaskDetail, AiModel, AiProvider, AiProviderProtocol, AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, CodexAccountStatus, ContainerInfo, Deployment, DeploymentNode, FrpClientSetup, FrpOverview, FrpSettings, FrpTunnel, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectBranch, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../../shared/types";
+import type { AgentGitPreview, AgentRun, AgentTask, AgentTaskDetail, AgentTaskWorktree, AiModel, AiProvider, AiProviderProtocol, AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, CodexAccountStatus, ContainerInfo, Deployment, DeploymentNode, FrpClientSetup, FrpOverview, FrpSettings, FrpTunnel, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectBranch, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -78,7 +78,12 @@ function getCsrfToken(): string {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+type InFlightGetRequest = { generation: number; promise: Promise<unknown> };
+
+const inFlightGetRequests = new Map<string, InFlightGetRequest>();
+let requestGeneration = 0;
+
+async function performRequest<T>(path: string, options: RequestInit): Promise<T> {
   const csrfToken = getCsrfToken();
   const response = await fetch(path, {
     credentials: "include",
@@ -104,6 +109,27 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     return (await response.text()) as T;
   }
   return response.json() as Promise<T>;
+}
+
+function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const method = (options.method ?? "GET").toUpperCase();
+  if (method !== "GET") {
+    // A read that began before a mutation is not a valid source for the
+    // mutation's follow-up refresh, even when both requests use the same URL.
+    requestGeneration += 1;
+    inFlightGetRequests.clear();
+    return performRequest<T>(path, options);
+  }
+
+  const existing = inFlightGetRequests.get(path);
+  if (existing?.generation === requestGeneration) return existing.promise as Promise<T>;
+
+  const generation = requestGeneration;
+  const pending = performRequest<T>(path, options).finally(() => {
+    if (inFlightGetRequests.get(path)?.promise === pending) inFlightGetRequests.delete(path);
+  });
+  inFlightGetRequests.set(path, { generation, promise: pending });
+  return pending;
 }
 
 function normalizeProjectEnv(payload: unknown): ProjectEnvVariable[] {
@@ -205,6 +231,8 @@ export const api = {
     request<AiModel>(`/api/ai/models/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
   deleteAiModel: (id: string) => request<void>(`/api/ai/models/${id}`, { method: "DELETE" }),
   agentTasks: (archived = false) => request<AgentTask[]>(`/api/agent/tasks${archived ? "?archived=true" : ""}`),
+  agentTaskWorktrees: () => request<AgentTaskWorktree[]>("/api/agent/worktrees"),
+  removeAgentTaskWorktree: (taskId: string, force = false) => request<void>(`/api/agent/worktrees/${taskId}${force ? "?force=true" : ""}`, { method: "DELETE" }),
   agentTask: (id: string) => request<AgentTaskDetail>(`/api/agent/tasks/${id}`),
   createAgentTask: (payload: { projectId: string; modelId: string; title: string; prompt: string; sourceBranch: string; taskBranch: string; resumeExistingBranch: boolean; autoCommit: boolean; autoPush: boolean; autoCleanup: boolean }) =>
     request<AgentTaskDetail>("/api/agent/tasks", { method: "POST", body: JSON.stringify(payload) }),

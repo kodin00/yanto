@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { config } from "../config.js";
 import { HttpError } from "../http-utils.js";
@@ -12,7 +14,7 @@ export const agentToolDefinitions = [
   { name: "read_file", description: "Read a UTF-8 text file with optional one-based line bounds.", input_schema: { type: "object", properties: { path: { type: "string" }, start_line: { type: "integer", minimum: 1 }, end_line: { type: "integer", minimum: 1 } }, required: ["path"], additionalProperties: false } },
   { name: "write_file", description: "Create or replace a UTF-8 text file inside the workspace.", input_schema: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"], additionalProperties: false } },
   { name: "replace_text", description: "Replace one exact text occurrence in a UTF-8 file. Fails if the old text is absent or occurs more than once.", input_schema: { type: "object", properties: { path: { type: "string" }, old_text: { type: "string" }, new_text: { type: "string" } }, required: ["path", "old_text", "new_text"], additionalProperties: false } },
-  { name: "run_command", description: "Run a non-interactive shell command in the isolated task container at /workspace. Git credentials and Docker are unavailable.", input_schema: { type: "object", properties: { command: { type: "string" }, timeout_ms: { type: "integer", minimum: 1000, maximum: 600000 } }, required: ["command"], additionalProperties: false } }
+  { name: "run_command", description: "Run a non-interactive shell command with the task worktree as its working directory. Use repository-local paths only.", input_schema: { type: "object", properties: { command: { type: "string" }, timeout_ms: { type: "integer", minimum: 1000, maximum: 600000 } }, required: ["command"], additionalProperties: false } }
 ] as const;
 
 function stringArg(input: Record<string, unknown>, key: string, required = true) {
@@ -22,14 +24,15 @@ function stringArg(input: Record<string, unknown>, key: string, required = true)
 }
 
 async function safePath(root: string, candidate: string, forWrite = false) {
-  const canonicalRoot = await fs.realpath(root);
+  const resolvedRoot = path.resolve(root);
+  const canonicalRoot = await fs.realpath(resolvedRoot);
   const relative = candidate.trim().replace(/^\/+/, "") || ".";
   if (relative.split(/[\\/]/).includes(".git")) throw new HttpError(400, "Direct access to Git metadata is not allowed.");
-  const resolved = path.resolve(root, relative);
-  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) throw new HttpError(400, "Path is outside the task workspace.");
+  const resolved = path.resolve(resolvedRoot, relative);
+  if (resolved !== resolvedRoot && !resolved.startsWith(`${resolvedRoot}${path.sep}`)) throw new HttpError(400, "Path is outside the task workspace.");
   const exists = await fs.lstat(resolved).then(() => true).catch(() => false);
   let checkPath = forWrite && !exists ? path.dirname(resolved) : resolved;
-  while (forWrite && !await fs.lstat(checkPath).then(() => true).catch(() => false) && checkPath !== root) checkPath = path.dirname(checkPath);
+  while (forWrite && !await fs.lstat(checkPath).then(() => true).catch(() => false) && checkPath !== resolvedRoot) checkPath = path.dirname(checkPath);
   const real = await fs.realpath(checkPath);
   if (real !== canonicalRoot && !real.startsWith(`${canonicalRoot}${path.sep}`)) throw new HttpError(400, "Symlink resolves outside the task workspace.");
   return resolved;
@@ -79,67 +82,50 @@ async function searchFiles(root: string, relativePath: string, query: string) {
   return matches.join("\n") || "No matches found.";
 }
 
-export async function resolveHostMountPath(containerPath: string) {
-  const hostname = process.env.HOSTNAME;
-  if (!hostname) return containerPath;
-  const inspected = await runCommand("docker", ["inspect", hostname, "--format", "{{json .Mounts}}"], { maxOutputBytes: 256 * 1024, timeoutMs: 10_000 });
-  if (inspected.exitCode !== 0) return containerPath;
-  try {
-    const mounts = JSON.parse(inspected.output) as Array<{ Source: string; Destination: string }>;
-    const match = mounts.filter((mount) => containerPath === mount.Destination || containerPath.startsWith(`${mount.Destination}/`)).sort((a, b) => b.Destination.length - a.Destination.length)[0];
-    return match ? path.join(match.Source, path.relative(match.Destination, containerPath)) : containerPath;
-  } catch {
-    return containerPath;
-  }
+function workspaceEnvironment(worktreePath: string, homePath: string): NodeJS.ProcessEnv {
+  const copy = (name: string) => process.env[name] ? { [name]: process.env[name] } : {};
+  return {
+    ...copy("PATH"),
+    ...copy("LANG"),
+    ...copy("LC_ALL"),
+    ...copy("TERM"),
+    ...copy("TMPDIR"),
+    ...copy("SSL_CERT_FILE"),
+    ...copy("SSL_CERT_DIR"),
+    HOME: homePath,
+    CI: "true",
+    DOCKER_HOST: "unix:///dev/null",
+    YANTO_AGENT_WORKSPACE: worktreePath
+  };
 }
 
-export class AgentSandbox {
-  readonly containerName: string;
+/** Host-native tools scoped to one Yanto-managed task worktree. */
+export class AgentWorkspace {
   private started = false;
-  private createAttempted = false;
   private launchPromise?: Promise<void>;
   private cleanupPromise?: Promise<void>;
-  private readonly taskId: string;
+  private activeCommand?: Promise<Awaited<ReturnType<typeof runCommand>>>;
   private readonly signal: AbortSignal;
-  private readonly abortListener: () => void;
+  private readonly homePath: string;
 
   constructor(
-    private readonly runId: string,
     private readonly worktreePath: string,
-    private readonly image: string,
-    options: { taskId?: string; signal?: AbortSignal } = {}
+    options: { signal?: AbortSignal } = {}
   ) {
-    this.containerName = `yanto-agent-${runId.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 48)}`;
-    this.taskId = options.taskId ?? runId;
     this.signal = options.signal ?? new AbortController().signal;
-    this.abortListener = () => { void this.stop().catch(() => undefined); };
-    this.signal.addEventListener("abort", this.abortListener, { once: true });
+    const digest = createHash("sha256").update(path.resolve(worktreePath)).digest("hex").slice(0, 32);
+    this.homePath = path.join(os.tmpdir(), "yanto-agent-homes", digest);
   }
 
   async start() {
     if (this.launchPromise) return this.launchPromise;
     this.launchPromise = (async () => {
       this.signal.throwIfAborted();
-      const hostPath = await resolveHostMountPath(this.worktreePath);
+      const stat = await fs.stat(await fs.realpath(this.worktreePath));
+      if (!stat.isDirectory()) throw new Error("Task worktree is not a directory.");
+      await fs.mkdir(this.homePath, { recursive: true, mode: 0o700 });
       this.signal.throwIfAborted();
-      this.createAttempted = true;
-      const created = await runCommand("docker", [
-        "create", "--name", this.containerName,
-        "--label", "com.yanto.agent=true",
-        "--label", `com.yanto.agent.run-id=${this.runId}`,
-        "--label", `com.yanto.agent.task-id=${this.taskId}`,
-        "--workdir", "/workspace", "--network", "bridge",
-        "--memory", "4g", "--cpus", "2", "--pids-limit", "512",
-        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-        "-v", `${hostPath}:/workspace`,
-        "--entrypoint", "sh", this.image, "-c", "while :; do sleep 3600; done"
-      ], { timeoutMs: 10 * 60 * 1000, maxOutputBytes: 512 * 1024 });
-      if (created.exitCode !== 0) throw new Error(created.output.trim() || `Unable to create agent image ${this.image}.`);
-      this.signal.throwIfAborted();
-      const started = await runCommand("docker", ["start", this.containerName], { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 });
-      if (started.exitCode !== 0) throw new Error(started.output.trim() || `Unable to start agent image ${this.image}.`);
       this.started = true;
-      this.signal.throwIfAborted();
     })();
     return this.launchPromise;
   }
@@ -147,14 +133,10 @@ export class AgentSandbox {
   async stop() {
     if (this.cleanupPromise) return this.cleanupPromise;
     this.cleanupPromise = (async () => {
-      this.signal.removeEventListener("abort", this.abortListener);
       await this.launchPromise?.catch(() => undefined);
+      await this.activeCommand?.catch(() => undefined);
       this.started = false;
-      if (!this.createAttempted) return;
-      const removed = await runCommand("docker", ["rm", "-f", this.containerName], { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 });
-      if (removed.exitCode !== 0 && !removed.output.toLowerCase().includes("no such container")) {
-        throw new Error(removed.output.trim() || `Unable to remove agent container ${this.containerName}.`);
-      }
+      await fs.rm(this.homePath, { recursive: true, force: true });
     })();
     return this.cleanupPromise;
   }
@@ -190,12 +172,24 @@ export class AgentSandbox {
         return `Updated ${path.relative(this.worktreePath, file)}.`;
       }
       case "run_command": {
-        if (!this.started) throw new Error("Task sandbox is not running.");
+        if (!this.started) throw new Error("Task workspace is not running.");
+        this.signal.throwIfAborted();
+        const cwd = await safePath(this.worktreePath, ".");
         const timeoutMs = Math.min(config.agentCommandTimeoutMs, Math.max(1_000, Number(input.timeout_ms) || config.agentCommandTimeoutMs));
-        const result = await runCommand("docker", ["exec", this.containerName, "sh", "-lc", stringArg(input, "command")], {
+        const command = runCommand("sh", ["-lc", stringArg(input, "command")], {
+          cwd,
+          env: workspaceEnvironment(cwd, this.homePath),
+          inheritEnv: false,
+          signal: this.signal,
+          killProcessGroup: true,
           timeoutMs,
           maxOutputBytes: config.agentCommandOutputMaxBytes
         });
+        this.activeCommand = command;
+        const result = await command.finally(() => {
+          if (this.activeCommand === command) this.activeCommand = undefined;
+        });
+        this.signal.throwIfAborted();
         return `exit_code=${result.exitCode}${result.timedOut ? " timed_out=true" : ""}${result.truncated ? " truncated=true" : ""}\n${result.output}`;
       }
       default:

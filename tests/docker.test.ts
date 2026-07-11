@@ -6,11 +6,59 @@ vi.mock("../src/server/services/commands.js", () => ({
   runCommand
 }));
 
-import { cleanupDocker, listContainers, normalizeDockerCreatedAt, previewDockerCleanup, restartContainer, startContainer, stopContainer } from "../src/server/services/docker.js";
+import { cleanupDocker, invalidateContainerCache, listContainers, normalizeDockerCreatedAt, previewDockerCleanup, restartContainer, startContainer, stopContainer } from "../src/server/services/docker.js";
 
 describe("docker helpers", () => {
   beforeEach(() => {
     runCommand.mockReset();
+    invalidateContainerCache();
+  });
+
+  it("shares one Docker read across concurrent callers", async () => {
+    runCommand.mockResolvedValue({ exitCode: 0, output: "" });
+
+    const [first, second] = await Promise.all([listContainers(), listContainers()]);
+
+    expect(first).toEqual(second);
+    expect(runCommand.mock.calls).toEqual([
+      ["docker", ["ps", "-a", "--format", "{{json .}}"]],
+      ["docker", ["stats", "--no-stream", "--format", "{{json .}}"]]
+    ]);
+  });
+
+  it("re-reads Docker when the in-flight snapshot is invalidated", async () => {
+    let resolveStalePs!: (value: { exitCode: number; output: string }) => void;
+    const stalePs = new Promise<{ exitCode: number; output: string }>((resolve) => { resolveStalePs = resolve; });
+    const dockerRow = (id: string, name: string) => JSON.stringify({
+      ID: id,
+      Names: name,
+      Image: "alpine:latest",
+      Status: "Up",
+      State: "running",
+      Ports: "",
+      CreatedAt: "2026-01-01 00:00:00 +0000 UTC",
+      Labels: ""
+    });
+    runCommand
+      .mockImplementationOnce(() => stalePs)
+      .mockResolvedValueOnce({ exitCode: 0, output: "" })
+      .mockResolvedValueOnce({ exitCode: 0, output: dockerRow("fresh-id", "fresh") })
+      .mockResolvedValueOnce({ exitCode: 0, output: "" });
+
+    const listing = listContainers();
+    await vi.waitFor(() => expect(runCommand).toHaveBeenCalledTimes(1));
+    invalidateContainerCache();
+    resolveStalePs({ exitCode: 0, output: dockerRow("stale-id", "stale") });
+
+    await expect(listing).resolves.toEqual([
+      expect.objectContaining({ id: "fresh-id", name: "fresh" })
+    ]);
+    expect(runCommand.mock.calls).toEqual([
+      ["docker", ["ps", "-a", "--format", "{{json .}}"]],
+      ["docker", ["stats", "--no-stream", "--format", "{{json .}}"]],
+      ["docker", ["ps", "-a", "--format", "{{json .}}"]],
+      ["docker", ["stats", "--no-stream", "--format", "{{json .}}"]]
+    ]);
   });
 
   it("runs cleanup commands in the protected order and returns a command transcript", async () => {

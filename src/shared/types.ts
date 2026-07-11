@@ -133,6 +133,22 @@ export type AgentTaskDetail = AgentTask & {
   events: AgentEvent[];
 };
 
+export type AgentTaskWorktree = {
+  taskId: string;
+  taskTitle: string;
+  projectId: string;
+  projectName: string;
+  status: AgentTaskStatus;
+  path: string;
+  hostPath: string;
+  branch: string;
+  updatedAt: string;
+  finishedAt: string | null;
+  archivedAt: string | null;
+  exists: boolean;
+  removable: boolean;
+};
+
 export type AgentGitFile = {
   path: string;
   status: string;

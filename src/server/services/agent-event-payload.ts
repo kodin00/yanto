@@ -1,5 +1,5 @@
-const persistedToolEventKinds = new Set(["tool_call", "tool_result", "reasoning", "file_change"]);
-const retainedScalarKeys = ["id", "name", "type", "command", "status", "exitCode", "isError", "server", "tool", "query", "error", "path"];
+const persistedToolEventKinds = new Set(["tool_call", "tool_update", "tool_result", "reasoning", "file_change"]);
+const retainedScalarKeys = ["id", "name", "type", "phase", "command", "status", "exitCode", "isError", "server", "tool", "query", "error", "path"];
 const detailKeys = ["output", "input", "text", "changes", "items", "message"];
 
 function byteLength(value: string) {

@@ -46,13 +46,13 @@ The **AI Tasks** tab adds a single-admin, Git-backed coding workspace:
 
 - Sign in with a ChatGPT/Codex account using the device-code flow, or register OpenAI Responses, OpenAI-compatible Chat Completions, and Anthropic Messages providers. API keys are encrypted at rest; model IDs can be fetched or entered manually.
 - Create a task from a registered Git project, choose the freshly fetched source branch, and create or explicitly resume a task branch.
-- Each task gets a real Git worktree under `/projects/.yanto-worktrees`. The project's deployment checkout is never switched by an agent task.
-- Model tools are limited to scoped file operations and shell commands in a disposable Docker container. The sandbox receives only the task worktree, with no Docker socket, parent Git metadata, or Git credentials.
-- Review streamed activity, continue the persistent task conversation, inspect/select changed files, commit, push, and clean the worktree. Auto-commit, auto-push, and auto-clean are independent per-task switches and default off.
+- Each task gets a real Git worktree under `/projects/.yanto-worktrees` (host-visible at `~/projects/.yanto-worktrees` by default). The project's deployment checkout is never switched by an agent task.
+- Codex and API-key provider tools run directly in Yanto's runtime with the task worktree as their working directory; Yanto no longer launches a per-task Docker container or Codex playground. File tools reject traversal, Git metadata, and symlink escapes, and shell tools receive a stripped environment.
+- Review streamed tool activity, continue the persistent task conversation, inspect/select changed files, commit, push, and clean the worktree. Retained worktrees have their own manager so completed-task worktrees can be removed manually without deleting task history. Auto-commit, auto-push, and auto-clean are independent per-task switches and default off.
 
-AI tasks require a project with a Git URL and run on the local master node. Set an optional **Agent runner image** on the project when its tests require a toolchain beyond the bundled Node.js, Python, Git, and ripgrep runtime.
+AI tasks require a project with a Git URL and run on the local master node using the bundled Node.js, Python, Git, and ripgrep toolchain. Host-native agent execution is not an OS security boundary, so run tasks only against repositories and instructions you trust.
 
-Codex account sessions are stored per task in the persistent `yanto_codex` volume. Open **AI Tasks → Providers → Sign in with Codex**, follow the verification link, then refresh the available models. Before the first Codex-account run for an image, Yanto probes the image's real Codex permission profile with fake account/session sentinels. The run is refused if filesystem or network isolation cannot be verified. Task commands can write only the worktree, have direct network access disabled, and cannot read the mounted task Codex home. Git commit and push credentials remain owned by Yanto outside that container.
+Codex account sessions are stored per task in the persistent `yanto_codex` volume. Open **AI Tasks → Providers → Sign in with Codex** and follow the verification link. Codex runs through the official SDK with the task worktree as `workingDirectory`, a task-local `CODEX_HOME`, and `danger-full-access` mode so it does not invoke the Linux `bwrap` playground that fails in restricted Yanto containers. Git commit, push, cleanup, and task history remain owned by Yanto.
 
 ## Multi-Node Runtime
 
@@ -105,6 +105,8 @@ Important environment variables:
 - `ADMIN_PASSWORD`
 - `PROJECTS_ROOT` inside the container, default `/projects`
 - `HOST_PROJECTS_ROOT` for display, default `~/projects`
+- `AGENT_WORKTREES_ROOT` inside the app, default `${PROJECTS_ROOT}/.yanto-worktrees`
+- `HOST_AGENT_WORKTREES_ROOT` host-visible worktree path for display, default `${HOST_PROJECTS_ROOT}/.yanto-worktrees`
 - `SSH_SOURCE_DIR` host SSH folder mounted read-only into the app, for example `/home/ubuntu/.ssh`
 - `SSH_PRIVATE_KEY_PATH` private key path inside the app container, default `/root/.ssh/id_ed25519`
 - `SSH_KEYS_DIR`, default `/data/ssh`
@@ -118,12 +120,11 @@ Important environment variables:
 - `COMMAND_TIMEOUT_MS`, default `3600000` (one hour) for Git, Docker, and backup helper commands
 - `COMMAND_OUTPUT_MAX_BYTES`, default `2097152`, caps in-memory command output while still streaming deployment logs
 - `DEPLOYMENT_LOG_MAX_CHARS`, default `500000`, keeps recent deployment logs bounded in Postgres
-- `AGENT_DEFAULT_IMAGE`, default `yanto:local`, used when a project has no agent runner image
 - `CODEX_HOME`, default `/data/codex`, persistent Codex account and conversation storage
 - `AGENT_MAX_CONCURRENT_RUNS`, default `2`
 - `AGENT_MAX_TURNS`, default `40` provider/tool iterations per run
 - `AGENT_RUN_TIMEOUT_MS`, default `3600000`
-- `AGENT_COMMAND_TIMEOUT_MS`, default `600000` for each sandbox shell command
+- `AGENT_COMMAND_TIMEOUT_MS`, default `600000` for each task shell command
 - `AGENT_COMMAND_OUTPUT_MAX_BYTES`, default `524288` per tool result
 - `FRP_BIND_PORT`, default `7000`, is the public FRPC control port
 - `FRP_PORT_START` and `FRP_PORT_END`, defaults `25560` and `25600`, define the published TCP/UDP forwarding range
@@ -234,12 +235,6 @@ npm run db:push
 npm run typecheck
 npm test
 npm run lint
-```
-
-The real Codex runner-image isolation probe requires a running Docker daemon and a built agent image, so it is opt-in for local/CI verification:
-
-```bash
-YANTO_RUN_CODEX_SANDBOX_INTEGRATION=1 AGENT_DEFAULT_IMAGE=yanto:local npm run test:run -- tests/codex-sandbox-integration.test.ts
 ```
 
 ## GitHub Actions Deploy

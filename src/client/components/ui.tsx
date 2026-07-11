@@ -60,17 +60,31 @@ export function TextAreaField({
   label,
   value,
   onChange,
-  placeholder
+  placeholder,
+  compact = false,
+  autoGrow = false,
+  disabled = false
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
+  compact?: boolean;
+  autoGrow?: boolean;
+  disabled?: boolean;
 }) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (!autoGrow || !ref.current) return;
+    ref.current.style.height = "auto";
+    ref.current.style.height = `${ref.current.scrollHeight}px`;
+  }, [autoGrow, value]);
+
   return (
-    <label className="field text-area-field">
+    <label className={`field text-area-field ${compact ? "compact" : ""} ${autoGrow ? "auto-grow" : ""}`}>
       <span>{label}</span>
-      <textarea value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} spellCheck={false} />
+      <textarea ref={ref} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} spellCheck={false} disabled={disabled} rows={compact ? 1 : undefined} />
     </label>
   );
 }
@@ -105,8 +119,12 @@ export function CustomSelect<T extends string>({
   placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const ref = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const menuId = useId();
+  const labelId = useId();
 
   useEffect(() => {
     const close = (event: MouseEvent) => {
@@ -118,23 +136,45 @@ export function CustomSelect<T extends string>({
     return () => window.removeEventListener("mousedown", close);
   }, []);
 
-  const selected = options.find((option) => option.value === value) ?? options[0];
+  const selectedIndex = options.findIndex((option) => option.value === value);
+  const selected = options[selectedIndex] ?? options[0];
   const unavailable = disabled || options.length === 0;
 
   useEffect(() => {
     if (unavailable) setOpen(false);
   }, [unavailable]);
 
+  useEffect(() => {
+    if (!open) return;
+    const nextIndex = selectedIndex >= 0 ? selectedIndex : 0;
+    setActiveIndex(nextIndex);
+    const frame = window.requestAnimationFrame(() => optionRefs.current[nextIndex]?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [open, selectedIndex]);
+
+  const focusOption = (index: number) => {
+    if (!options.length) return;
+    const wrapped = (index + options.length) % options.length;
+    setActiveIndex(wrapped);
+    optionRefs.current[wrapped]?.focus();
+  };
+
+  const closeAndFocus = () => {
+    setOpen(false);
+    window.requestAnimationFrame(() => triggerRef.current?.focus());
+  };
+
   return (
     <div className="field custom-select" ref={ref}>
-      <span>{label}</span>
+      <span id={labelId}>{label}</span>
       <button
+        ref={triggerRef}
         type="button"
         className="select-trigger"
         onClick={() => setOpen((current) => !current)}
         onKeyDown={(event) => {
-          if (event.key === "Escape") setOpen(false);
-          if ((event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") && !open) {
+          if (event.key === "Escape") closeAndFocus();
+          if ((event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Enter" || event.key === " ") && !open) {
             event.preventDefault();
             setOpen(true);
           }
@@ -142,23 +182,39 @@ export function CustomSelect<T extends string>({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={menuId}
+        aria-labelledby={labelId}
         disabled={unavailable}
       >
         <span>{selected?.label ?? placeholder}</span>
-        <ChevronDown size={16} />
+        <ChevronDown className="select-chevron" size={16} />
       </button>
       {open ? (
-        <div className="select-menu" id={menuId} role="listbox" aria-label={label}>
-          {options.map((option) => (
+        <div
+          className="select-menu"
+          id={menuId}
+          role="listbox"
+          aria-labelledby={labelId}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown") { event.preventDefault(); focusOption(activeIndex + 1); }
+            if (event.key === "ArrowUp") { event.preventDefault(); focusOption(activeIndex - 1); }
+            if (event.key === "Home") { event.preventDefault(); focusOption(0); }
+            if (event.key === "End") { event.preventDefault(); focusOption(options.length - 1); }
+            if (event.key === "Escape") { event.preventDefault(); closeAndFocus(); }
+            if (event.key === "Tab") setOpen(false);
+          }}
+        >
+          {options.map((option, index) => (
             <button
+              ref={(element) => { optionRefs.current[index] = element; }}
               type="button"
               key={option.value}
               className={option.value === value ? "selected" : ""}
               role="option"
               aria-selected={option.value === value}
+              tabIndex={index === activeIndex ? 0 : -1}
               onClick={() => {
                 onChange(option.value);
-                setOpen(false);
+                closeAndFocus();
               }}
             >
               <span>{option.label}</span>

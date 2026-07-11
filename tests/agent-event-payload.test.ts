@@ -15,4 +15,10 @@ describe("persisted agent event payloads", () => {
     const payload = { assistantText: "x".repeat(2_000), status: "succeeded" };
     expect(compactPersistedAgentEvent("run_finished", payload, 128)).toBe(payload);
   });
+
+  it("caps incremental tool updates", () => {
+    const compact = compactPersistedAgentEvent("tool_update", { id: "call_2", status: "in_progress", output: "x".repeat(20_000) }, 1_024);
+    expect(Buffer.byteLength(JSON.stringify(compact))).toBeLessThanOrEqual(1_024);
+    expect(compact).toMatchObject({ id: "call_2", status: "in_progress", truncated: true });
+  });
 });

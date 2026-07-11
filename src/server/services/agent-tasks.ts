@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, ne } from "drizzle-orm";
+import path from "node:path";
 import { db } from "../db/index.js";
 import { agentEvents, agentMessages, agentRuns, agentTasks, aiModels, aiProviders, projects, type AgentTaskRow } from "../db/schema.js";
 import { config } from "../config.js";
@@ -6,13 +7,14 @@ import { HttpError } from "../http-utils.js";
 import { logger } from "../logger.js";
 import { createId } from "./tokens.js";
 import { resolveProviderModel } from "./ai-providers.js";
-import { AgentSandbox } from "./agent-tools.js";
+import { AgentWorkspace } from "./agent-tools.js";
 import { runAgentProvider } from "./agent-provider-runner.js";
 import { runCodexAccount } from "./codex-account-runner.js";
 import { compactPersistedAgentEvent } from "./agent-event-payload.js";
 import { agentEventBus } from "./agent-events.js";
 import { agentProjectLifecycleKey, agentTaskLifecycleKey, withAgentLifecycleLock } from "./agent-lifecycle.js";
 import { cleanupTaskWorktree, commitTaskWorktree, fetchProjectBranches, prepareTaskWorktree, pushTaskWorktree, taskGitPreview } from "./agent-worktrees.js";
+import { pathExists } from "./paths.js";
 import { runCommand } from "./commands.js";
 
 type CreateAgentTaskInput = {
@@ -111,10 +113,52 @@ export async function archiveCompletedAgentTasks(now = new Date()) {
 }
 
 export async function listAgentTasks(archived = false) {
-  await archiveCompletedAgentTasks();
   const rows = await taskRows(undefined, archived);
-  const runs = rows.length ? await db.select().from(agentRuns).where(inArray(agentRuns.taskId, rows.map((row) => row.task.id))).orderBy(desc(agentRuns.startedAt)) : [];
-  return rows.map((row) => taskView(row, runs.find((run) => run.taskId === row.task.id) ?? null));
+  const runs = rows.length
+    ? await db.selectDistinctOn([agentRuns.taskId]).from(agentRuns)
+      .where(inArray(agentRuns.taskId, rows.map((row) => row.task.id)))
+      .orderBy(agentRuns.taskId, desc(agentRuns.startedAt), desc(agentRuns.id))
+    : [];
+  const latestRunByTask = new Map(runs.map((run) => [run.taskId, run]));
+  return rows.map((row) => taskView(row, latestRunByTask.get(row.task.id) ?? null));
+}
+
+function displayWorktreePath(worktreePath: string) {
+  for (const [internalRoot, hostRoot] of [
+    [config.agentWorktreesRoot, config.hostAgentWorktreesRoot],
+    [config.projectsRoot, config.hostProjectsRoot]
+  ] as const) {
+    const relative = path.relative(internalRoot, worktreePath);
+    if (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`)) {
+      return path.join(hostRoot, relative);
+    }
+  }
+  return worktreePath;
+}
+
+export async function listAgentWorktrees() {
+  const rows = await db.select({
+    task: agentTasks,
+    projectName: projects.name
+  }).from(agentTasks)
+    .innerJoin(projects, eq(agentTasks.projectId, projects.id))
+    .where(isNotNull(agentTasks.worktreePath))
+    .orderBy(desc(agentTasks.updatedAt));
+  return Promise.all(rows.map(async ({ task, projectName }) => ({
+    taskId: task.id,
+    taskTitle: task.title,
+    projectId: task.projectId,
+    projectName,
+    status: task.status,
+    path: task.worktreePath!,
+    hostPath: displayWorktreePath(task.worktreePath!),
+    branch: task.taskBranch,
+    updatedAt: task.updatedAt,
+    finishedAt: task.finishedAt,
+    archivedAt: task.archivedAt,
+    exists: await pathExists(task.worktreePath!),
+    removable: task.status !== "running"
+  })));
 }
 
 export async function getAgentTask(id: string) {
@@ -326,7 +370,7 @@ async function executeAgentRun(
   resolved: Awaited<ReturnType<typeof resolveProviderModel>>
 ) {
   const { taskId, runId, controller } = active;
-  let sandbox: AgentSandbox | undefined;
+  let workspace: AgentWorkspace | undefined;
   let assistantText = "";
   const timeout = setTimeout(() => controller.abort(new Error("Agent run timed out.")), config.agentRunTimeoutMs);
   timeout.unref();
@@ -346,7 +390,7 @@ async function executeAgentRun(
 
     const messages = detail.messages.slice(-50).map((message) => ({ role: message.role === "assistant" ? "assistant" as const : "user" as const, content: message.content }));
     if (resolved.provider.protocol === "codex_account") {
-      await recordEvent(taskId, runId, "sandbox_started", { image: config.agentDefaultImage, runtime: "codex" });
+      await recordEvent(taskId, runId, "workspace_started", { runtime: "codex", mode: "host" });
       const lastUserMessage = [...detail.messages].reverse().find((message) => message.role === "user")?.content ?? detail.prompt;
       const result = await runCodexAccount({
         runId, taskId, worktreePath: prepared.worktreePath, prompt: lastUserMessage, model: resolved.model.modelId,
@@ -362,25 +406,25 @@ async function executeAgentRun(
       assistantText = result.assistantText;
       if (result.threadId) await db.update(agentTasks).set({ codexThreadId: result.threadId, updatedAt: new Date() }).where(eq(agentTasks.id, taskId));
     } else {
-      sandbox = new AgentSandbox(runId, prepared.worktreePath, project.agentImage.trim() || config.agentDefaultImage, { taskId, signal: controller.signal });
-      registerRunnerStop(active, () => sandbox!.stop());
+      workspace = new AgentWorkspace(prepared.worktreePath, { signal: controller.signal });
+      registerRunnerStop(active, () => workspace!.stop());
       try {
         controller.signal.throwIfAborted();
-        await sandbox.start();
+        await workspace.start();
         controller.signal.throwIfAborted();
-        await recordEvent(taskId, runId, "sandbox_started", { image: project.agentImage.trim() || config.agentDefaultImage });
+        await recordEvent(taskId, runId, "workspace_started", { runtime: "provider", mode: "host" });
         assistantText = await runAgentProvider({
           protocol: resolved.provider.protocol as never,
           baseUrl: resolved.provider.baseUrl,
           apiKey: resolved.apiKey,
           model: resolved.model.modelId,
           messages,
-          sandbox,
+          workspace,
           signal: controller.signal,
           event: (kind, payload) => recordEvent(taskId, runId, kind, payload)
         });
       } finally {
-        await sandbox.stop();
+        await workspace.stop();
       }
     }
     controller.signal.throwIfAborted();
@@ -638,11 +682,14 @@ export async function cleanupAgentTask(id: string, force = false) {
 export async function recoverInterruptedAgentRuns() {
   const running = await db.select().from(agentRuns).where(eq(agentRuns.status, "running"));
   if (!running.length) return 0;
+  // New runs are host-native, but an upgrade can leave an owned v0.10 task
+  // container behind. Remove only containers carrying Yanto's run labels
+  // before releasing the persisted ownership lock.
   const listed = await runCommand("docker", [
     "ps", "-a", "--filter", "label=com.yanto.agent=true",
     "--format", "{{.ID}}\t{{.Label \"com.yanto.agent.run-id\"}}"
   ], { timeoutMs: 30_000, maxOutputBytes: 512 * 1024 });
-  if (listed.exitCode !== 0) throw new Error(listed.output.trim() || "Unable to list interrupted agent containers.");
+  if (listed.exitCode !== 0) throw new Error(listed.output.trim() || "Unable to list interrupted legacy agent containers.");
 
   const containersByRun = new Map<string, string[]>();
   for (const line of listed.output.split("\n")) {
@@ -659,16 +706,12 @@ export async function recoverInterruptedAgentRuns() {
     for (const containerId of containersByRun.get(run.id) ?? []) {
       const removed = await runCommand("docker", ["rm", "-f", containerId], { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 });
       if (removed.exitCode !== 0 && !removed.output.toLowerCase().includes("no such container")) {
-        cleanupError = removed.output.trim() || `Unable to remove interrupted agent container ${containerId}.`;
+        cleanupError = removed.output.trim() || `Unable to remove interrupted legacy agent container ${containerId}.`;
         break;
       }
     }
+    if (cleanupError) throw new Error(`Unable to recover interrupted agent run ${run.id}: ${cleanupError}`);
 
-    if (cleanupError) {
-      // Ownership is still uncertain. Keep the task/run locked as running and
-      // fail startup so a second runner cannot be admitted over this worktree.
-      throw new Error(`Unable to recover interrupted agent run ${run.id}: ${cleanupError}`);
-    }
     const message = "Yanto restarted while the agent run was active.";
     const now = new Date();
     await db.transaction(async (tx) => {

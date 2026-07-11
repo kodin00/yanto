@@ -70,7 +70,7 @@ export async function removeProjectDirectory(folderName: string) {
 
 export async function removeProjectWorktreeDirectory(folderName: string) {
   const safeName = normalizeFolderName(folderName);
-  const worktreesRoot = path.resolve(config.projectsRoot, ".yanto-worktrees");
+  const worktreesRoot = config.agentWorktreesRoot;
   const target = path.resolve(worktreesRoot, safeName);
   if (!target.startsWith(`${worktreesRoot}${path.sep}`)) {
     throw new Error("Project worktree path must stay inside the configured worktree root.");

@@ -11,6 +11,9 @@ export type CommandResult = {
 export type RunCommandOptions = {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  inheritEnv?: boolean;
+  signal?: AbortSignal;
+  killProcessGroup?: boolean;
   timeoutMs?: number;
   maxOutputBytes?: number;
   onData?: (chunk: string) => void;
@@ -22,10 +25,8 @@ export function runCommand(command: string, args: string[], options: RunCommandO
     const maxOutputBytes = options.maxOutputBytes ?? config.commandOutputMaxBytes;
     const child = spawn(command, args, {
       cwd: options.cwd,
-      env: {
-        ...process.env,
-        ...options.env
-      },
+      env: options.inheritEnv === false ? options.env : { ...process.env, ...options.env },
+      detached: options.killProcessGroup === true && process.platform !== "win32",
       shell: false
     });
 
@@ -34,14 +35,15 @@ export function runCommand(command: string, args: string[], options: RunCommandO
     let truncated = false;
     let settled = false;
     let timedOut = false;
+    let abortKillTimer: NodeJS.Timeout | undefined;
     const timeout =
       timeoutMs > 0
         ? setTimeout(() => {
             timedOut = true;
-            child.kill("SIGTERM");
+            kill("SIGTERM");
             setTimeout(() => {
               if (!settled) {
-                child.kill("SIGKILL");
+                kill("SIGKILL");
               }
             }, 5000).unref();
           }, timeoutMs)
@@ -65,6 +67,8 @@ export function runCommand(command: string, args: string[], options: RunCommandO
     const finish = (exitCode: number, extraOutput = "") => {
       if (settled) return;
       settled = true;
+      options.signal?.removeEventListener("abort", abort);
+      if (abortKillTimer) clearTimeout(abortKillTimer);
       if (timeout) {
         clearTimeout(timeout);
       }
@@ -73,6 +77,24 @@ export function runCommand(command: string, args: string[], options: RunCommandO
       }
       resolve({ exitCode, output, timedOut: timedOut || undefined, truncated: truncated || undefined });
     };
+
+    const kill = (signal: NodeJS.Signals) => {
+      if (options.killProcessGroup && process.platform !== "win32" && child.pid) {
+        try { process.kill(-child.pid, signal); return; } catch { /* Fall back to the direct child. */ }
+      }
+      child.kill(signal);
+    };
+
+    const abort = () => {
+      kill("SIGTERM");
+      abortKillTimer = setTimeout(() => {
+        if (!settled) kill("SIGKILL");
+      }, 5_000);
+      abortKillTimer.unref();
+    };
+
+    options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.signal?.aborted) abort();
 
     child.stdout.on("data", collect);
     child.stderr.on("data", collect);

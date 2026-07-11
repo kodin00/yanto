@@ -76,11 +76,14 @@ export function isPostgresContainerLike(container: Pick<ContainerInfo, "name" | 
 
 let containerCache: ContainerInfo[] | null = null;
 let containerCacheTime = 0;
+let containerCacheRevision = 0;
+let containerReadRequest: { revision: number; promise: Promise<ContainerInfo[]> } | null = null;
 const CONTAINER_CACHE_TTL_MS = 5000;
 
 export function invalidateContainerCache() {
   containerCache = null;
   containerCacheTime = 0;
+  containerCacheRevision += 1;
 }
 
 export async function listContainers(): Promise<ContainerInfo[]> {
@@ -89,43 +92,59 @@ export async function listContainers(): Promise<ContainerInfo[]> {
     return containerCache;
   }
 
-  const ps = await runCommand("docker", ["ps", "-a", "--format", "{{json .}}"]);
-  if (ps.exitCode !== 0) {
-    throw new Error(ps.output || "Unable to list Docker containers.");
-  }
+  const revision = containerCacheRevision;
+  if (containerReadRequest?.revision === revision) return containerReadRequest.promise;
 
-  const stats = await runCommand("docker", ["stats", "--no-stream", "--format", "{{json .}}"]);
-  const statsById = new Map(parseJsonLines<DockerStatsLine>(stats.output).map((item) => [item.ID, item]));
+  const promise = (async () => {
+    const ps = await runCommand("docker", ["ps", "-a", "--format", "{{json .}}"]);
+    if (ps.exitCode !== 0) {
+      throw new Error(ps.output || "Unable to list Docker containers.");
+    }
 
-  const result = parseJsonLines<DockerPsLine>(ps.output)
-    .map((container) => {
-      const stat = statsById.get(container.ID);
-      const labels = parseLabels(container.Labels);
-      const composeService = labels.get("com.docker.compose.service") ?? null;
-      const row = {
-        id: container.ID,
-        name: container.Names,
-        image: container.Image,
-        status: container.Status,
-        state: container.State,
-        ports: container.Ports,
-        createdAt: normalizeDockerCreatedAt(container.CreatedAt),
-        cpuPercent: stat?.CPUPerc ?? "0%",
-        memoryUsage: stat?.MemUsage ?? "-",
-        memoryPercent: stat?.MemPerc ?? "0%",
-        composeProject: labels.get("com.docker.compose.project") ?? null,
-        composeService
-      };
-      return {
-        ...row,
-        isPostgresCandidate: isPostgresContainerLike(row)
-      };
-    })
-    .sort((a, b) => createdAtTime(b.createdAt) - createdAtTime(a.createdAt));
+    const stats = await runCommand("docker", ["stats", "--no-stream", "--format", "{{json .}}"]);
+    const statsById = new Map(parseJsonLines<DockerStatsLine>(stats.output).map((item) => [item.ID, item]));
 
-  containerCache = result;
-  containerCacheTime = now;
-  return result;
+    const result = parseJsonLines<DockerPsLine>(ps.output)
+      .map((container) => {
+        const stat = statsById.get(container.ID);
+        const labels = parseLabels(container.Labels);
+        const composeService = labels.get("com.docker.compose.service") ?? null;
+        const row = {
+          id: container.ID,
+          name: container.Names,
+          image: container.Image,
+          status: container.Status,
+          state: container.State,
+          ports: container.Ports,
+          createdAt: normalizeDockerCreatedAt(container.CreatedAt),
+          cpuPercent: stat?.CPUPerc ?? "0%",
+          memoryUsage: stat?.MemUsage ?? "-",
+          memoryPercent: stat?.MemPerc ?? "0%",
+          composeProject: labels.get("com.docker.compose.project") ?? null,
+          composeService
+        };
+        return {
+          ...row,
+          isPostgresCandidate: isPostgresContainerLike(row)
+        };
+      })
+      .sort((a, b) => createdAtTime(b.createdAt) - createdAtTime(a.createdAt));
+
+    if (containerCacheRevision !== revision) {
+      // A container action invalidated this snapshot while Docker was reading
+      // it. Re-enter through the current revision so existing callers do not
+      // render a result that predates the completed mutation.
+      return listContainers();
+    }
+    containerCache = result;
+    containerCacheTime = Date.now();
+    return result;
+  })().finally(() => {
+    if (containerReadRequest?.promise === promise) containerReadRequest = null;
+  });
+
+  containerReadRequest = { revision, promise };
+  return promise;
 }
 
 export async function containerLogs(containerId: string) {

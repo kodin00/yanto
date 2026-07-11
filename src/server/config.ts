@@ -1,6 +1,9 @@
 import path from "node:path";
 
 const requiredSecretFallback = "change-this-to-a-long-random-secret";
+const projectsRoot = path.resolve(process.env.PROJECTS_ROOT ?? "/projects");
+const agentWorktreesRoot = path.resolve(process.env.AGENT_WORKTREES_ROOT ?? path.join(projectsRoot, ".yanto-worktrees"));
+const hostProjectsRoot = process.env.HOST_PROJECTS_ROOT ?? "~/projects";
 
 function configuredSecret(...values: Array<string | undefined>) {
   return values.find((value) => value && value !== requiredSecretFallback) ?? requiredSecretFallback;
@@ -25,7 +28,9 @@ export const config = {
   mcpAllowedOrigins: process.env.MCP_ALLOWED_ORIGINS ?? "",
   adminUsername: process.env.ADMIN_USERNAME ?? "admin",
   adminPassword: process.env.ADMIN_PASSWORD ?? "admin",
-  projectsRoot: path.resolve(process.env.PROJECTS_ROOT ?? "/projects"),
+  projectsRoot,
+  agentWorktreesRoot,
+  hostAgentWorktreesRoot: process.env.HOST_AGENT_WORKTREES_ROOT ?? path.join(hostProjectsRoot, path.relative(projectsRoot, agentWorktreesRoot)),
   backupsDir: path.resolve(process.env.BACKUPS_DIR ?? "/data/backups"),
   cloudflaredDir: path.resolve(process.env.CLOUDFLARED_DIR ?? "/data/cloudflared"),
   frpDataDir: path.resolve(process.env.FRP_DATA_DIR ?? "/data/frp"),
@@ -35,7 +40,7 @@ export const config = {
   frpBindPort: Number(process.env.FRP_BIND_PORT ?? 7000),
   frpPortStart: Number(process.env.FRP_PORT_START ?? 25560),
   frpPortEnd: Number(process.env.FRP_PORT_END ?? 25600),
-  hostProjectsRoot: process.env.HOST_PROJECTS_ROOT ?? "~/projects",
+  hostProjectsRoot,
   sshKeysDir: path.resolve(process.env.SSH_KEYS_DIR ?? "/tmp/yanto-ssh"),
   sshPrivateKeyPath: process.env.SSH_PRIVATE_KEY_PATH ?? "/root/.ssh/id_ed25519",
   managedSshPrivateKeyPath: path.resolve(process.env.MANAGED_SSH_PRIVATE_KEY_PATH ?? path.join(process.env.SSH_KEYS_DIR ?? "/tmp/yanto-ssh", "id_ed25519")),
@@ -44,7 +49,6 @@ export const config = {
   commandTimeoutMs: Number(process.env.COMMAND_TIMEOUT_MS ?? 60 * 60 * 1000),
   commandOutputMaxBytes: Number(process.env.COMMAND_OUTPUT_MAX_BYTES ?? 2 * 1024 * 1024),
   deploymentLogMaxChars: Number(process.env.DEPLOYMENT_LOG_MAX_CHARS ?? 500_000),
-  agentDefaultImage: process.env.AGENT_DEFAULT_IMAGE ?? "yanto:local",
   codexHome: path.resolve(process.env.CODEX_HOME ?? "/data/codex"),
   agentMaxConcurrentRuns: Math.max(1, Number(process.env.AGENT_MAX_CONCURRENT_RUNS ?? 2)),
   agentMaxTurns: Math.max(1, Number(process.env.AGENT_MAX_TURNS ?? 40)),

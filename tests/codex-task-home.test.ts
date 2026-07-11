@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ codexHome: `/tmp/yanto-codex-home-${process.pid}` }));
 
 vi.mock("../src/server/config.js", () => ({
-  config: { codexHome: mocks.codexHome, agentDefaultImage: "agent:test" }
+  config: { codexHome: mocks.codexHome }
 }));
 
 import { clearCodexTaskAuthentication, prepareCodexTaskHome } from "../src/server/services/codex-account-runner.js";

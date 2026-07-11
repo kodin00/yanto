@@ -125,6 +125,14 @@ const emptyMultiNodeSettings: MultiNodePublicSettings = {
 };
 
 const setupSteps: SetupStep[] = ["intro", "ssh", "cloudflare", "r2"];
+const VIEW_REUSE_MS = 15_000;
+const AUTO_REFRESH_INTERVAL_MS = 60_000;
+const autoRefreshViews = new Set<View>(["dashboard", "projects", "deployments", "containers", "nodes", "backups"]);
+
+type ViewLoadOptions = {
+  showLoading?: boolean;
+  maxAgeMs?: number;
+};
 
 const emptyProjectEnvState: ProjectEnvState = {
   rows: [],
@@ -206,6 +214,8 @@ export function App() {
   const [dnsLoaded, setDnsLoaded] = useState(false);
   const dnsClientIdRef = useRef("");
   const dnsLoadRequestRef = useRef(0);
+  const lastViewLoadAtRef = useRef<Partial<Record<View, number>>>({});
+  const viewLoadRequestsRef = useRef(new Map<View, Promise<void>>());
   const [routeDiagnostics, setRouteDiagnostics] = useState<CloudflareRouteDiagnostic[]>([]);
   const [postgresTargets, setPostgresTargets] = useState<PostgresTarget[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
@@ -374,7 +384,6 @@ export function App() {
 
     if (targetView === "tasks") {
       setProjects(await api.projects());
-      setTasksRefreshKey((current) => current + 1);
       return;
     }
 
@@ -445,41 +454,56 @@ export function App() {
     setSystemLogs(logRows);
   }, [fetchContainerRows]);
 
-  const loadViewWithState = useCallback(async (targetView: View, showLoading = true) => {
-    if (showLoading) {
-      setViewLoading((current) => ({ ...current, [targetView]: true }));
-    }
-    try {
-      await loadView(targetView);
-    } finally {
-      if (showLoading) {
-        setViewLoading((current) => ({ ...current, [targetView]: false }));
-      }
-    }
+  const loadViewWithState = useCallback((targetView: View, options: ViewLoadOptions = {}) => {
+    const { showLoading = true, maxAgeMs = 0 } = options;
+    const lastLoadedAt = lastViewLoadAtRef.current[targetView] ?? 0;
+    if (maxAgeMs > 0 && Date.now() - lastLoadedAt < maxAgeMs) return Promise.resolve();
+
+    const existing = viewLoadRequestsRef.current.get(targetView);
+    if (existing) return existing;
+
+    if (showLoading) setViewLoading((current) => ({ ...current, [targetView]: true }));
+    const pending = loadView(targetView)
+      .then(() => {
+        lastViewLoadAtRef.current[targetView] = Date.now();
+      })
+      .finally(() => {
+        if (viewLoadRequestsRef.current.get(targetView) === pending) {
+          viewLoadRequestsRef.current.delete(targetView);
+        }
+        if (showLoading) setViewLoading((current) => ({ ...current, [targetView]: false }));
+      });
+    viewLoadRequestsRef.current.set(targetView, pending);
+    return pending;
   }, [loadView]);
 
   useEffect(() => {
-    api
-      .me()
-      .then((result) => {
-        setUser(result.username);
-        return loadViewWithState("dashboard", false);
-      })
-      .catch(() => setUser(null))
-      .finally(() => setLoading(false));
-  }, [loadViewWithState]);
+    let active = true;
+    void api.me()
+      .then((result) => { if (active) setUser(result.username); })
+      .catch(() => { if (active) setUser(null); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
-    if (!user) return;
-    const timer = window.setInterval(() => {
-      void loadViewWithState(view, false).catch(() => undefined);
-    }, 30000);
-    return () => window.clearInterval(timer);
+    if (!user || !autoRefreshViews.has(view)) return;
+    const refreshVisibleView = (force: boolean) => {
+      if (document.visibilityState !== "visible") return;
+      void loadViewWithState(view, { showLoading: false, maxAgeMs: force ? 0 : AUTO_REFRESH_INTERVAL_MS }).catch(() => undefined);
+    };
+    const timer = window.setInterval(() => refreshVisibleView(true), AUTO_REFRESH_INTERVAL_MS);
+    const handleVisibilityChange = () => refreshVisibleView(false);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [loadViewWithState, user, view]);
 
   useEffect(() => {
     if (!user) return;
-    void loadViewWithState(view).catch(() => undefined);
+    void loadViewWithState(view, { maxAgeMs: VIEW_REUSE_MS }).catch(() => undefined);
   }, [loadViewWithState, user, view]);
 
   useEffect(() => {
@@ -637,7 +661,6 @@ export function App() {
     try {
       const result = await api.login(login.username, login.password);
       setUser(result.username);
-      await loadViewWithState("dashboard", false);
       setToast({ message: "Signed in." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to sign in.", kind: "error" });
@@ -1397,6 +1420,7 @@ export function App() {
     setToast({ message: `Refreshing ${view}...`, kind: "loading" });
     try {
       if (view === "frp") setFrpRefreshKey((current) => current + 1);
+      if (view === "tasks") setTasksRefreshKey((current) => current + 1);
       await loadViewWithState(view);
       setToast({ message: "View refreshed." });
     } catch (error) {
@@ -1886,7 +1910,6 @@ export function App() {
                   <TextField label="Compose file" value={projectForm.composeFile} onChange={(composeFile) => setProjectForm((current) => ({ ...current, composeFile }))} placeholder="docker-compose.yml" required />
                 </div>
                 <TextField label="Folder name" value={projectForm.folderName} onChange={(folderName) => setProjectForm((current) => ({ ...current, folderName }))} placeholder={slugifyFolderName(projectForm.name) || "Auto from project name"} />
-                <TextField label="Agent runner image" value={projectForm.agentImage} onChange={(agentImage) => setProjectForm((current) => ({ ...current, agentImage }))} placeholder="Default: yanto:local" />
                 {multiNodeEnabled ? (
                   <CustomSelect label="Deployment node" value={projectForm.targetNodeId} options={nodeOptions} onChange={(targetNodeId) => setProjectForm((current) => ({ ...current, targetNodeId }))} />
                 ) : null}

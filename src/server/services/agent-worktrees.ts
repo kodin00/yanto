@@ -58,7 +58,7 @@ export async function fetchProjectBranches(project: ProjectRow): Promise<Project
 }
 
 export function taskWorktreePath(project: ProjectRow, task: AgentTaskRow) {
-  return path.join(config.projectsRoot, ".yanto-worktrees", project.folderName, task.id);
+  return path.join(config.agentWorktreesRoot, project.folderName, task.id);
 }
 
 async function refExists(project: ProjectRow, ref: string) {

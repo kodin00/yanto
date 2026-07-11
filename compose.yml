@@ -17,6 +17,8 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-this-admin-password}
       PROJECTS_ROOT: /projects
       HOST_PROJECTS_ROOT: ${HOST_PROJECTS_ROOT:-~/projects}
+      AGENT_WORKTREES_ROOT: ${AGENT_WORKTREES_ROOT:-/projects/.yanto-worktrees}
+      HOST_AGENT_WORKTREES_ROOT: ${HOST_AGENT_WORKTREES_ROOT:-${HOST_PROJECTS_ROOT:-~/projects}/.yanto-worktrees}
       SSH_KEYS_DIR: /data/ssh
       SSH_PRIVATE_KEY_PATH: ${SSH_PRIVATE_KEY_PATH:-/root/.ssh/id_ed25519}
       MANAGED_SSH_PRIVATE_KEY_PATH: ${MANAGED_SSH_PRIVATE_KEY_PATH:-/data/ssh/id_ed25519}
@@ -31,7 +33,6 @@ services:
       FRP_TOKEN_PATH: /data/frp/auth-token
       FRP_DASHBOARD_URL: http://frps:7500
       FRP_CONTAINER_NAME: yanto-frps
-      AGENT_DEFAULT_IMAGE: ${AGENT_DEFAULT_IMAGE:-yanto:local}
       CODEX_HOME: /data/codex
       AGENT_MAX_CONCURRENT_RUNS: ${AGENT_MAX_CONCURRENT_RUNS:-2}
       AGENT_MAX_TURNS: ${AGENT_MAX_TURNS:-40}

@@ -1,12 +1,8 @@
-import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import readline from "node:readline";
+import { Codex, type CodexOptions, type ThreadEvent, type ThreadItem, type ThreadOptions } from "@openai/codex-sdk";
 import { config } from "../config.js";
-import { resolveHostMountPath } from "./agent-tools.js";
-import { ensureCodexSandboxReady } from "./codex-sandbox-probe.js";
-import { codexDockerCreateArgs } from "./codex-sandbox.js";
 
 type Event = (kind: string, payload: Record<string, unknown>) => Promise<void>;
 type Input = {
@@ -19,23 +15,15 @@ type Input = {
   signal: AbortSignal;
   event: Event;
   registerStop?: (stop: () => Promise<void>) => void;
-  ensureSandbox?: () => Promise<void>;
   prepareTaskHome?: (taskId: string, threadId: string | null) => Promise<string>;
+  createCodex?: (options: CodexOptions) => Pick<Codex, "startThread" | "resumeThread">;
 };
+
+const CODEX_TOOL_UPDATE_INTERVAL_MS = 250;
+const CODEX_TOOL_UPDATE_MAX_BYTES = 16 * 1024;
 
 function canceledError(signal: AbortSignal) {
   return signal.reason instanceof Error ? signal.reason : new Error("Codex run canceled.");
-}
-
-function childExit(child: ChildProcess) {
-  return new Promise<number | null>((resolve, reject) => {
-    child.once("exit", resolve);
-    child.once("error", reject);
-  });
-}
-
-function containerName(runId: string) {
-  return `yanto-codex-${runId.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 48)}`;
 }
 
 async function pathExists(value: string) {
@@ -112,117 +100,134 @@ export async function clearCodexTaskAuthentication() {
     .map((entry) => fs.rm(path.join(taskHomes, entry.name, "auth.json"), { force: true })));
 }
 
+function codexEnvironment(taskHome: string): Record<string, string> {
+  const environment: Record<string, string> = {
+    CODEX_HOME: taskHome,
+    HOME: taskHome,
+    DOCKER_HOST: "unix:///dev/null"
+  };
+  for (const name of ["PATH", "LANG", "LC_ALL", "TERM", "TMPDIR", "SSL_CERT_FILE", "SSL_CERT_DIR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"]) {
+    if (process.env[name]) environment[name] = process.env[name]!;
+  }
+  return environment;
+}
+
+function boundedTail(value: string, maxBytes: number) {
+  if (Buffer.byteLength(value, "utf8") <= maxBytes) return { output: value, outputTruncated: false };
+  let low = 0;
+  let high = value.length;
+  while (low < high) {
+    const length = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(value.slice(value.length - length), "utf8") <= maxBytes) low = length;
+    else high = length - 1;
+  }
+  return { output: value.slice(value.length - low), outputTruncated: true };
+}
+
+function toolPayload(item: ThreadItem, outputMaxBytes = config.agentCommandOutputMaxBytes) {
+  switch (item.type) {
+    case "command_execution":
+      return {
+        id: item.id,
+        type: "command",
+        name: "Shell command",
+        command: item.command,
+        ...boundedTail(item.aggregated_output, outputMaxBytes),
+        exitCode: item.exit_code ?? null,
+        status: item.status
+      };
+    case "mcp_tool_call":
+      return { id: item.id, type: "mcp_tool_call", name: item.tool, server: item.server, input: item.arguments, status: item.status, error: item.error?.message ?? null };
+    case "web_search":
+      return { id: item.id, type: "web_search", name: "Web search", query: item.query };
+    case "todo_list":
+      return { id: item.id, type: "todo", name: "Task plan", items: item.items };
+    default:
+      return null;
+  }
+}
+
+async function emitItem(event: Event, phase: "started" | "updated" | "completed", item: ThreadItem, outputMaxBytes?: number) {
+  if (item.type === "agent_message") {
+    if (phase === "completed") await event("assistant_delta", { delta: item.text });
+    return;
+  }
+  if (item.type === "reasoning") {
+    await event("reasoning", { id: item.id, phase, text: item.text });
+    return;
+  }
+  if (item.type === "file_change") {
+    await event("file_change", { id: item.id, phase, changes: item.changes, status: item.status });
+    return;
+  }
+  if (item.type === "error") {
+    await event("tool_result", { id: item.id, phase, name: "Codex", status: "failed", error: item.message, isError: true });
+    return;
+  }
+  const payload = toolPayload(item, outputMaxBytes);
+  if (!payload) return;
+  if (phase === "started") await event("tool_call", { ...payload, phase });
+  else if (phase === "updated") await event("tool_update", { ...payload, phase });
+  else await event("tool_result", {
+    ...payload,
+    phase,
+    isError: (item.type === "command_execution" && item.status === "failed") || (item.type === "mcp_tool_call" && item.status === "failed")
+  });
+}
+
 export async function runCodexAccount(input: Input) {
-  input.signal.throwIfAborted();
-  await (input.ensureSandbox ?? ensureCodexSandboxReady)();
   input.signal.throwIfAborted();
   const taskHome = await (input.prepareTaskHome ?? prepareCodexTaskHome)(input.taskId, input.threadId);
   input.signal.throwIfAborted();
-  const [worktreeHost, codexHost] = await Promise.all([
-    resolveHostMountPath(input.worktreePath),
-    resolveHostMountPath(taskHome)
-  ]);
-  input.signal.throwIfAborted();
-
-  const name = containerName(input.runId);
-  let dockerChild: ChildProcess | undefined;
-  let dockerExit: Promise<number | null> | undefined;
-  let dockerPhase: "create" | "start" | undefined;
-  let lines: readline.Interface | undefined;
-  let createAttempted = false;
-  let cleanupPromise: Promise<void> | undefined;
-
-  const removeContainer = async () => {
-    const remover = spawn("docker", ["rm", "-f", name], { stdio: ["ignore", "pipe", "pipe"] });
-    let output = "";
-    remover.stdout!.on("data", (chunk) => { output = `${output}${String(chunk)}`.slice(-32_000); });
-    remover.stderr!.on("data", (chunk) => { output = `${output}${String(chunk)}`.slice(-32_000); });
-    const exitCode = await childExit(remover);
-    if (exitCode !== 0 && !output.toLowerCase().includes("no such container")) {
-      throw new Error(output.trim() || `Unable to remove Codex runner container ${name}.`);
-    }
+  const localController = new AbortController();
+  const signal = AbortSignal.any([input.signal, localController.signal]);
+  const stop = async () => {
+    if (!localController.signal.aborted) localController.abort(new Error("Codex run stopped."));
   };
-
-  const cleanup = () => cleanupPromise ??= (async () => {
-    input.signal.removeEventListener("abort", onAbort);
-    lines?.close();
-    const child = dockerChild;
-    const exit = dockerExit;
-    const phase = dockerPhase;
-    child?.stdin?.destroy();
-    child?.stdout?.destroy();
-    child?.stderr?.destroy();
-    child?.kill("SIGTERM");
-
-    if (phase === "create") await exit?.catch(() => undefined);
-    const removal = createAttempted ? removeContainer() : Promise.resolve();
-    if (phase === "start") await exit?.catch(() => undefined);
-    await removal;
-  })();
-  const onAbort = () => { void cleanup().catch(() => undefined); };
-
-  input.registerStop?.(cleanup);
-  input.signal.addEventListener("abort", onAbort, { once: true });
-  input.signal.throwIfAborted();
+  input.registerStop?.(stop);
 
   try {
-    createAttempted = true;
-    dockerPhase = "create";
-    dockerChild = spawn("docker", codexDockerCreateArgs(config.agentDefaultImage, {
-      name,
-      workspaceHost: worktreeHost,
-      codexHomeHost: codexHost,
-      labels: [
-        "com.yanto.agent=true",
-        `com.yanto.agent.run-id=${input.runId}`,
-        `com.yanto.agent.task-id=${input.taskId}`
-      ],
-      entrypoint: "node",
-      command: ["/app/dist/server/server/services/codex-runner.js"]
-    }), { stdio: ["pipe", "pipe", "pipe"] });
-    dockerExit = childExit(dockerChild);
-    let createOutput = "";
-    dockerChild.stdout!.on("data", (chunk) => { createOutput = `${createOutput}${String(chunk)}`.slice(-32_000); });
-    dockerChild.stderr!.on("data", (chunk) => { createOutput = `${createOutput}${String(chunk)}`.slice(-32_000); });
-    const createExitCode = await dockerExit;
-    dockerChild = undefined;
-    dockerExit = undefined;
-    dockerPhase = undefined;
-    if (createExitCode !== 0) throw new Error(createOutput.trim() || `Unable to create Codex runner container ${name}.`);
-
-    input.signal.throwIfAborted();
-    dockerPhase = "start";
-    dockerChild = spawn("docker", ["start", "-a", "-i", name], { stdio: ["pipe", "pipe", "pipe"] });
-    dockerExit = childExit(dockerChild);
-    dockerChild.stdin!.end(JSON.stringify({ prompt: input.prompt, model: input.model, threadId: input.threadId }));
-    let stderr = "";
-    dockerChild.stderr!.on("data", (chunk) => { stderr = `${stderr}${String(chunk)}`.slice(-32_000); });
-    let result: { success?: boolean; assistantText?: string; threadId?: string | null; error?: string } | null = null;
-    lines = readline.createInterface({ input: dockerChild.stdout! });
-    for await (const line of lines) {
-      let message: Record<string, unknown>;
-      try { message = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
-      switch (message.type) {
-        case "thread": await input.event("codex_thread", { threadId: message.threadId }); break;
-        case "assistant": await input.event("assistant_delta", { delta: String(message.text ?? "") }); break;
-        case "reasoning": await input.event("reasoning", { text: message.text }); break;
-        case "command": await input.event("tool_result", message); break;
-        case "file_change": await input.event("file_change", message); break;
-        case "tool": case "web_search": case "todo": await input.event("tool_call", message); break;
-        case "result": result = message; break;
+    const options: CodexOptions = { env: codexEnvironment(taskHome) };
+    const codex = input.createCodex?.(options) ?? new Codex(options);
+    const threadOptions: ThreadOptions = {
+      workingDirectory: input.worktreePath,
+      sandboxMode: "danger-full-access",
+      approvalPolicy: "never",
+      ...(input.model && input.model !== "default" ? { model: input.model } : {})
+    };
+    const thread = input.threadId ? codex.resumeThread(input.threadId, threadOptions) : codex.startThread(threadOptions);
+    const prompt = `Yanto task context: work only in the current Git worktree. Do not run Docker, switch branches, commit, push, or access unrelated host paths; Yanto owns those operations.\n\nUser request:\n${input.prompt}`;
+    const streamed = await thread.runStreamed(prompt, { signal });
+    const messages: string[] = [];
+    const lastToolUpdateAt = new Map<string, number>();
+    let threadId = input.threadId;
+    for await (const event of streamed.events as AsyncGenerator<ThreadEvent>) {
+      if (event.type === "thread.started") {
+        threadId = event.thread_id;
+        await input.event("codex_thread", { threadId });
+      } else if (event.type === "item.started") {
+        await emitItem(input.event, "started", event.item);
+      } else if (event.type === "item.updated") {
+        const now = Date.now();
+        const lastEmittedAt = lastToolUpdateAt.get(event.item.id) ?? 0;
+        if (now - lastEmittedAt >= CODEX_TOOL_UPDATE_INTERVAL_MS) {
+          lastToolUpdateAt.set(event.item.id, now);
+          await emitItem(input.event, "updated", event.item, CODEX_TOOL_UPDATE_MAX_BYTES);
+        }
+      } else if (event.type === "item.completed") {
+        lastToolUpdateAt.delete(event.item.id);
+        await emitItem(input.event, "completed", event.item);
+        if (event.item.type === "agent_message") messages.push(event.item.text);
+      } else if (event.type === "turn.failed") {
+        throw new Error(event.error.message);
+      } else if (event.type === "error") {
+        throw new Error(event.message);
       }
     }
-    const exitCode = await dockerExit;
-    dockerChild = undefined;
-    dockerExit = undefined;
-    dockerPhase = undefined;
-    input.signal.throwIfAborted();
-    if (!result?.success || exitCode !== 0) throw new Error(String(result?.error || stderr.trim() || `Codex runner exited with ${exitCode}.`));
-    return { assistantText: String(result.assistantText ?? ""), threadId: typeof result.threadId === "string" ? result.threadId : input.threadId };
+    signal.throwIfAborted();
+    return { assistantText: messages.join("\n\n"), threadId };
   } catch (error) {
-    if (input.signal.aborted) throw canceledError(input.signal);
+    if (signal.aborted) throw canceledError(input.signal.aborted ? input.signal : signal);
     throw error;
-  } finally {
-    await cleanup();
   }
 }

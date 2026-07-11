@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { config } from "../config.js";
 import type { AiProviderProtocol } from "./ai-providers.js";
-import { agentToolDefinitions, type AgentSandbox } from "./agent-tools.js";
+import { agentToolDefinitions, type AgentWorkspace } from "./agent-tools.js";
 
 export type ConversationMessage = { role: "user" | "assistant"; content: string };
 export type AgentRunnerEvent = (kind: string, payload: Record<string, unknown>) => Promise<void>;
@@ -13,24 +13,35 @@ export type AgentProviderRunInput = {
   apiKey: string;
   model: string;
   messages: ConversationMessage[];
-  sandbox: AgentSandbox;
+  workspace: AgentWorkspace;
   signal: AbortSignal;
   event: AgentRunnerEvent;
 };
 
-const systemPrompt = `You are Yanto's coding agent. Work autonomously on the user's task inside the isolated /workspace directory.
-Inspect the repository before editing, make focused changes, and run relevant tests or checks. Use only the supplied tools. Do not attempt Git operations: Yanto owns branch, commit, push, and cleanup. Never access paths outside the workspace. If a tool fails, diagnose it and continue when safe. End with a concise summary of changes and verification.`;
+const systemPrompt = `You are Yanto's coding agent. Work autonomously on the user's task inside its dedicated Git worktree.
+Inspect the repository before editing, make focused changes, and run relevant tests or checks. Use only the supplied tools. Do not run Docker or switch branches, commit, or push: Yanto owns those operations and cleanup. Never access paths outside the workspace. If a tool fails, diagnose it and continue when safe. End with a concise summary of changes and verification.`;
 
-async function executeTools(calls: Array<{ id: string; name: string; input: unknown }>, sandbox: AgentSandbox, event: AgentRunnerEvent) {
+export async function executeAgentTools(
+  calls: Array<{ id: string; name: string; input: unknown }>,
+  workspace: AgentWorkspace,
+  signal: AbortSignal,
+  event: AgentRunnerEvent
+) {
   const results: Array<{ id: string; name: string; output: string; isError: boolean }> = [];
   for (const call of calls) {
+    signal.throwIfAborted();
     await event("tool_call", { id: call.id, name: call.name, input: call.input });
+    signal.throwIfAborted();
     try {
-      const output = await sandbox.execute(call.name, call.input);
+      const output = await workspace.execute(call.name, call.input);
+      signal.throwIfAborted();
       const bounded = output.slice(0, config.agentCommandOutputMaxBytes);
       await event("tool_result", { id: call.id, name: call.name, output: bounded, isError: false });
       results.push({ id: call.id, name: call.name, output: bounded, isError: false });
     } catch (error) {
+      // Cancellation is terminal. Treating it as an ordinary tool failure would
+      // allow later calls from the same model response to keep modifying files.
+      signal.throwIfAborted();
       const output = error instanceof Error ? error.message : String(error);
       await event("tool_result", { id: call.id, name: call.name, output, isError: true });
       results.push({ id: call.id, name: call.name, output, isError: true });
@@ -74,7 +85,7 @@ async function runOpenAiResponses(input: AgentProviderRunInput) {
     }
     finalText += turnText;
     if (!calls.length) return finalText.trim() || "Task completed.";
-    const results = await executeTools(calls, input.sandbox, input.event);
+    const results = await executeAgentTools(calls, input.workspace, input.signal, input.event);
     nextInput = results.map((result) => ({ type: "function_call_output", call_id: result.id, output: result.output }));
   }
   throw new Error(`Agent exceeded the ${config.agentMaxTurns}-turn limit.`);
@@ -121,7 +132,7 @@ async function runOpenAiChat(input: AgentProviderRunInput) {
       content: turnText || null,
       tool_calls: [...partialCalls.values()].map((call) => ({ id: call.id, type: "function", function: { name: call.name, arguments: call.arguments } }))
     });
-    const results = await executeTools(calls, input.sandbox, input.event);
+    const results = await executeAgentTools(calls, input.workspace, input.signal, input.event);
     for (const result of results) messages.push({ role: "tool", tool_call_id: result.id, content: result.output });
   }
   throw new Error(`Agent exceeded the ${config.agentMaxTurns}-turn limit.`);
@@ -147,7 +158,7 @@ async function runAnthropic(input: AgentProviderRunInput) {
     const calls = response.content.filter((block) => block.type === "tool_use").map((block) => ({ id: block.id, name: block.name, input: block.input }));
     messages.push({ role: "assistant", content: response.content });
     if (!calls.length) return finalText.trim() || "Task completed.";
-    const results = await executeTools(calls, input.sandbox, input.event);
+    const results = await executeAgentTools(calls, input.workspace, input.signal, input.event);
     messages.push({ role: "user", content: results.map((result) => ({ type: "tool_result", tool_use_id: result.id, content: result.output, is_error: result.isError })) });
   }
   throw new Error(`Agent exceeded the ${config.agentMaxTurns}-turn limit.`);

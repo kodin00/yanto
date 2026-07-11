@@ -29,6 +29,7 @@ import mcpRouter from "./mcp/http.js";
 import aiProvidersRouter from "./routes/ai-providers.js";
 import agentTasksRouter from "./routes/agent-tasks.js";
 import { archiveCompletedAgentTasks, drainActiveAgentRuns, recoverInterruptedAgentRuns } from "./services/agent-tasks.js";
+import { warmCodexAccountStatus } from "./services/codex-auth.js";
 
 const app = express();
 
@@ -145,6 +146,11 @@ async function main() {
   taskArchiveTimer.unref();
   const server = app.listen(config.port, () => {
     logger.info("server started", { port: config.port });
+    if (config.nodeRole === "master") {
+      void warmCodexAccountStatus().catch((error) => {
+        logger.warn("Codex account status warmup failed", { error: error instanceof Error ? error.message : String(error) });
+      });
+    }
     void ensureEnabledCloudflaredConnectors()
       .then(async (result) => {
         if (result.started.length || result.failed.length) {
