@@ -34,6 +34,8 @@ describe("deleted agent task branch retention", () => {
     git(seed, "push", "-u", "origin", "main");
     git(remote, "symbolic-ref", "HEAD", "refs/heads/main");
     git(root, "clone", remote, checkout);
+    git(checkout, "config", "user.email", "test@example.com");
+    git(checkout, "config", "user.name", "Test");
     project = {
       id: "prj_test", name: "Project", gitUrl: remote, branch: "main", folderName: "project", localPath: checkout,
       composeFile: "compose.yml", composeContent: null, envFile: ".env", autoStart: false, manualDeployEnabled: true,
