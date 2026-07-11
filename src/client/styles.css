@@ -1224,7 +1224,20 @@ a.button {
 .audit-empty-state {
   display: grid;
   place-items: center;
+  justify-items: center;
+  gap: 6px;
   padding: 24px;
+  color: var(--soft);
+}
+
+.audit-empty-state svg {
+  margin-bottom: 4px;
+  color: var(--soft);
+}
+
+.audit-empty-state span {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .audit-panel .pagination {
@@ -2241,10 +2254,10 @@ th {
 .created-secret-box,
 .token-table {
   display: grid;
-  gap: 10px;
 }
 
 .created-secret-box {
+  gap: 10px;
   padding: 12px;
   border: 1px solid var(--line);
   background: var(--panel-strong);
@@ -3340,5 +3353,383 @@ th {
   .rollback-stat-grid,
   .rollback-file-row {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ==== logs, backups & settings polish (ux agent) ==== */
+
+/* -- shared table empty states -- */
+
+.table-empty-state {
+  display: grid;
+  place-items: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 36px 20px;
+  color: var(--soft);
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+}
+
+.table-empty-state svg {
+  color: var(--soft);
+}
+
+.mono-cell {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.tabular-cell {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* -- audit log list -- */
+
+.audit-list {
+  display: grid;
+}
+
+.audit-row {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line-light);
+  transition: background 0.14s ease;
+}
+
+.audit-row:last-child {
+  border-bottom: 0;
+}
+
+.audit-row:hover {
+  background: var(--field);
+}
+
+.audit-row-time {
+  display: grid;
+  gap: 2px;
+  cursor: default;
+}
+
+.audit-row-time strong {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.audit-row-time span {
+  color: var(--soft);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-row-main {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.audit-row-head {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.audit-actor {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  color: var(--muted);
+  background: var(--field);
+  border: 1px solid var(--line-light);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.audit-action {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.audit-target {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--green-dark);
+  background: var(--success-bg);
+  border: 1px solid color-mix(in srgb, var(--green) 22%, var(--line-light));
+  padding: 0 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.audit-meta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 320px;
+  padding: 3px 8px;
+  background: var(--field);
+  border: 1px solid var(--line-light);
+  font-size: 11px;
+  overflow: hidden;
+}
+
+.audit-meta-key {
+  flex: 0 0 auto;
+  color: var(--soft);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.audit-meta-value {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-meta-empty {
+  color: var(--soft);
+  font-size: 11px;
+  font-style: italic;
+}
+
+.audit-row-status {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+}
+
+@media (max-width: 700px) {
+  .audit-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .audit-row-status {
+    justify-content: flex-start;
+  }
+}
+
+/* -- backups: postgres targets + backup history -- */
+
+.backup-table-wrap .table-actions {
+  width: 260px;
+}
+
+.backup-error-note {
+  max-width: 260px;
+  overflow: hidden;
+  color: var(--red-dark);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -- settings: panel head icons -- */
+
+.panel-head-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.settings-panel-icon {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--green-dark);
+  background: var(--success-bg);
+  border: 1px solid var(--line-light);
+}
+
+/* -- settings: credentials, tokens, cleanup -- */
+
+.credential-status {
+  font-weight: 700;
+}
+
+.credential-status.saved {
+  border-color: color-mix(in srgb, var(--green) 30%, var(--line));
+}
+
+.token-table {
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+}
+
+.token-table > p.muted {
+  margin: 0;
+  padding: 14px;
+}
+
+.token-row {
+  padding: 12px 14px;
+  border-top: 1px solid var(--line-light);
+}
+
+.token-row:first-child {
+  border-top: 0;
+}
+
+.cleanup-result {
+  padding: 14px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+}
+
+.cleanup-result .log-viewer {
+  border: 1px solid var(--terminal-border);
+}
+
+@media (max-width: 700px) {
+  .backup-table-wrap .table-actions {
+    width: auto;
+  }
+}
+
+/* ==== loading & transitions (perf agent) ==== */
+
+.view-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.view-refresh-spinner {
+  color: var(--muted);
+}
+
+.topbar.is-refreshing {
+  position: relative;
+}
+
+.topbar.is-refreshing::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -10px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  background-size: 200% 100%;
+  animation: view-refresh-sweep 1.3s ease-in-out infinite;
+  opacity: 0.75;
+}
+
+@keyframes view-refresh-sweep {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.view-skeleton {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 18px;
+}
+
+.skeleton-panel {
+  display: grid;
+  gap: 14px;
+  min-height: 220px;
+  align-content: start;
+}
+
+.skeleton-block {
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--field) 25%, var(--line-light) 37%, var(--field) 63%);
+  background-size: 400% 100%;
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
+}
+
+.skeleton-title {
+  height: 20px;
+  width: 45%;
+}
+
+.skeleton-line {
+  height: 14px;
+  width: 100%;
+}
+
+.skeleton-line.short {
+  width: 60%;
+}
+
+.skeleton-chip {
+  height: 34px;
+  width: 96px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.dns-client-tabs-skeleton {
+  display: flex;
+  gap: 6px;
+}
+
+.dns-skeleton-row td {
+  padding: 10px 8px;
+}
+
+.skeleton-row-line {
+  display: block;
+  height: 14px;
+  width: 100%;
+  max-width: 420px;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-block,
+  .topbar.is-refreshing::after {
+    animation: none;
+    opacity: 0.55;
   }
 }

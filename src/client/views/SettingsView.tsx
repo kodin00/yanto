@@ -1,4 +1,4 @@
-import { Cloud, Copy, DatabaseZap, GitBranch, GitPullRequest, KeyRound, RefreshCw, Server, Settings, ShieldCheck, Trash2 } from "lucide-react";
+import { Check, Cloud, Copy, DatabaseZap, GitBranch, GitPullRequest, KeyRound, RefreshCw, ScrollText, Server, Settings, ShieldCheck, Trash2 } from "lucide-react";
 import { memo } from "react";
 import type { FormEvent } from "react";
 import { Button, CustomSelect, LogViewer, StatusBadge, TextAreaField, TextField, ToggleField } from "../components/ui";
@@ -90,8 +90,10 @@ export const SettingsView = memo(function SettingsView(props: Props) {
       <div className="settings-column">
         <section className="panel r2-settings-panel">
           <div className="panel-head">
-            <h2>Cloudflare R2</h2>
-            <Cloud size={19} />
+            <div className="panel-head-title">
+              <span className="settings-panel-icon"><Cloud size={16} /></span>
+              <h2>Cloudflare R2</h2>
+            </div>
           </div>
           <form className="form-grid compact-form" onSubmit={saveR2Settings} autoComplete="off">
             <ToggleField
@@ -132,7 +134,10 @@ export const SettingsView = memo(function SettingsView(props: Props) {
 
         <section className="panel runtime-settings-panel">
           <div className="panel-head">
-            <h2>Runtime</h2>
+            <div className="panel-head-title">
+              <span className="settings-panel-icon"><Settings size={16} /></span>
+              <h2>Runtime</h2>
+            </div>
             <div className="runtime-head-actions">
               <StatusBadge status={settings.multiNode.releaseStage} label="Beta" />
               <Button variant="secondary" onClick={() => openSetupWizard()} icon={<Settings size={16} />}>
@@ -165,8 +170,10 @@ export const SettingsView = memo(function SettingsView(props: Props) {
 
         <section className="panel mcp-settings-panel">
           <div className="panel-head">
-            <h2>MCP access</h2>
-            <KeyRound size={19} />
+            <div className="panel-head-title">
+              <span className="settings-panel-icon"><KeyRound size={16} /></span>
+              <h2>MCP access</h2>
+            </div>
           </div>
           <p className="muted">Create bearer tokens for AI clients. Tokens authorize `/mcp` and local stdio only; token administration stays dashboard-only.</p>
           {createdMcpToken ? (
@@ -225,8 +232,10 @@ export const SettingsView = memo(function SettingsView(props: Props) {
 
         <section className="panel webhook-settings compact-settings-panel">
           <div className="panel-head">
-            <h2>Deployment webhook</h2>
-            <GitBranch size={19} />
+            <div className="panel-head-title">
+              <span className="settings-panel-icon"><GitBranch size={16} /></span>
+              <h2>Deployment webhook</h2>
+            </div>
           </div>
           <div className="settings-code-list">
             <div>
@@ -253,8 +262,10 @@ export const SettingsView = memo(function SettingsView(props: Props) {
         {settings.multiNode.enabled ? (
           <section className="panel webhook-settings compact-settings-panel">
             <div className="panel-head">
-              <h2>Worker install</h2>
-              <Server size={19} />
+              <div className="panel-head-title">
+                <span className="settings-panel-icon"><Server size={16} /></span>
+                <h2>Worker install</h2>
+              </div>
             </div>
             <Button variant="secondary" onClick={() => void copyWorkerInstallCommand()} icon={<Copy size={16} />}>
               Copy worker command
@@ -264,8 +275,10 @@ export const SettingsView = memo(function SettingsView(props: Props) {
 
         <section className="panel cleanup-settings-panel">
           <div className="panel-head">
-            <h2>Cleanup</h2>
-            <DatabaseZap size={19} />
+            <div className="panel-head-title">
+              <span className="settings-panel-icon"><DatabaseZap size={16} /></span>
+              <h2>Cleanup</h2>
+            </div>
           </div>
           <p className="muted">Preview reclaimable Docker space first, then clean protected unused cache and resources.</p>
           <div className="actions">
@@ -324,8 +337,10 @@ export const SettingsView = memo(function SettingsView(props: Props) {
       <div className="settings-column">
         <section className="panel cf-tunnel-settings-panel">
           <div className="panel-head">
-            <h2>Cloudflare Tunnel</h2>
-            <ShieldCheck size={19} />
+            <div className="panel-head-title">
+              <span className="settings-panel-icon"><ShieldCheck size={16} /></span>
+              <h2>Cloudflare Tunnel</h2>
+            </div>
           </div>
           <form className="form-grid compact-form" onSubmit={saveCfSettings} autoComplete="off">
             <div className="cf-help">
@@ -356,7 +371,7 @@ export const SettingsView = memo(function SettingsView(props: Props) {
               autoComplete="new-password"
             />
             <div className={`credential-status ${settings.cf?.hasApiToken ? "saved" : ""}`}>
-              <ShieldCheck size={15} />
+              {settings.cf?.hasApiToken ? <Check size={15} /> : <ShieldCheck size={15} />}
               <span>{settings.cf?.hasApiToken ? "API token saved" : "API token not saved"}</span>
             </div>
             <div className="actions">
@@ -372,11 +387,13 @@ export const SettingsView = memo(function SettingsView(props: Props) {
 
         <section className="panel ssh-settings-panel">
           <div className="panel-head">
-            <h2>Git SSH key</h2>
-            <KeyRound size={19} />
+            <div className="panel-head-title">
+              <span className="settings-panel-icon"><KeyRound size={16} /></span>
+              <h2>Git SSH key</h2>
+            </div>
           </div>
           <div className={`credential-status ${settings.sshKey?.activePrivateKeyPath ? "saved" : ""}`}>
-            <KeyRound size={15} />
+            {settings.sshKey?.activePrivateKeyPath ? <Check size={15} /> : <KeyRound size={15} />}
             <span>{settings.sshKey?.activePrivateKeyPath ? "SSH key saved" : "SSH key not saved"}</span>
           </div>
           <dl className="settings-list ssh-status-list">
@@ -417,7 +434,10 @@ export const SettingsView = memo(function SettingsView(props: Props) {
 
         <section className="panel system-log-panel">
           <div className="panel-head">
-            <h2>System log</h2>
+            <div className="panel-head-title">
+              <span className="settings-panel-icon"><ScrollText size={16} /></span>
+              <h2>System log</h2>
+            </div>
             <Button variant="secondary" disabled={busy === "system-logs"} onClick={() => void refreshSystemLogs()} icon={<RefreshCw size={16} className={busy === "system-logs" ? "spin" : ""} />}>
               {busy === "system-logs" ? "Reloading log" : "Reload log"}
             </Button>

@@ -88,7 +88,8 @@ export const DnsView = memo(function DnsView(props: Props) {
   const ready = Boolean(selectedClient?.zoneId && selectedClient.hasApiToken);
   const canProxy = proxiedTypes.has(form.type);
   const saving = busy === "dns-save";
-  const formDisabled = !ready || saving || loading;
+  const recordsLoading = Boolean(loading) || !loaded;
+  const formDisabled = !ready || saving || recordsLoading;
   const typeOptions = useMemo(() => editableTypes.map((type) => ({ label: type, value: type })), []);
   const orderedClients = useMemo(() => [...clients].sort((left, right) => {
     const leftIsDefault = left.name.trim().toLowerCase() === "default cloudflare";
@@ -112,22 +113,20 @@ export const DnsView = memo(function DnsView(props: Props) {
     setForm(emptyForm);
   }
 
-  if (!loaded) {
-    return (
-      <section className="panel dns-page-loading" aria-live="polite">
-        <LoadingInline label="Loading DNS..." />
-      </section>
-    );
-  }
-
   return (
     <section className="dns-layout">
       <section className="panel dns-client-panel">
         <div className="panel-head">
           <h2>Client DNS</h2>
-          <span className="count">{clients.length ? `${clients.length} clients` : "No clients"}</span>
+          <span className="count">{!loaded ? "Loading clients..." : clients.length ? `${clients.length} clients` : "No clients"}</span>
         </div>
-        {clients.length ? (
+        {!loaded ? (
+          <div className="dns-client-tabs-skeleton" aria-hidden="true">
+            <span className="skeleton-block skeleton-chip" />
+            <span className="skeleton-block skeleton-chip" />
+            <span className="skeleton-block skeleton-chip short" />
+          </div>
+        ) : clients.length ? (
           <div className="cloudflare-tabs dns-client-tabs">
             {orderedClients.map((client) => {
               const isDefault = client.name.trim().toLowerCase() === "default cloudflare";
@@ -164,7 +163,11 @@ export const DnsView = memo(function DnsView(props: Props) {
           <h2>{form.id ? "Edit DNS record" : "Add DNS record"}</h2>
           <Cloud size={19} />
         </div>
-        {!ready ? (
+        {!loaded ? (
+          <div className="dns-not-ready">
+            <p className="muted">Loading Cloudflare clients...</p>
+          </div>
+        ) : !ready ? (
           <div className="dns-not-ready">
             <p className="muted">{selectedClient ? "This client needs a Zone ID and API token before DNS records can be managed." : "Choose a Cloudflare client before managing DNS records."}</p>
             <Button variant="secondary" onClick={openClients}>
@@ -200,7 +203,9 @@ export const DnsView = memo(function DnsView(props: Props) {
       <section className="panel dns-records-panel">
         <div className="panel-head">
           <h2>{selectedClient ? `${selectedClient.name} DNS records` : "DNS records"}</h2>
-          <span className="count">{loading ? "Loading" : `${records.length} records`}</span>
+          <span className="count">
+            {recordsLoading ? <LoadingInline label="Loading" /> : `${records.length} records`}
+          </span>
         </div>
         <div className="table-wrap dns-table-wrap">
           <table>
@@ -216,54 +221,61 @@ export const DnsView = memo(function DnsView(props: Props) {
               </tr>
             </thead>
             <tbody>
-              {!loading && visibleRecords.map((record) => {
-                const diagnostic = diagnosticsByHostname[record.name.toLowerCase()];
-                const recordKey = `${record.name.toLowerCase()}|${record.type.toLowerCase()}|${record.content.toLowerCase()}`;
-                const yantoManaged = yantoRecordKeys.has(recordKey);
-                const conflict = Boolean(diagnostic && !yantoManaged && ["conflict", "mismatch"].includes(diagnostic.dnsStatus));
-                return (
-                <tr key={record.id} className={conflict ? "dns-record-conflict" : yantoManaged ? "dns-record-yanto" : ""}>
-                  <td><StatusBadge status={record.type} /></td>
-                  <td className="dns-name-cell">
-                    <div className="dns-name-cell-content">
-                      <span>{record.name}</span>
-                      {yantoManaged ? <StatusBadge status="yanto" label="Yanto route" /> : null}
-                      {conflict ? <StatusBadge status="conflict" label="Conflict" /> : null}
-                    </div>
-                  </td>
-                  <td className="dns-content-cell">{record.content}</td>
-                  <td>{record.ttl === 1 ? "Auto" : record.ttl}</td>
-                  <td>{record.proxiable ? <StatusBadge status={record.proxied ? "proxied" : "dns-only"} label={record.proxied ? "Proxied" : "DNS only"} /> : <span className="muted">N/A</span>}</td>
-                  <td>{record.modifiedOn ? new Date(record.modifiedOn).toLocaleString() : "Unknown"}</td>
-                  <td className="action-cell">
-                    <div className="table-actions icon-actions">
-                      <IconButton label="Copy content" onClick={() => void copyText(record.content)}><Copy size={14} /></IconButton>
-                      <IconButton label="Edit record" disabled={!editableType(record.type)} onClick={() => setForm(recordForm(record))}><Edit3 size={14} /></IconButton>
-                      <IconButton
-                        label="Delete record"
-                        variant="danger"
-                        onClick={() => setConfirm({
-                          title: "Delete DNS record",
-                          body: `Delete ${record.type} record for ${record.name}?`,
-                          label: "Delete",
-                          danger: true,
-                          loadingMessage: "Deleting DNS record...",
-                          successMessage: "DNS record deleted.",
-                          action: () => deleteRecord(record)
-                        })}
-                      >
-                        {busy === `dns-delete:${record.id}` ? <RefreshCw size={14} className="spin" /> : <Trash2 size={14} />}
-                      </IconButton>
-                    </div>
-                  </td>
-                </tr>
-              );
-              })}
-              {loading || !visibleRecords.length ? (
+              {recordsLoading ? (
+                Array.from({ length: 5 }).map((_, index) => (
+                  <tr key={`dns-skeleton-${index}`} className="dns-skeleton-row" aria-hidden="true">
+                    <td colSpan={7}><span className="skeleton-block skeleton-row-line" /></td>
+                  </tr>
+                ))
+              ) : visibleRecords.length ? (
+                visibleRecords.map((record) => {
+                  const diagnostic = diagnosticsByHostname[record.name.toLowerCase()];
+                  const recordKey = `${record.name.toLowerCase()}|${record.type.toLowerCase()}|${record.content.toLowerCase()}`;
+                  const yantoManaged = yantoRecordKeys.has(recordKey);
+                  const conflict = Boolean(diagnostic && !yantoManaged && ["conflict", "mismatch"].includes(diagnostic.dnsStatus));
+                  return (
+                  <tr key={record.id} className={conflict ? "dns-record-conflict" : yantoManaged ? "dns-record-yanto" : ""}>
+                    <td><StatusBadge status={record.type} /></td>
+                    <td className="dns-name-cell">
+                      <div className="dns-name-cell-content">
+                        <span>{record.name}</span>
+                        {yantoManaged ? <StatusBadge status="yanto" label="Yanto route" /> : null}
+                        {conflict ? <StatusBadge status="conflict" label="Conflict" /> : null}
+                      </div>
+                    </td>
+                    <td className="dns-content-cell">{record.content}</td>
+                    <td>{record.ttl === 1 ? "Auto" : record.ttl}</td>
+                    <td>{record.proxiable ? <StatusBadge status={record.proxied ? "proxied" : "dns-only"} label={record.proxied ? "Proxied" : "DNS only"} /> : <span className="muted">N/A</span>}</td>
+                    <td>{record.modifiedOn ? new Date(record.modifiedOn).toLocaleString() : "Unknown"}</td>
+                    <td className="action-cell">
+                      <div className="table-actions icon-actions">
+                        <IconButton label="Copy content" onClick={() => void copyText(record.content)}><Copy size={14} /></IconButton>
+                        <IconButton label="Edit record" disabled={!editableType(record.type)} onClick={() => setForm(recordForm(record))}><Edit3 size={14} /></IconButton>
+                        <IconButton
+                          label="Delete record"
+                          variant="danger"
+                          onClick={() => setConfirm({
+                            title: "Delete DNS record",
+                            body: `Delete ${record.type} record for ${record.name}?`,
+                            label: "Delete",
+                            danger: true,
+                            loadingMessage: "Deleting DNS record...",
+                            successMessage: "DNS record deleted.",
+                            action: () => deleteRecord(record)
+                          })}
+                        >
+                          {busy === `dns-delete:${record.id}` ? <RefreshCw size={14} className="spin" /> : <Trash2 size={14} />}
+                        </IconButton>
+                      </div>
+                    </td>
+                  </tr>
+                  );
+                })
+              ) : (
                 <tr>
-                  <td colSpan={7}>{loading ? "Loading DNS records..." : ready ? "No DNS records found." : "Choose a Cloudflare client first."}</td>
+                  <td colSpan={7}>{ready ? "No DNS records found." : "Choose a Cloudflare client first."}</td>
                 </tr>
-              ) : null}
+              )}
             </tbody>
           </table>
         </div>

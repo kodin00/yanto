@@ -221,7 +221,7 @@ export const api = {
   refreshCodexModels: () => request<{ ok: true; models: Array<{ id: string; name: string }> }>("/api/ai/codex/models/refresh", { method: "POST" }),
   createAiProvider: (payload: { name: string; protocol: AiProviderProtocol; baseUrl: string; apiKey: string; enabled?: boolean }) =>
     request<AiProvider>("/api/ai/providers", { method: "POST", body: JSON.stringify(payload) }),
-  updateAiProvider: (id: string, payload: Partial<{ name: string; protocol: AiProviderProtocol; baseUrl: string; apiKey: string; enabled: boolean }>) =>
+  updateAiProvider: (id: string, payload: Partial<{ name: string; protocol: AiProviderProtocol; baseUrl: string; apiKey: string; enabled: boolean; defaultModelId: string | null }>) =>
     request<AiProvider>(`/api/ai/providers/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
   deleteAiProvider: (id: string) => request<void>(`/api/ai/providers/${id}`, { method: "DELETE" }),
   discoverAiModels: (id: string) => request<{ ok: true; models: Array<{ id: string; name: string }> }>(`/api/ai/providers/${id}/discover`, { method: "POST" }),

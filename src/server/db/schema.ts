@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { bigint, boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { type AnyPgColumn, bigint, boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const deploymentNodes = pgTable(
   "deployment_nodes",
@@ -53,6 +53,7 @@ export const aiProviders = pgTable(
     baseUrl: text("base_url").notNull(),
     apiKey: text("api_key").notNull(),
     enabled: boolean("enabled").notNull().default(true),
+    defaultModelId: text("default_model_id").references((): AnyPgColumn => aiModels.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
   },

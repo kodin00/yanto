@@ -13,7 +13,8 @@ const providerInput = z.object({
   protocol,
   baseUrl: z.string().trim().max(500).default(""),
   apiKey: z.string().max(10_000).optional(),
-  enabled: z.boolean().optional()
+  enabled: z.boolean().optional(),
+  defaultModelId: z.string().trim().min(1).max(100).nullable().optional()
 });
 const modelInput = z.object({ modelId: z.string().trim().min(1).max(250), displayName: z.string().trim().max(250).optional() });
 

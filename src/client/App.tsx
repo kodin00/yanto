@@ -198,6 +198,40 @@ function shortSha(sha: string) {
   return sha.slice(0, 12);
 }
 
+const viewChunkPrefetchers: Partial<Record<View, () => void>> = {
+  projects: () => { void import("./views/ProjectsView"); },
+  tasks: () => { void import("./views/TasksView"); },
+  deployments: () => { void import("./views/DeploymentsView"); },
+  containers: () => { void import("./views/ContainersView"); },
+  nodes: () => { void import("./views/NodesView"); },
+  hostnames: () => { void import("./views/HostnamesView"); },
+  dns: () => { void import("./views/DnsView"); },
+  frp: () => { void import("./views/FrpView"); },
+  audit: () => { void import("./views/AuditView"); },
+  backups: () => { void import("./views/BackupsView"); },
+  settings: () => { void import("./views/SettingsView"); }
+};
+
+function ViewSkeleton() {
+  return (
+    <div className="view-skeleton" aria-hidden="true">
+      <div className="panel skeleton-panel">
+        <div className="skeleton-block skeleton-title" />
+        <div className="skeleton-block skeleton-line" />
+        <div className="skeleton-block skeleton-line" />
+        <div className="skeleton-block skeleton-line short" />
+        <div className="skeleton-block skeleton-line" />
+      </div>
+      <div className="panel skeleton-panel">
+        <div className="skeleton-block skeleton-title" />
+        <div className="skeleton-block skeleton-line" />
+        <div className="skeleton-block skeleton-line short" />
+        <div className="skeleton-block skeleton-line" />
+      </div>
+    </div>
+  );
+}
+
 export function App() {
   const [user, setUser] = useState<string | null>(null);
   const [login, setLogin] = useState({ username: "admin", password: "" });
@@ -214,6 +248,7 @@ export function App() {
   const [dnsLoaded, setDnsLoaded] = useState(false);
   const dnsClientIdRef = useRef("");
   const dnsLoadRequestRef = useRef(0);
+  const dnsRecordsCacheRef = useRef(new Map<string, { records: CloudflareDnsRecord[]; loadedAt: number }>());
   const lastViewLoadAtRef = useRef<Partial<Record<View, number>>>({});
   const viewLoadRequestsRef = useRef(new Map<View, Promise<void>>());
   const [routeDiagnostics, setRouteDiagnostics] = useState<CloudflareRouteDiagnostic[]>([]);
@@ -420,21 +455,31 @@ export function App() {
         api.cloudflareClients().catch(() => []),
         api.cloudflareRouteDiagnostics().catch(() => [])
       ]);
+      if (requestId !== dnsLoadRequestRef.current) return;
       const currentClientId = dnsClientIdRef.current;
       const defaultClientId = clients.find((client) => client.name.trim().toLowerCase() === "default cloudflare")?.id;
       const selectedClientId = currentClientId && clients.some((client) => client.id === currentClientId)
         ? currentClientId
         : defaultClientId ?? clients[0]?.id ?? "";
-      const records = selectedClientId ? await api.cloudflareClientDnsRecords(selectedClientId).catch(() => []) : [];
-      if (requestId !== dnsLoadRequestRef.current) return;
       dnsClientIdRef.current = selectedClientId;
+      // Set the shell state right away so clients/tabs render immediately, even
+      // while the records fetch below is still in flight.
       setSettings(settingRows);
       setSettingsLoaded(true);
       setCloudflareClients(clients);
       setDnsClientId(selectedClientId);
-      setDnsRecords(records);
       setRouteDiagnostics(diagnostics);
       setDnsLoaded(true);
+
+      const cachedRecords = selectedClientId ? dnsRecordsCacheRef.current.get(selectedClientId) : undefined;
+      if (cachedRecords && Date.now() - cachedRecords.loadedAt < VIEW_REUSE_MS) {
+        setDnsRecords(cachedRecords.records);
+        return;
+      }
+      const records = selectedClientId ? await api.cloudflareClientDnsRecords(selectedClientId).catch(() => []) : [];
+      if (requestId !== dnsLoadRequestRef.current) return;
+      if (selectedClientId) dnsRecordsCacheRef.current.set(selectedClientId, { records, loadedAt: Date.now() });
+      setDnsRecords(records);
       return;
     }
 
@@ -447,11 +492,15 @@ export function App() {
       return;
     }
 
-    const [settingRows, logRows, tokenRows] = await Promise.all([api.settings(), api.systemLogs().catch(() => ""), api.mcpTokens().catch(() => [])]);
+    const [settingRows, tokenRows] = await Promise.all([api.settings(), api.mcpTokens().catch(() => [])]);
     setSettings(settingRows);
     setMcpTokens(tokenRows);
     setSettingsLoaded(true);
-    setSystemLogs(logRows);
+    setBusy((current) => current ?? "system-logs");
+    void api.systemLogs()
+      .then((logRows) => setSystemLogs(logRows))
+      .catch(() => setSystemLogs(""))
+      .finally(() => setBusy((current) => (current === "system-logs" ? null : current)));
   }, [fetchContainerRows]);
 
   const loadViewWithState = useCallback((targetView: View, options: ViewLoadOptions = {}) => {
@@ -1264,11 +1313,19 @@ export function App() {
     dnsClientIdRef.current = clientId;
     setDnsClientId(clientId);
     setDnsPage(1);
+
+    const cachedRecords = clientId ? dnsRecordsCacheRef.current.get(clientId) : undefined;
+    if (cachedRecords && Date.now() - cachedRecords.loadedAt < VIEW_REUSE_MS) {
+      setDnsRecords(cachedRecords.records);
+      return;
+    }
+
     setDnsRecords([]);
     setViewLoading((current) => ({ ...current, dns: true }));
     try {
       const records = clientId ? await api.cloudflareClientDnsRecords(clientId) : [];
       if (requestId !== dnsLoadRequestRef.current) return;
+      if (clientId) dnsRecordsCacheRef.current.set(clientId, { records, loadedAt: Date.now() });
       setDnsRecords(records);
     } catch (error) {
       if (requestId !== dnsLoadRequestRef.current) return;
@@ -1286,7 +1343,9 @@ export function App() {
     setToast({ message: "Creating DNS record...", kind: "loading" });
     try {
       const record = await api.createCloudflareClientDnsRecord(dnsClientId, payload);
-      setDnsRecords((current) => [record, ...current.filter((item) => item.id !== record.id)]);
+      const nextRecords = [record, ...dnsRecords.filter((item) => item.id !== record.id)];
+      setDnsRecords(nextRecords);
+      dnsRecordsCacheRef.current.set(dnsClientId, { records: nextRecords, loadedAt: Date.now() });
       void refreshRouteDiagnostics();
       setToast({ message: "DNS record created." });
     } catch (error) {
@@ -1303,7 +1362,9 @@ export function App() {
     setToast({ message: "Updating DNS record...", kind: "loading" });
     try {
       const record = await api.updateCloudflareClientDnsRecord(dnsClientId, recordId, payload);
-      setDnsRecords((current) => current.map((item) => (item.id === record.id ? record : item)));
+      const nextRecords = dnsRecords.map((item) => (item.id === record.id ? record : item));
+      setDnsRecords(nextRecords);
+      dnsRecordsCacheRef.current.set(dnsClientId, { records: nextRecords, loadedAt: Date.now() });
       void refreshRouteDiagnostics();
       setToast({ message: "DNS record updated." });
     } catch (error) {
@@ -1319,7 +1380,9 @@ export function App() {
     setBusy(`dns-delete:${record.id}`);
     try {
       await api.deleteCloudflareClientDnsRecord(dnsClientId, record.id);
-      setDnsRecords((current) => current.filter((item) => item.id !== record.id));
+      const nextRecords = dnsRecords.filter((item) => item.id !== record.id);
+      setDnsRecords(nextRecords);
+      dnsRecordsCacheRef.current.set(dnsClientId, { records: nextRecords, loadedAt: Date.now() });
       void refreshRouteDiagnostics();
     } finally {
       setBusy(null);
@@ -1500,6 +1563,7 @@ export function App() {
               key={id as string}
               className={view === id ? "active" : ""}
               type="button"
+              onMouseEnter={() => viewChunkPrefetchers[id as View]?.()}
               onClick={() => {
                 if (id === "dns" && view !== "dns") dnsClientIdRef.current = "";
                 setView(id as View);
@@ -1540,9 +1604,12 @@ export function App() {
       </aside>
 
       <main className="main">
-        <header className="topbar">
+        <header className={`topbar${viewLoading[view] ? " is-refreshing" : ""}`}>
           <div>
-            <h1>{viewTitle(view)}</h1>
+            <h1 className="view-title-row">
+              <span>{viewTitle(view)}</span>
+              {viewLoading[view] ? <RefreshCw size={15} className="spin view-refresh-spinner" aria-label="Refreshing" /> : null}
+            </h1>
           </div>
           <Button variant="secondary" disabled={busy === "refresh-view"} onClick={() => void refreshCurrentView()} icon={<RefreshCw size={16} className={busy === "refresh-view" ? "spin" : ""} />}>
             {busy === "refresh-view" ? "Refreshing" : "Refresh"}
@@ -1567,7 +1634,7 @@ export function App() {
           />
         ) : null}
 
-        <Suspense fallback={<LoadingInline label="Loading..." />}>
+        <Suspense fallback={<ViewSkeleton />}>
         {view === "projects" ? (
           <ProjectsView
             visibleProjects={visibleProjects}

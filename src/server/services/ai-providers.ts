@@ -16,6 +16,7 @@ export type AiProviderInput = {
   baseUrl: string;
   apiKey?: string;
   enabled?: boolean;
+  defaultModelId?: string | null;
 };
 
 function normalizeBaseUrl(value: string, protocol: AiProviderProtocol) {
@@ -42,6 +43,7 @@ export function publicProvider(row: AiProviderRow, models: Array<typeof aiModels
     baseUrl: row.baseUrl,
     hasApiKey: Boolean(row.apiKey),
     enabled: row.enabled,
+    defaultModelId: row.defaultModelId ?? null,
     models,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
@@ -80,7 +82,12 @@ export async function createAiProvider(input: AiProviderInput) {
 export async function updateAiProvider(id: string, input: Partial<AiProviderInput>) {
   const current = await getAiProvider(id);
   if (!current) return undefined;
-  if (current.protocol === "codex_account") throw new HttpError(400, "Manage this provider with the Codex account controls.");
+  const editsCoreFields = input.name !== undefined || input.protocol !== undefined || input.baseUrl !== undefined || input.apiKey !== undefined || input.enabled !== undefined;
+  if (current.protocol === "codex_account" && editsCoreFields) throw new HttpError(400, "Manage this provider with the Codex account controls.");
+  if (input.defaultModelId) {
+    const [model] = await db.select().from(aiModels).where(eq(aiModels.id, input.defaultModelId)).limit(1);
+    if (!model || model.providerId !== id) throw new HttpError(400, "Default model must belong to this provider.");
+  }
   const protocol = input.protocol ?? current.protocol as AiProviderProtocol;
   const [provider] = await db.update(aiProviders).set({
     ...(input.name !== undefined ? { name: input.name.trim() } : {}),
@@ -88,6 +95,7 @@ export async function updateAiProvider(id: string, input: Partial<AiProviderInpu
     ...(input.baseUrl !== undefined ? { baseUrl: normalizeBaseUrl(input.baseUrl, protocol) } : {}),
     ...(input.apiKey?.trim() ? { apiKey: encrypt(input.apiKey.trim()) } : {}),
     ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+    ...(input.defaultModelId !== undefined ? { defaultModelId: input.defaultModelId } : {}),
     updatedAt: new Date()
   }).where(eq(aiProviders.id, id)).returning();
   const models = await db.select().from(aiModels).where(eq(aiModels.providerId, id));

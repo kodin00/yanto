@@ -104,6 +104,8 @@ export async function migrate() {
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS ai_models_provider_model_idx ON ai_models(provider_id, model_id);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS ai_models_provider_idx ON ai_models(provider_id);`);
 
+  await pool.query(`ALTER TABLE ai_providers ADD COLUMN IF NOT EXISTS default_model_id text REFERENCES ai_models(id) ON DELETE SET NULL;`);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS agent_tasks (
       id text PRIMARY KEY,

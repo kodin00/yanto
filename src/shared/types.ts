@@ -60,6 +60,7 @@ export type AiProvider = {
   baseUrl: string;
   hasApiKey: boolean;
   enabled: boolean;
+  defaultModelId: string | null;
   models: AiModel[];
   createdAt: string;
   updatedAt: string;

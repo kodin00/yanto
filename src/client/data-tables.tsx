@@ -1,8 +1,23 @@
-import { Archive, Download, Play, RotateCw, ScrollText, Square, Trash2, Upload } from "lucide-react";
+import { Archive, DatabaseZap, Download, Inbox, Play, RotateCw, ScrollText, Square, Trash2, Upload } from "lucide-react";
 import type { ContainerInfo, Deployment } from "../shared/types";
 import { bytes, dateTime, deploymentChanges, durationBetween, durationSince, isProtectedYantoContainer, usedMemoryMb } from "./app-utils";
-import { Button, IconButton, StatusBadge } from "./components/ui";
+import { Button, IconButton, LoadingInline, StatusBadge } from "./components/ui";
 import { api, type AuditLogEntry, type BackupRecord, type PostgresTarget } from "./lib/api";
+
+function truncateInline(value: string, max = 42) {
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+function formatMetaValue(value: unknown): string {
+  if (value === null || value === undefined) return "-";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
 
 type ConfirmState = { title: string; body: string; label: string; danger?: boolean; action: () => Promise<void> };
 type LoadingConfirmState = ConfirmState & { loadingMessage?: string; successMessage?: string };
@@ -21,11 +36,20 @@ export function PostgresTargetTable({
   onRestore: (target: PostgresTarget, file: File) => Promise<void>;
 }) {
   if (loading && !targets.length) {
-    return <p className="muted">Loading Postgres targets...</p>;
+    return (
+      <div className="table-empty-state">
+        <LoadingInline label="Loading Postgres targets..." />
+      </div>
+    );
   }
 
   if (!targets.length) {
-    return <p className="muted">No likely Postgres containers detected yet.</p>;
+    return (
+      <div className="table-empty-state">
+        <DatabaseZap size={24} />
+        <p className="muted">No likely Postgres containers detected yet.</p>
+      </div>
+    );
   }
 
   return (
@@ -51,7 +75,9 @@ export function PostgresTargetTable({
                     <span>{target.composeService ?? target.image}</span>
                   </div>
                 </td>
-                <td>{target.containerName}</td>
+                <td>
+                  <span className="mono-cell">{target.containerName}</span>
+                </td>
                 <td>
                   <div className="stacked-cell">
                     <strong>{target.databaseName}</strong>
@@ -107,20 +133,30 @@ export function BackupTable({
   onUploadR2: (backup: BackupRecord) => Promise<void>;
 }) {
   if (loading && !backups.length) {
-    return <p className="muted">Loading backups...</p>;
+    return (
+      <div className="table-empty-state">
+        <LoadingInline label="Loading backups..." />
+      </div>
+    );
   }
 
   if (!backups.length) {
-    return <p className="muted">No backups recorded yet.</p>;
+    return (
+      <div className="table-empty-state">
+        <Archive size={24} />
+        <p className="muted">No backups recorded yet.</p>
+      </div>
+    );
   }
 
   return (
-    <div className="table-wrap">
+    <div className="table-wrap backup-table-wrap">
       <table>
         <thead>
           <tr>
             <th>Backup</th>
             <th>Source</th>
+            <th>Status</th>
             <th>Size</th>
             <th>Created</th>
             <th>Duration</th>
@@ -130,11 +166,19 @@ export function BackupTable({
         <tbody>
           {backups.map((backup) => (
             <tr key={backup.id}>
-              <td>{backup.filename || backup.id}</td>
+              <td>
+                <div className="stacked-cell">
+                  <strong className="mono-cell">{backup.filename || backup.id}</strong>
+                  {backup.error ? <span className="backup-error-note" title={backup.error}>{truncateInline(backup.error, 56)}</span> : null}
+                </div>
+              </td>
               <td>{backup.note ?? backup.kind}</td>
-              <td>{backup.fileSizeBytes ? bytes(backup.fileSizeBytes) : "-"}</td>
-              <td>{dateTime(backup.createdAt)}</td>
-              <td>{durationBetween(backup.createdAt, backup.finishedAt)}</td>
+              <td>
+                <StatusBadge status={backup.status} />
+              </td>
+              <td className="tabular-cell">{backup.fileSizeBytes ? bytes(backup.fileSizeBytes) : "-"}</td>
+              <td title={dateTime(backup.createdAt)}>{dateTime(backup.createdAt)}</td>
+              <td className="tabular-cell">{durationBetween(backup.createdAt, backup.finishedAt)}</td>
               <td className="table-actions">
                 <a className={`button secondary link-button ${backup.status !== "success" ? "disabled" : ""}`} href={backup.status === "success" ? api.backupDownloadUrl(backup.id) : undefined}>
                   <Download size={15} />
@@ -159,39 +203,54 @@ export function AuditTable({ entries }: { entries: AuditLogEntry[] }) {
   if (!entries.length) {
     return (
       <div className="audit-empty-state">
+        <Inbox size={26} />
         <p className="muted">No audit events recorded yet.</p>
+        <span>Actions taken across the dashboard will show up here.</span>
       </div>
     );
   }
 
   return (
-    <div className="table-wrap audit-table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Actor</th>
-            <th>Action</th>
-            <th>Target</th>
-            <th>Status</th>
-            <th>Message</th>
-          </tr>
-        </thead>
-        <tbody>
-          {entries.map((entry) => (
-            <tr key={entry.id}>
-              <td>{dateTime(entry.createdAt)}</td>
-              <td>{entry.actor ?? "system"}</td>
-              <td>{entry.action}</td>
-              <td>{entry.entityId ? `${entry.entityType}:${entry.entityId}` : entry.entityType}</td>
-              <td>
+    <div className="audit-table-wrap">
+      <div className="audit-list">
+        {entries.map((entry) => {
+          const metaEntries = Object.entries(entry.metadata ?? {});
+          const target = entry.entityId ? `${entry.entityType}:${entry.entityId}` : entry.entityType;
+          return (
+            <article className="audit-row" key={entry.id}>
+              <div className="audit-row-time" title={dateTime(entry.createdAt)}>
+                <strong>{durationSince(entry.createdAt)} ago</strong>
+                <span>{dateTime(entry.createdAt)}</span>
+              </div>
+              <div className="audit-row-main">
+                <div className="audit-row-head">
+                  <span className="audit-actor">{entry.actor || "system"}</span>
+                  <span className="audit-action">{entry.action}</span>
+                  {target ? <span className="audit-target">{target}</span> : null}
+                </div>
+                {metaEntries.length ? (
+                  <div className="audit-meta">
+                    {metaEntries.map(([key, value]) => {
+                      const display = formatMetaValue(value);
+                      return (
+                        <span className="audit-meta-chip" key={key} title={`${key}: ${display}`}>
+                          <span className="audit-meta-key">{key}</span>
+                          <span className="audit-meta-value">{truncateInline(display)}</span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <span className="audit-meta-empty">No additional metadata</span>
+                )}
+              </div>
+              <div className="audit-row-status">
                 <StatusBadge status="recorded" />
-              </td>
-              <td>{JSON.stringify(entry.metadata ?? {})}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              </div>
+            </article>
+          );
+        })}
+      </div>
     </div>
   );
 }

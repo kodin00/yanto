@@ -1,7 +1,7 @@
 import { Activity, Archive, ArchiveRestore, ArrowRight, Bot, Check, CheckCircle2, ChevronDown, Copy, FileCode2, FolderGit2, GitBranch, Play, Plus, RefreshCw, Settings2, Square, Trash2, Upload, Wrench, X, XCircle } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentEvent, AgentGitPreview, AgentTask, AgentTaskDetail, AgentTaskWorktree, AiProvider, AiProviderProtocol, CodexAccountStatus, Project, ProjectBranch } from "../../shared/types";
-import { Button, ConfirmDialog, CustomSelect, Modal, StatusBadge, TextAreaField, TextField, ToggleField } from "../components/ui";
+import { Button, ConfirmDialog, CustomSelect, LoadingInline, Modal, StatusBadge, TextAreaField, TextField, ToggleField } from "../components/ui";
 import { api } from "../lib/api";
 
 type Props = { projects: Project[]; refreshKey: number; toast: (message: string, kind?: "ok" | "error" | "loading") => void };
@@ -158,7 +158,7 @@ export function TasksView({ projects, refreshKey, toast }: Props) {
         </section>
       ) : tab === "worktrees" ? (
         <WorktreePanel rows={worktrees} loading={worktreesLoading} refresh={refreshWorktrees} toast={toast} openTask={openDetail} />
-      ) : providersLoading && !providers.length ? <div className="kanban-empty">Loading providers…</div> : <ProviderPanel providers={providers} refresh={refreshProviders} toast={toast} />}
+      ) : providersLoading && !providers.length ? <div className="kanban-empty"><LoadingInline label="Loading providers…" /></div> : <ProviderPanel providers={providers} refresh={refreshProviders} toast={toast} />}
 
       {createOpen ? <CreateTaskModal projects={projects.filter((project) => Boolean(project.gitUrl))} providers={providers} onClose={() => setCreateOpen(false)} onCreated={async (task) => { setCreateOpen(false); await refreshTasks(); setDetailId(task.id); }} toast={toast} /> : null}
       {detailId ? <TaskDetailModal taskId={detailId} providers={providers} onClose={() => { setDetailId(null); void refreshTasks(); }} refreshBoard={refreshTasks} refreshWorktrees={refreshWorktrees} toast={toast} /> : null}
@@ -227,7 +227,11 @@ function WorktreePanel({ rows, loading, refresh, toast, openTask }: { rows: Agen
 
 function CreateTaskModal({ projects, providers, onClose, onCreated, toast }: { projects: Project[]; providers: AiProvider[]; onClose: () => void; onCreated: (task: AgentTaskDetail) => void; toast: Props["toast"] }) {
   const models = providers.flatMap((provider) => provider.enabled ? provider.models.filter((model) => model.enabled).map((model) => ({ ...model, providerName: provider.name })) : []);
-  const [form, setForm] = useState({ projectId: projects[0]?.id ?? "", modelId: models[0]?.id ?? "", title: "", prompt: "", sourceBranch: projects[0]?.branch ?? "master", taskBranch: "", resumeExistingBranch: false, autoCommit: false, autoPush: false, autoCleanup: false });
+  const codexProvider = providers.find((provider) => provider.protocol === "codex_account" && provider.enabled);
+  const codexDefaultModelId = codexProvider?.defaultModelId && models.some((model) => model.id === codexProvider.defaultModelId) ? codexProvider.defaultModelId : null;
+  const providerDefaultModelId = providers.find((provider) => provider.enabled && provider.defaultModelId && models.some((model) => model.id === provider.defaultModelId))?.defaultModelId ?? null;
+  const defaultModelId = codexDefaultModelId ?? providerDefaultModelId ?? models[0]?.id ?? "";
+  const [form, setForm] = useState({ projectId: projects[0]?.id ?? "", modelId: defaultModelId, title: "", prompt: "", sourceBranch: projects[0]?.branch ?? "master", taskBranch: "", resumeExistingBranch: false, autoCommit: false, autoPush: false, autoCleanup: false });
   const [branches, setBranches] = useState<ProjectBranch[]>([]);
   const [branchesLoading, setBranchesLoading] = useState(Boolean(projects[0]?.id));
   const [branchTouched, setBranchTouched] = useState(false);
@@ -655,10 +659,12 @@ function ProviderPanel({ providers, refresh, toast }: { providers: AiProvider[];
             <div className="codex-device-code">
               <p>Open the verification page and enter:</p><code>{codex.login.userCode}</code>
               <a className="button" href={codex.login.verificationUrl} target="_blank" rel="noreferrer">Open Codex sign-in</a>
+              <LoadingInline label="Waiting for authorization…" />
               <Button variant="ghost" onClick={() => void action("codex-cancel", async () => { await api.cancelCodexLogin(); setCodex(await api.codexStatus()); })}>Cancel</Button>
             </div>
           ) : <Button loading={busy === "codex-login"} onClick={() => void action("codex-login", async () => { const login = await api.startCodexLogin(); setCodex({ connected: false, email: null, planType: null, login }); })}>Sign in with Codex</Button>}
           {codexProvider?.models.length ? <p className="muted">{codexProvider.models.length} models available</p> : null}
+          {codexProvider?.models.length ? <CustomSelect label="Default model" value={codexProvider.defaultModelId ?? ""} options={[{ label: "No default", value: "" }, ...codexProvider.models.map((model) => ({ label: model.displayName, value: model.id }))]} onChange={(defaultModelId) => void action("codex-default-model", () => api.updateAiProvider(codexProvider.id, { defaultModelId: defaultModelId || null }))} /> : null}
         </div>
         <hr />
         <h2>Register provider</h2><p className="muted">Keys are encrypted at rest and never returned to the browser.</p>
@@ -675,6 +681,7 @@ function ProviderPanel({ providers, refresh, toast }: { providers: AiProvider[];
             <div className="actions"><Button variant="secondary" loading={busy === `discover:${provider.id}`} onClick={() => void action(`discover:${provider.id}`, () => api.discoverAiModels(provider.id))} icon={<RefreshCw size={14} />}>Fetch models</Button><Button variant="ghost" onClick={() => void action(`toggle:${provider.id}`, () => api.updateAiProvider(provider.id, { enabled: !provider.enabled }))}>{provider.enabled ? "Disable" : "Enable"}</Button><Button variant="danger" onClick={() => void action(`delete:${provider.id}`, () => api.deleteAiProvider(provider.id))} icon={<Trash2 size={14} />}>Delete</Button></div>
             <div className="provider-models">{provider.models.map((model) => <div key={model.id}><span><strong>{model.displayName}</strong><code>{model.modelId}</code></span><button type="button" aria-label={`Remove ${model.displayName}`} title={`Remove ${model.displayName}`} onClick={() => void action(`model:${model.id}`, () => api.deleteAiModel(model.id))}><X size={14} /></button></div>)}</div>
             <div className="provider-model-add"><TextField label="Manual model ID" value={modelDrafts[provider.id] ?? ""} onChange={(value) => setModelDrafts({ ...modelDrafts, [provider.id]: value })} placeholder="gpt-5.2" /><Button variant="secondary" disabled={!modelDrafts[provider.id]?.trim()} onClick={() => void action(`add:${provider.id}`, async () => { await api.addAiModel(provider.id, { modelId: modelDrafts[provider.id] }); setModelDrafts({ ...modelDrafts, [provider.id]: "" }); })} icon={<Plus size={14} />}>Add model</Button></div>
+            {provider.models.length ? <CustomSelect label="Default model" value={provider.defaultModelId ?? ""} options={[{ label: "No default", value: "" }, ...provider.models.map((model) => ({ label: model.displayName, value: model.id }))]} onChange={(defaultModelId) => void action(`default-model:${provider.id}`, () => api.updateAiProvider(provider.id, { defaultModelId: defaultModelId || null }))} /> : null}
           </section>
         ))}
         {!providers.some((provider) => provider.protocol !== "codex_account") ? <section className="panel"><p className="muted">No API-key providers registered.</p></section> : null}
