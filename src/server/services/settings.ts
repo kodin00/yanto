@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { appSettings } from "../db/schema.js";
 import { config } from "../config.js";
+import { decrypt, encrypt, isEncrypted } from "./crypto.js";
 import { createWorkerJoinToken } from "./tokens.js";
 import { normalizeString } from "./utils.js";
 
@@ -49,6 +50,16 @@ const emptyMultiNodeSettings: MultiNodeSettings = {
   enabled: false
 };
 
+function readStoredSecret(value: unknown) {
+  const normalized = normalizeString(value);
+  if (!normalized || !isEncrypted(normalized)) return normalized;
+  try {
+    return decrypt(normalized);
+  } catch {
+    return "";
+  }
+}
+
 function parseR2Settings(value: string | undefined): StoredR2Settings {
   if (!value) return emptyR2Settings;
   try {
@@ -57,8 +68,8 @@ function parseR2Settings(value: string | undefined): StoredR2Settings {
       enabled: Boolean(parsed.enabled),
       accountId: normalizeString(parsed.accountId),
       bucket: normalizeString(parsed.bucket),
-      accessKeyId: normalizeString(parsed.accessKeyId),
-      secretAccessKey: normalizeString(parsed.secretAccessKey),
+      accessKeyId: readStoredSecret(parsed.accessKeyId),
+      secretAccessKey: readStoredSecret(parsed.secretAccessKey),
       prefix: normalizeString(parsed.prefix) || emptyR2Settings.prefix
     };
   } catch {
@@ -101,13 +112,18 @@ export async function saveR2Settings(input: R2SettingsInput) {
     secretAccessKey: normalizeString(input.secretAccessKey) || current.secretAccessKey,
     prefix: normalizeString(input.prefix) || emptyR2Settings.prefix
   };
+  const stored = {
+    ...next,
+    accessKeyId: next.accessKeyId ? encrypt(next.accessKeyId) : "",
+    secretAccessKey: next.secretAccessKey ? encrypt(next.secretAccessKey) : ""
+  };
 
   await db
     .insert(appSettings)
-    .values({ key: r2SettingsKey, value: JSON.stringify(next), updatedAt: new Date() })
+    .values({ key: r2SettingsKey, value: JSON.stringify(stored), updatedAt: new Date() })
     .onConflictDoUpdate({
       target: appSettings.key,
-      set: { value: JSON.stringify(next), updatedAt: new Date() }
+      set: { value: JSON.stringify(stored), updatedAt: new Date() }
     });
 
   return publicR2Settings();
@@ -198,7 +214,7 @@ export async function getWorkerJoinToken() {
   }
 
   const [row] = await db.select().from(appSettings).where(eq(appSettings.key, workerJoinTokenKey)).limit(1);
-  return row?.value ?? "";
+  return readStoredSecret(row?.value);
 }
 
 export async function ensureWorkerJoinToken() {
@@ -208,14 +224,15 @@ export async function ensureWorkerJoinToken() {
   }
 
   const token = createWorkerJoinToken();
+  const storedToken = encrypt(token);
   const [row] = await db
     .insert(appSettings)
-    .values({ key: workerJoinTokenKey, value: token, updatedAt: new Date() })
+    .values({ key: workerJoinTokenKey, value: storedToken, updatedAt: new Date() })
     .onConflictDoUpdate({
       target: appSettings.key,
       set: { updatedAt: new Date() }
     })
     .returning();
 
-  return row.value;
+  return readStoredSecret(row.value);
 }

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 REPO_URL="${YANTO_REPO_URL:-https://github.com/kodin00/yanto.git}"
 BRANCH="${YANTO_BRANCH:-master}"
@@ -50,7 +51,11 @@ write_master_env() {
   if [ ! -f .env ]; then
     cp .env.example .env
   fi
+  chmod 600 .env
   grep -q '^YANTO_NODE_ROLE=' .env && sed -i 's/^YANTO_NODE_ROLE=.*/YANTO_NODE_ROLE=master/' .env || echo 'YANTO_NODE_ROLE=master' >> .env
+  grep -q '^JWT_SECRET=change-this-to-a-long-random-secret' .env && sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$(random_secret)/" .env || true
+  grep -q '^ADMIN_PASSWORD=change-this-admin-password' .env && sed -i "s/^ADMIN_PASSWORD=.*/ADMIN_PASSWORD=$(random_secret)/" .env || true
+  grep -q '^POSTGRES_PASSWORD=' .env || echo "POSTGRES_PASSWORD=$(random_secret)" >> .env
   grep -q '^WORKER_JOIN_TOKEN=change-this-worker-join-token' .env && sed -i "s/^WORKER_JOIN_TOKEN=.*/WORKER_JOIN_TOKEN=$(random_secret)/" .env || true
   grep -q '^WORKER_TOKEN_SECRET=change-this-worker-token-secret' .env && sed -i "s/^WORKER_TOKEN_SECRET=.*/WORKER_TOKEN_SECRET=$(random_secret)/" .env || true
 }
@@ -75,11 +80,13 @@ SSH_SOURCE_DIR=/root/.ssh
 COMMAND_TIMEOUT_MS=3600000
 COMMAND_OUTPUT_MAX_BYTES=2097152
 EOF
+  chmod 600 .env.worker
 }
 
 run_master() {
   cd "$INSTALL_DIR"
   docker compose -f compose.yml --env-file .env up -d --build
+  echo "Yanto is running. Admin credentials are stored in $INSTALL_DIR/.env (mode 0600)."
 }
 
 run_worker() {

@@ -29,7 +29,7 @@ router.post(
     const body = projectInput.parse(req.body);
     const project = await createProject(body);
     await recordAuditLog({ actor: actor(req), action: "project.create", entityType: "project", entityId: project.id, projectId: project.id });
-    res.status(201).json(project);
+    res.status(201).json({ ...publicProject(project), deployToken: project.deployToken });
   })
 );
 

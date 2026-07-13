@@ -16,7 +16,10 @@ router.get(
   "/api/health",
   asyncRoute(async (_req, res) => {
     const health = await healthStatus();
-    res.status(health.ok ? 200 : 503).json(health);
+    res.status(health.ok ? 200 : 503).json({
+      ...health,
+      checks: Object.fromEntries(Object.entries(health.checks).map(([name, check]) => [name, { ok: check.ok }]))
+    });
   })
 );
 

@@ -8,7 +8,9 @@ on:
 
 concurrency:
   group: yanto-deploy
-  cancel-in-progress: true
+  # Interrupting the SSH client can terminate a remote Compose update halfway
+  # through. Serialize deployments and let the newest verified commit run next.
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -37,7 +39,7 @@ jobs:
         run: npm run lint
 
       - name: Test
-        run: npm test
+        run: npm run test:run
 
       - name: Build
         run: npm run build
@@ -68,6 +70,7 @@ jobs:
           VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
+          DEPLOY_SHA: ${{ github.sha }}
         run: |
           test -n "$VPS_USER" || (echo "Missing VPS_USER secret" && exit 1)
           test -n "$VPS_APP_DIR" || (echo "Missing VPS_APP_DIR secret" && exit 1)
@@ -79,7 +82,8 @@ jobs:
             "bash -se" <<EOF
           set -euo pipefail
           cd $(printf '%q' "$VPS_APP_DIR")
-          git pull --ff-only origin master
-          sudo -n docker compose -f compose.yml up -d --build --remove-orphans
+          git fetch --prune origin master
+          git checkout --detach $(printf '%q' "$DEPLOY_SHA")
+          sudo -n docker compose -f compose.yml up -d --build --remove-orphans --wait --wait-timeout 180
           sudo -n docker compose -f compose.yml ps
           EOF

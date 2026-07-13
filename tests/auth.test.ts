@@ -4,6 +4,14 @@ import jwt from "jsonwebtoken";
 import { verifyAdminPassword, currentUser, requireAuth } from "../src/server/auth.js";
 import { config } from "../src/server/config.js";
 
+function signSession(payload: Record<string, unknown> = {}, expiresIn: jwt.SignOptions["expiresIn"] = "7d") {
+  return jwt.sign(
+    { sub: "admin", username: config.adminUsername, ...payload },
+    config.jwtSecret,
+    { algorithm: "HS256", audience: "yanto-dashboard", expiresIn, issuer: "yanto" }
+  );
+}
+
 function mockReq(cookies: Record<string, string> = {}) {
   return { cookies } as unknown as Request;
 }
@@ -38,7 +46,7 @@ describe("currentUser", () => {
   });
 
   it("returns payload for valid JWT", () => {
-    const token = jwt.sign({ sub: "admin", username: config.adminUsername }, config.jwtSecret, { expiresIn: "7d" });
+    const token = signSession();
     const req = mockReq({ yanto_session: token });
     const user = currentUser(req);
     expect(user).not.toBeNull();
@@ -52,15 +60,22 @@ describe("currentUser", () => {
   });
 
   it("returns null for expired JWT", () => {
-    const token = jwt.sign({ sub: "admin", username: config.adminUsername }, config.jwtSecret, { expiresIn: "-1s" });
+    const token = signSession({}, "-1s");
     const req = mockReq({ yanto_session: token });
     expect(currentUser(req)).toBeNull();
+  });
+
+  it("rejects JWTs without the expected issuer, audience, or admin identity", () => {
+    const legacy = jwt.sign({ sub: "admin", username: config.adminUsername }, config.jwtSecret, { expiresIn: "7d" });
+    const wrongIdentity = signSession({ username: "someone-else" });
+    expect(currentUser(mockReq({ yanto_session: legacy }))).toBeNull();
+    expect(currentUser(mockReq({ yanto_session: wrongIdentity }))).toBeNull();
   });
 });
 
 describe("requireAuth", () => {
   it("calls next() when valid session exists", () => {
-    const token = jwt.sign({ sub: "admin", username: config.adminUsername }, config.jwtSecret, { expiresIn: "7d" });
+    const token = signSession();
     const req = mockReq({ yanto_session: token });
     const res = mockRes();
     const next = vi.fn() as unknown as NextFunction;

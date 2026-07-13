@@ -4,7 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const projectMocks = vi.hoisted(() => ({
   getProjectDeployToken: vi.fn(),
   listProjectsWithContainerCounts: vi.fn(),
-  publicProject: vi.fn((project) => project),
+  publicProject: vi.fn((project: Record<string, unknown>) => {
+    const { deployToken, sshPrivateKeyPath, ...publicFields } = project;
+    void deployToken;
+    void sshPrivateKeyPath;
+    return publicFields;
+  }),
   createProject: vi.fn(),
   updateProject: vi.fn(),
   deleteProject: vi.fn(),
@@ -118,6 +123,20 @@ describe("project routes", () => {
 
     expect(response.status).toBe(401);
     expect(response.body).toEqual({ message: "Authentication required." });
+  });
+
+  it("returns a one-time deploy token without exposing the private SSH path", async () => {
+    projectMocks.createProject.mockResolvedValue({
+      id: "p1",
+      name: "Example",
+      deployToken: "token-1",
+      sshPrivateKeyPath: "/root/.ssh/id_ed25519"
+    });
+
+    const response = await request("/api/projects", "ok", { method: "POST", body: { name: "Example" } });
+
+    expect(response.status).toBe(201);
+    expect(response.body).toEqual({ id: "p1", name: "Example", deployToken: "token-1" });
   });
 
   it("returns rollback preview for a commit or tag target", async () => {

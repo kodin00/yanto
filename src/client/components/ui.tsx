@@ -2,6 +2,16 @@ import { Check, ChevronDown, Loader2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useId, useRef, useState } from "react";
 
+const modalStack: symbol[] = [];
+const focusableSelector = [
+  "button:not([disabled])",
+  "a[href]",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])"
+].join(",");
+
 type ButtonProps = {
   children: ReactNode;
   onClick?: () => void;
@@ -10,11 +20,12 @@ type ButtonProps = {
   disabled?: boolean;
   icon?: ReactNode;
   loading?: boolean;
+  title?: string;
 };
 
-export function Button({ children, onClick, type = "button", variant = "primary", disabled, icon, loading }: ButtonProps) {
+export function Button({ children, onClick, type = "button", variant = "primary", disabled, icon, loading, title }: ButtonProps) {
   return (
-    <button className={`button ${variant}`} type={type} onClick={onClick} disabled={disabled || loading}>
+    <button className={`button ${variant}`} type={type} onClick={onClick} disabled={disabled || loading} aria-busy={loading || undefined} title={title}>
       {loading ? <Loader2 size={15} className="spin" /> : icon}
       <span>{children}</span>
     </button>
@@ -96,7 +107,7 @@ export function ToggleField({ label, value, onChange, description, disabled }: {
         <span>{label}</span>
         {description ? <p>{description}</p> : null}
       </div>
-      <button type="button" role="switch" aria-checked={value} className={`toggle-switch ${value ? "on" : ""}`} onClick={() => onChange(!value)} disabled={disabled}>
+      <button type="button" role="switch" aria-label={label} aria-checked={value} className={`toggle-switch ${value ? "on" : ""}`} onClick={() => onChange(!value)} disabled={disabled}>
         <span />
       </button>
     </div>
@@ -228,26 +239,70 @@ export function CustomSelect<T extends string>({
 }
 
 export function Modal({ title, children, onClose, size = "default", closeOnEscape = true }: { title: string; children: ReactNode; onClose: () => void; size?: "default" | "wide"; closeOnEscape?: boolean }) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const modalId = useRef(Symbol("modal"));
+  const onCloseRef = useRef(onClose);
+  const closeOnEscapeRef = useRef(closeOnEscape);
+  const titleId = useId();
+
   useEffect(() => {
-    if (!closeOnEscape) return;
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
+    onCloseRef.current = onClose;
+    closeOnEscapeRef.current = closeOnEscape;
+  }, [closeOnEscape, onClose]);
+
+  useEffect(() => {
+    const id = modalId.current;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    modalStack.push(id);
+    const focusFrame = window.requestAnimationFrame(() => {
+      const firstFocusable = dialogRef.current?.querySelector<HTMLElement>(focusableSelector);
+      (firstFocusable ?? dialogRef.current)?.focus();
+    });
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (modalStack.at(-1) !== id) return;
+      if (event.key === "Escape" && closeOnEscapeRef.current) {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const focusable = [...dialogRef.current.querySelectorAll<HTMLElement>(focusableSelector)]
+        .filter((element) => element.getClientRects().length > 0);
+      if (!focusable.length) {
+        event.preventDefault();
+        dialogRef.current.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
       }
     };
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
-  }, [closeOnEscape, onClose]);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      window.removeEventListener("keydown", handleKeyDown);
+      const index = modalStack.lastIndexOf(id);
+      const wasTopModal = index === modalStack.length - 1;
+      if (index >= 0) modalStack.splice(index, 1);
+      if (wasTopModal && previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, []);
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) {
+      if (event.target === event.currentTarget && modalStack.at(-1) === modalId.current) {
         onClose();
       }
     }}>
-      <div className={`modal ${size}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
+      <div ref={dialogRef} className={`modal ${size}`} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-head">
-          <h2>{title}</h2>
+          <h2 id={titleId}>{title}</h2>
           <IconButton label="Close" onClick={onClose}>
             <X size={18} />
           </IconButton>
@@ -296,7 +351,7 @@ export function Toast({ message, kind = "ok", onClose }: { message: string; kind
   }, [kind, onClose]);
 
   return (
-    <div className={`toast ${kind}`}>
+    <div className={`toast ${kind}`} role={kind === "error" ? "alert" : "status"} aria-live={kind === "error" ? "assertive" : "polite"}>
       <span>{message}</span>
       <button type="button" onClick={onClose} aria-label="Dismiss">
         <X size={15} />
@@ -326,7 +381,7 @@ export function LogViewer({ logs }: { logs: string }) {
 
 export function LoadingInline({ label }: { label: string }) {
   return (
-    <span className="loading-inline">
+    <span className="loading-inline" role="status" aria-live="polite">
       <Loader2 size={15} className="spin" />
       {label}
     </span>

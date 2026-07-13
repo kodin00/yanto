@@ -46,7 +46,7 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:"],
       connectSrc: ["'self'"]
@@ -55,40 +55,52 @@ app.use(helmet({
 }));
 
 const CSRF_COOKIE = "yanto_csrf";
-const CSRF_SKIP_PATHS = ["/api/auth/login", "/api/workers/", "/deploy", "/api/webhooks/", "/webhooks/", "/mcp"];
+const CSRF_EXEMPT_PATHS = new Set(["/deploy", "/webhooks/github", "/mcp"]);
+
+function csrfCookieOptions() {
+  return {
+    httpOnly: false,
+    path: "/",
+    sameSite: "lax" as const,
+    secure: config.cookieSecure
+  };
+}
+
+function isCsrfExemptPath(requestPath: string) {
+  return CSRF_EXEMPT_PATHS.has(requestPath) || requestPath === "/api/workers/register" || requestPath.startsWith("/api/workers/");
+}
+
+function csrfTokensMatch(cookieToken: unknown, headerToken: string | undefined) {
+  if (typeof cookieToken !== "string" || !headerToken) return false;
+  const cookie = Buffer.from(cookieToken);
+  const header = Buffer.from(headerToken);
+  return cookie.byteLength === header.byteLength && crypto.timingSafeEqual(cookie, header);
+}
 
 function csrfProtection(req: express.Request, res: express.Response, next: express.NextFunction) {
   if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") {
     if (!req.cookies[CSRF_COOKIE]) {
-      res.cookie(CSRF_COOKIE, crypto.randomBytes(24).toString("base64url"), {
-        httpOnly: false,
-        sameSite: "lax",
-        secure: config.cookieSecure
-      });
+      res.cookie(CSRF_COOKIE, crypto.randomBytes(24).toString("base64url"), csrfCookieOptions());
     }
     next();
     return;
   }
 
-  if (CSRF_SKIP_PATHS.some((p) => req.path.startsWith(p))) {
+  if (isCsrfExemptPath(req.path)) {
     next();
     return;
   }
 
   const cookieToken = req.cookies[CSRF_COOKIE];
   const headerToken = req.header("x-csrf-token");
-  if (!cookieToken || !headerToken || cookieToken !== headerToken) {
+  if (!csrfTokensMatch(cookieToken, headerToken)) {
     res.status(403).json({ message: "Invalid CSRF token." });
     return;
   }
 
   // Rotate CSRF token after successful validation to limit token reuse window
   const newToken = crypto.randomBytes(24).toString("base64url");
-  res.cookie(CSRF_COOKIE, newToken, {
-    httpOnly: false,
-    sameSite: "lax",
-    secure: config.cookieSecure
-  });
+  res.cookie(CSRF_COOKIE, newToken, csrfCookieOptions());
   res.setHeader("x-csrf-token", newToken);
 
   next();

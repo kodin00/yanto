@@ -55,7 +55,7 @@ import {
 import { Button, ConfirmDialog, CustomSelect, IconButton, LoadingInline, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast, ToggleField } from "./components/ui";
 import { EnvEditor, type ProjectEnvState } from "./components/EnvEditor";
 import { YantoBootLoader } from "./components/YantoBootLoader";
-import { api, type AuditLogEntry, type BackupRecord, type CloudflareDnsRecordPayload, type CloudflareRoutePayload, type PostgresTarget } from "./lib/api";
+import { api, setApiUnauthorizedHandler, type AuditLogEntry, type BackupRecord, type CloudflareDnsRecordPayload, type CloudflareRoutePayload, type PostgresTarget } from "./lib/api";
 import packageJson from "../../package.json";
 
 type View = "dashboard" | "projects" | "tasks" | "deployments" | "containers" | "nodes" | "backups" | "hostnames" | "frp" | "dns" | "audit" | "settings";
@@ -214,7 +214,7 @@ const viewChunkPrefetchers: Partial<Record<View, () => void>> = {
 
 function ViewSkeleton() {
   return (
-    <div className="view-skeleton" aria-hidden="true">
+    <div className="view-skeleton" role="status" aria-label="Loading view">
       <div className="panel skeleton-panel">
         <div className="skeleton-block skeleton-title" />
         <div className="skeleton-block skeleton-line" />
@@ -271,6 +271,7 @@ export function App() {
   const [cleanupPreviewed, setCleanupPreviewed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [viewLoading, setViewLoading] = useState<Partial<Record<View, boolean>>>({});
+  const [viewErrors, setViewErrors] = useState<Partial<Record<View, string>>>({});
   const [toast, setToast] = useState<ToastState>(null);
   const [projectModal, setProjectModal] = useState<Project | "new" | null>(null);
   const [projectForm, setProjectForm] = useState(emptyProject);
@@ -304,12 +305,20 @@ export function App() {
     window.localStorage.setItem(themeStorageKey, theme);
   }, [theme]);
 
-  const fetchContainerRows = useCallback(async () => {
-    try {
-      return await api.containers();
-    } catch {
-      return null;
+  useEffect(() => {
+    if (!user) {
+      setApiUnauthorizedHandler(null);
+      return;
     }
+    setApiUnauthorizedHandler(() => {
+      setUser(null);
+      setToast({ message: "Your session expired. Sign in again.", kind: "error" });
+    });
+    return () => setApiUnauthorizedHandler(null);
+  }, [user]);
+
+  const fetchContainerRows = useCallback(async () => {
+    return api.containers();
   }, []);
 
   const refreshProjects = useCallback(async () => {
@@ -323,7 +332,7 @@ export function App() {
       ]);
       setProjects(projectRows);
       setDeployments(deploymentRows);
-      if (containerRows) setContainers(containerRows);
+      setContainers(containerRows);
       setRouteDiagnostics(diagnostics);
     } finally {
       setViewLoading((current) => ({ ...current, projects: false }));
@@ -343,8 +352,8 @@ export function App() {
     setViewLoading((current) => ({ ...current, backups: true }));
     try {
       const [backupRows, postgresRows] = await Promise.all([
-        api.backups().catch(() => []),
-        api.postgresBackupTargets().catch(() => [])
+        api.backups(),
+        api.postgresBackupTargets()
       ]);
       setBackups(backupRows);
       setPostgresTargets(postgresRows);
@@ -354,9 +363,9 @@ export function App() {
   }, []);
 
   const refreshSettings = useCallback(async () => {
-    const [settingRows, tokenRows] = await Promise.all([api.settings().catch(() => null), api.mcpTokens().catch(() => null)]);
-    if (settingRows) setSettings(settingRows);
-    if (tokenRows) setMcpTokens(tokenRows);
+    const [settingRows, tokenRows] = await Promise.all([api.settings(), api.mcpTokens()]);
+    setSettings(settingRows);
+    setMcpTokens(tokenRows);
   }, []);
 
   const refreshRouteDiagnostics = useCallback(async () => {
@@ -367,7 +376,7 @@ export function App() {
     setViewLoading((current) => ({ ...current, containers: true }));
     try {
       const containerRows = await fetchContainerRows();
-      if (containerRows) setContainers(containerRows);
+      setContainers(containerRows);
     } finally {
       setViewLoading((current) => ({ ...current, containers: false }));
     }
@@ -379,13 +388,13 @@ export function App() {
         api.projects(),
         api.deployments(),
         fetchContainerRows(),
-        api.nodes().catch(() => []),
+        api.nodes(),
         api.systemUsage().catch(() => null),
         api.settings()
       ]);
       setProjects(projectRows);
       setDeployments(deploymentRows);
-      if (containerRows) setContainers(containerRows);
+      setContainers(containerRows);
       setNodes(nodeRows);
       setUsage(systemRows);
       setSettings(settingRows);
@@ -398,13 +407,13 @@ export function App() {
         api.projects(),
         api.deployments(),
         fetchContainerRows(),
-        api.nodes().catch(() => []),
+        api.nodes(),
         api.settings(),
         api.cloudflareRouteDiagnostics().catch(() => [])
       ]);
       setProjects(projectRows);
       setDeployments(deploymentRows);
-      if (containerRows) setContainers(containerRows);
+      setContainers(containerRows);
       setNodes(nodeRows);
       setSettings(settingRows);
       setRouteDiagnostics(diagnostics);
@@ -424,25 +433,25 @@ export function App() {
 
     if (targetView === "containers") {
       const containerRows = await fetchContainerRows();
-      if (containerRows) setContainers(containerRows);
+      setContainers(containerRows);
       return;
     }
 
     if (targetView === "hostnames") {
       const [projectRows, containerRows] = await Promise.all([api.projects(), fetchContainerRows()]);
       setProjects(projectRows);
-      if (containerRows) setContainers(containerRows);
+      setContainers(containerRows);
       setHostnamesRefreshKey((current) => current + 1);
       return;
     }
 
     if (targetView === "nodes") {
-      setNodes(await api.nodes().catch(() => []));
+      setNodes(await api.nodes());
       return;
     }
 
     if (targetView === "backups") {
-      const [backupRows, postgresRows] = await Promise.all([api.backups().catch(() => []), api.postgresBackupTargets().catch(() => [])]);
+      const [backupRows, postgresRows] = await Promise.all([api.backups(), api.postgresBackupTargets()]);
       setBackups(backupRows);
       setPostgresTargets(postgresRows);
       return;
@@ -452,7 +461,7 @@ export function App() {
       const requestId = ++dnsLoadRequestRef.current;
       const [settingRows, clients, diagnostics] = await Promise.all([
         api.settings(),
-        api.cloudflareClients().catch(() => []),
+        api.cloudflareClients(),
         api.cloudflareRouteDiagnostics().catch(() => [])
       ]);
       if (requestId !== dnsLoadRequestRef.current) return;
@@ -476,7 +485,7 @@ export function App() {
         setDnsRecords(cachedRecords.records);
         return;
       }
-      const records = selectedClientId ? await api.cloudflareClientDnsRecords(selectedClientId).catch(() => []) : [];
+      const records = selectedClientId ? await api.cloudflareClientDnsRecords(selectedClientId) : [];
       if (requestId !== dnsLoadRequestRef.current) return;
       if (selectedClientId) dnsRecordsCacheRef.current.set(selectedClientId, { records, loadedAt: Date.now() });
       setDnsRecords(records);
@@ -484,7 +493,7 @@ export function App() {
     }
 
     if (targetView === "audit") {
-      setAuditEntries(await api.auditLog().catch(() => []));
+      setAuditEntries(await api.auditLog());
       return;
     }
 
@@ -492,7 +501,7 @@ export function App() {
       return;
     }
 
-    const [settingRows, tokenRows] = await Promise.all([api.settings(), api.mcpTokens().catch(() => [])]);
+    const [settingRows, tokenRows] = await Promise.all([api.settings(), api.mcpTokens()]);
     setSettings(settingRows);
     setMcpTokens(tokenRows);
     setSettingsLoaded(true);
@@ -515,6 +524,14 @@ export function App() {
     const pending = loadView(targetView)
       .then(() => {
         lastViewLoadAtRef.current[targetView] = Date.now();
+        setViewErrors((current) => ({ ...current, [targetView]: undefined }));
+      })
+      .catch((error) => {
+        setViewErrors((current) => ({
+          ...current,
+          [targetView]: error instanceof Error ? error.message : `Unable to load ${viewTitle(targetView).toLowerCase()}.`
+        }));
+        throw error;
       })
       .finally(() => {
         if (viewLoadRequestsRef.current.get(targetView) === pending) {
@@ -749,15 +766,22 @@ export function App() {
   async function persistProjectDetails(event?: FormEvent, after?: "deploy" | "restart") {
     event?.preventDefault();
     if (!projectModal) return;
+    const creatingProject = projectModal === "new";
+    let savedProject: Project | ProjectWithDeployToken | null = null;
     setBusy("project");
     setToast({ message: after === "deploy" ? "Saving project and starting deployment..." : after === "restart" ? "Saving project and restarting..." : "Saving project...", kind: "loading" });
     try {
-      const creatingProject = projectModal === "new";
-      let savedProject: Project | ProjectWithDeployToken;
       if (projectModal === "new") {
         savedProject = await api.createProject(projectForm);
       } else {
-        savedProject = await api.updateProject(projectModal.id, projectForm);
+        // Opening a compose file from the repository must not silently turn it
+        // into a persisted override. Only send composeContent after an edit.
+        const projectFields: Partial<typeof projectForm> = { ...projectForm };
+        delete projectFields.composeContent;
+        savedProject = await api.updateProject(
+          projectModal.id,
+          projectCompose.source === "file" ? projectFields : projectForm
+        );
       }
 
       const envRows = projectEnvPayload();
@@ -780,8 +804,9 @@ export function App() {
       }
       if (after === "deploy") {
         const result = await api.deployProject(savedProject.id, pendingDeployEnv);
+        const projectName = savedProject.name;
         setDeployments((current) => [
-          { ...result.deployment, projectName: savedProject.name },
+          { ...result.deployment, projectName },
           ...current.filter((deployment) => deployment.id !== result.deployment.id)
         ]);
       }
@@ -808,7 +833,26 @@ export function App() {
                 : "Project updated."
       });
     } catch (error) {
-      setToast({ message: error instanceof Error ? error.message : "Unable to save project.", kind: "error" });
+      if (creatingProject && savedProject) {
+        const publicProject = projectWithoutSecret(savedProject);
+        updateSavedProjectLocally(savedProject);
+        setProjectModal(publicProject);
+        if ("deployToken" in savedProject) {
+          setCreatedProjectSecret({
+            projectName: savedProject.name,
+            deployUrl: endpoint(savedProject, settings.appBaseUrl),
+            webhookUrl: githubWebhookEndpoint(savedProject, settings.appBaseUrl),
+            deployToken: savedProject.deployToken
+          });
+        }
+        void refreshProjects().catch(() => undefined);
+        setToast({
+          message: `Project was created, but the follow-up action failed: ${error instanceof Error ? error.message : "Unknown error."}`,
+          kind: "error"
+        });
+      } else {
+        setToast({ message: error instanceof Error ? error.message : "Unable to save project.", kind: "error" });
+      }
     } finally {
       setBusy(null);
     }
@@ -856,7 +900,10 @@ export function App() {
     setBusy(`deploy:${deployment.projectId}`);
     setToast({ message: `Retrying deployment for ${deployment.projectName ?? deployment.projectId}...`, kind: "loading" });
     try {
-      const result = await api.deployProject(deployment.projectId);
+      const result = await api.deployProject(
+        deployment.projectId,
+        deployment.targetRef ? { targetRef: deployment.targetRef } : undefined
+      );
       setToast({ message: result.reused ? "Deployment is already running." : "Deployment retry started." });
       setLogModal({
         title: `${deployment.projectName ?? deployment.projectId} deployment`,
@@ -1568,6 +1615,8 @@ export function App() {
                 if (id === "dns" && view !== "dns") dnsClientIdRef.current = "";
                 setView(id as View);
               }}
+              aria-label={label as string}
+              aria-current={view === id ? "page" : undefined}
             >
               <Icon size={17} />
               <span>{label as string}</span>
@@ -1586,6 +1635,7 @@ export function App() {
           <button
             className="logout"
             type="button"
+            aria-label="Sign out"
             onClick={async () => {
               setToast({ message: "Signing out...", kind: "loading" });
               try {
@@ -1616,7 +1666,19 @@ export function App() {
           </Button>
         </header>
 
-        {view === "dashboard" ? (
+        {viewErrors[view] ? (
+          <section className="view-error" role="alert">
+            <div>
+              <strong>Unable to load {viewTitle(view)}</strong>
+              <p>{viewErrors[view]}</p>
+            </div>
+            <Button variant="secondary" disabled={busy === "refresh-view"} onClick={() => void refreshCurrentView()} icon={<RefreshCw size={15} />}>
+              Try again
+            </Button>
+          </section>
+        ) : null}
+
+        {view === "dashboard" && viewLoading.dashboard && !settingsLoaded ? <ViewSkeleton /> : view === "dashboard" ? (
           <DashboardView
             projects={projects}
             nodes={nodes}
@@ -1639,6 +1701,7 @@ export function App() {
           <ProjectsView
             visibleProjects={visibleProjects}
             projects={projects}
+            nodes={nodes}
             containersByProjectFolder={containersByProjectFolder}
             cfRoutesByProject={cfRoutesByProject}
             routeDiagnosticsByRouteId={routeDiagnosticsByRouteId}
@@ -1724,7 +1787,7 @@ export function App() {
           />
         ) : null}
 
-        {view === "audit" ? (
+        {view === "audit" && viewLoading.audit && !auditEntries.length ? <ViewSkeleton /> : view === "audit" ? (
           <AuditView
             auditEntries={auditEntries}
             visibleAuditEntries={visibleAuditEntries}
@@ -1743,11 +1806,11 @@ export function App() {
           />
         ) : null}
 
-        {view === "nodes" && multiNodeEnabled ? (
+        {view === "nodes" && multiNodeEnabled && viewLoading.nodes && !nodes.length ? <ViewSkeleton /> : view === "nodes" && multiNodeEnabled ? (
           <NodesView nodes={nodes} />
         ) : null}
 
-        {view === "settings" ? (
+        {view === "settings" && viewLoading.settings && !settingsLoaded ? <ViewSkeleton /> : view === "settings" ? (
           <SettingsView
             settings={settings}
             mcpTokens={mcpTokens}
@@ -2143,7 +2206,10 @@ export function App() {
             <TextAreaField
               label="Compose content"
               value={projectForm.composeContent}
-              onChange={(composeContent) => setProjectForm((current) => ({ ...current, composeContent }))}
+              onChange={(composeContent) => {
+                setProjectForm((current) => ({ ...current, composeContent }));
+                setProjectCompose((current) => ({ ...current, source: "saved", message: "Unsaved override" }));
+              }}
               placeholder={"Optional. Paste docker-compose.yml content here for compose-only projects or to override the file during deploy."}
             />
           </div>

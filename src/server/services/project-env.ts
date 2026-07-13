@@ -6,7 +6,9 @@ import { normalizeEnvFile, pathExists } from "./paths.js";
 
 const defaultEnvFile = ".env";
 
-function envPath(project: ProjectRow, envFile?: string) {
+type ProjectEnvContext = Pick<ProjectRow, "localPath">;
+
+function envPath(project: ProjectEnvContext, envFile?: string) {
   return path.join(project.localPath, normalizeEnvFile(envFile ?? defaultEnvFile));
 }
 
@@ -64,7 +66,7 @@ export function previewEnvContent(content: string, envFile = ".env"): EnvPreview
   };
 }
 
-export async function readProjectEnv(project: ProjectRow, envFile = defaultEnvFile) {
+export async function readProjectEnv(project: ProjectEnvContext, envFile = defaultEnvFile) {
   const target = envPath(project, envFile);
   const normalized = normalizeEnvFile(envFile);
   if (!(await pathExists(target))) {
@@ -77,7 +79,7 @@ export async function readProjectEnv(project: ProjectRow, envFile = defaultEnvFi
   };
 }
 
-export async function readProjectEnvVariables(project: ProjectRow, envFile?: string) {
+export async function readProjectEnvVariables(project: ProjectEnvContext, envFile?: string) {
   const current = await readProjectEnv(project, envFile);
   return Array.from(parseEnvMap(current.content).entries()).map(([key, value]) => ({
     key,
@@ -85,12 +87,12 @@ export async function readProjectEnvVariables(project: ProjectRow, envFile?: str
   }));
 }
 
-export async function previewProjectEnv(project: ProjectRow, envFile?: string) {
+export async function previewProjectEnv(project: ProjectEnvContext, envFile?: string) {
   const current = await readProjectEnv(project, envFile);
   return previewEnvContent(current.content, current.envFile);
 }
 
-export async function writeProjectEnv(project: ProjectRow, content: string, envFile = defaultEnvFile) {
+export async function writeProjectEnv(project: ProjectEnvContext, content: string, envFile = defaultEnvFile) {
   const normalized = normalizeEnvFile(envFile);
   const target = envPath(project, normalized);
   await fs.mkdir(path.dirname(target), { recursive: true });
@@ -98,7 +100,7 @@ export async function writeProjectEnv(project: ProjectRow, content: string, envF
   return previewEnvContent(content, normalized);
 }
 
-export async function writeProjectEnvVariables(project: ProjectRow, variables: { key: string; value?: string | null; masked?: boolean }[], envFile = defaultEnvFile) {
+export async function writeProjectEnvVariables(project: ProjectEnvContext, variables: { key: string; value?: string | null; masked?: boolean }[], envFile = defaultEnvFile) {
   const normalized = normalizeEnvFile(envFile);
   const content = variables
     .map((variable) => {

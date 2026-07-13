@@ -1,5 +1,6 @@
 import { Router } from "express";
 import type express from "express";
+import rateLimit from "express-rate-limit";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
@@ -7,6 +8,15 @@ import { authenticateMcpToken, bearerTokenFromHeader } from "../services/mcp-tok
 import { createYantoMcpServer } from "./registry.js";
 
 const router = Router();
+
+const mcpAuthFailureLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: { message: "Too many rejected MCP requests. Try again later." }
+});
 
 function splitCsv(value: string) {
   return value
@@ -51,7 +61,7 @@ function validateHostAndOrigin(req: express.Request) {
   return true;
 }
 
-router.post("/mcp", async (req, res) => {
+router.post("/mcp", mcpAuthFailureLimiter, async (req, res) => {
   try {
     if (config.nodeRole !== "master") {
       res.status(404).json({ message: "MCP is only available on the master process." });

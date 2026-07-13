@@ -5,9 +5,9 @@ import { asyncRoute, routeParam } from "../http-utils.js";
 import { workerDeploymentUpdateInput, workerHeartbeatInput, workerLogInput, workerRegisterInput } from "../route-schemas.js";
 import { recordAuditLog } from "../services/audit.js";
 import { appendDeploymentLog, findDeploymentForNode, finishDeployment, startDeployment, updateDeploymentMetadata } from "../services/deployments.js";
-import { getProject } from "../services/projects.js";
+import { getProject, publicProject } from "../services/projects.js";
 import { githubBranchFromRef, githubPayloadFromRequestBody, githubWebhookPayloadInput, projectDeployBranch, verifyGithubSignature } from "../services/github-webhooks.js";
-import { markNodeSeen, nextWorkerDeployment, nodeForWorkerToken, registerWorker } from "../services/nodes.js";
+import { markNodeSeen, nextWorkerDeployment, nodeForWorkerToken, publicWorkerNode, registerWorker } from "../services/nodes.js";
 import { getWorkerJoinToken } from "../services/settings.js";
 import { constantTimeEqual } from "../services/tokens.js";
 
@@ -27,6 +27,14 @@ const webhookLimiter = rateLimit({
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { message: "Too many webhook requests. Try again later." }
+});
+
+const workerRegisterLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { message: "Too many worker registration attempts. Try again later." }
 });
 
 const router = Router();
@@ -51,6 +59,7 @@ function requireWorker(handler: (req: express.Request, res: express.Response, no
 
 router.post(
   "/api/workers/register",
+  workerRegisterLimiter,
   asyncRoute(async (req, res) => {
     const body = workerRegisterInput.parse(req.body ?? {});
     const joinToken = await getWorkerJoinToken();
@@ -60,7 +69,7 @@ router.post(
     }
     const result = await registerWorker(body);
     await recordAuditLog({ actor: "worker", action: "node.register", entityType: "deployment_node", entityId: result.node.id, metadata: { name: result.node.name } });
-    res.status(201).json({ node: result.node, token: result.token });
+    res.status(201).json({ node: publicWorkerNode(result.node), token: result.token });
   })
 );
 
@@ -69,7 +78,7 @@ router.post(
   requireWorker(async (req, res, node) => {
     const body = workerHeartbeatInput.parse(req.body ?? {});
     const updated = await markNodeSeen(node, body);
-    res.json({ ok: true, node: updated });
+    res.json({ ok: true, node: publicWorkerNode(updated) });
   })
 );
 
@@ -78,7 +87,7 @@ router.get(
   requireWorker(async (_req, res, node) => {
     await markNodeSeen(node);
     const job = await nextWorkerDeployment(node.id);
-    res.json(job ?? null);
+    res.json(job ? { ...job, project: publicProject(job.project) } : null);
   })
 );
 

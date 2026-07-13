@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentTaskRow, ProjectRow } from "../src/server/db/schema.js";
-import { cleanupTaskWorktree, commitTaskWorktree, fetchProjectBranches, prepareTaskWorktree, pushTaskWorktree, taskGitPreview } from "../src/server/services/agent-worktrees.js";
+import { cleanupTaskWorktree, commitTaskWorktree, fetchProjectBranches, prepareTaskWorktree, pruneTaskWorktrees, pushTaskWorktree, taskGitPreview } from "../src/server/services/agent-worktrees.js";
 
 function git(cwd: string, ...args: string[]) {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
@@ -105,5 +105,12 @@ describe("agent worktrees", () => {
     expect(git(remote, "rev-parse", "refs/heads/main")).toBe(commit);
 
     await cleanupTaskWorktree(project, activeTask);
+  });
+
+  it("does not run Git worktree pruning for compose-only project directories", async () => {
+    const plainDirectory = path.join(root, "compose-only");
+    await fs.mkdir(plainDirectory);
+
+    await expect(pruneTaskWorktrees({ ...project, gitUrl: null, localPath: plainDirectory })).resolves.toBeUndefined();
   });
 });

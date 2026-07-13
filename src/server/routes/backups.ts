@@ -1,10 +1,11 @@
 import { Router } from "express";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import express from "express";
 import { requireAuth } from "../auth.js";
 import { config } from "../config.js";
-import { asyncRoute, actor, routeParam } from "../http-utils.js";
+import { HttpError, asyncRoute, actor, routeParam } from "../http-utils.js";
 import { backupInput } from "../route-schemas.js";
 import { recordAuditLog } from "../services/audit.js";
 import { createPostgresBackup, deleteBackup, getBackup, listBackups, listPostgresBackupTargets, markBackupDownloaded, restorePostgresBackupTarget, uploadBackupToR2 } from "../services/backups.js";
@@ -14,29 +15,54 @@ const router = Router();
 async function saveRequestBodyToTempFile(req: express.Request) {
   await fs.promises.mkdir(config.backupsDir, { recursive: true, mode: 0o700 });
   const filenameHeader = req.header("x-filename") ?? "uploaded-dump.sql";
-  const originalFilename = path.basename(decodeURIComponent(filenameHeader)).replace(/[^\w .-]+/g, "-") || "uploaded-dump.sql";
-  const filePath = path.join(config.backupsDir, `.restore-${Date.now()}-${Math.random().toString(16).slice(2)}-${originalFilename}`);
+  let decodedFilename = filenameHeader;
+  try {
+    decodedFilename = decodeURIComponent(filenameHeader);
+  } catch {
+    // Treat malformed percent escapes as literal filename characters.
+  }
+  const originalFilename = (path.basename(decodedFilename).replace(/[^\w .-]+/g, "-").slice(0, 160) || "uploaded-dump.sql");
+  const filePath = path.join(config.backupsDir, `.restore-${crypto.randomUUID()}-${originalFilename}`);
+  const contentLength = Number(req.header("content-length") ?? "");
+  if (Number.isFinite(contentLength) && contentLength > config.backupUploadMaxBytes) {
+    req.resume();
+    throw new HttpError(413, `Dump upload is larger than ${config.backupUploadMaxBytes} bytes.`);
+  }
   let received = 0;
 
-  await new Promise<void>((resolve, reject) => {
-    const output = fs.createWriteStream(filePath, { mode: 0o600 });
-    const fail = (error: Error) => {
-      req.destroy();
-      output.destroy();
-      reject(error);
-    };
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const output = fs.createWriteStream(filePath, { flags: "wx", mode: 0o600 });
+      let failed = false;
+      const fail = (error: Error) => {
+        if (failed) return;
+        failed = true;
+        req.unpipe(output);
+        output.destroy();
+        // Drain the remaining request body so the server can return a useful
+        // 413 response without retaining the rejected upload in memory.
+        req.resume();
+        reject(error);
+      };
 
-    req.on("data", (chunk: Buffer) => {
-      received += chunk.byteLength;
-      if (received > config.backupUploadMaxBytes) {
-        fail(new Error(`Dump upload is larger than ${config.backupUploadMaxBytes} bytes.`));
-      }
+      req.on("data", (chunk: Buffer) => {
+        received += chunk.byteLength;
+        if (received > config.backupUploadMaxBytes) {
+          fail(new HttpError(413, `Dump upload is larger than ${config.backupUploadMaxBytes} bytes.`));
+        }
+      });
+      req.once("aborted", () => fail(new Error("Dump upload was interrupted.")));
+      req.once("error", fail);
+      output.once("error", fail);
+      output.once("finish", () => {
+        if (!failed) resolve();
+      });
+      req.pipe(output);
     });
-    req.on("error", fail);
-    output.on("error", fail);
-    output.on("finish", resolve);
-    req.pipe(output);
-  });
+  } catch (error) {
+    await fs.promises.rm(filePath, { force: true });
+    throw error;
+  }
 
   if (received === 0) {
     await fs.promises.rm(filePath, { force: true });

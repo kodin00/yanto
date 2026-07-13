@@ -13,6 +13,13 @@ export type NodeInput = {
   dockerVersion?: string | null;
 };
 
+export function publicWorkerNode<T extends { tokenHash: string | null }>(node: T): Omit<T, "tokenHash"> {
+  // Worker credentials are write-only. Never return the stored verifier to a worker.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructured to exclude from API responses
+  const { tokenHash, ...publicNode } = node;
+  return publicNode;
+}
+
 function normalizeLabels(labels: Record<string, unknown> | undefined) {
   const normalized: Record<string, string> = {};
   for (const [key, value] of Object.entries(labels ?? {})) {

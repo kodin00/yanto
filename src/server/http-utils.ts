@@ -32,5 +32,5 @@ export function startEventStream(res: express.Response) {
 }
 
 export function sendStreamEvent(res: express.Response, payload: unknown) {
-  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  return res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }

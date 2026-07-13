@@ -8,7 +8,7 @@ Object.defineProperty(globalThis, "document", {
 });
 
 // Import after document mock is set up
-const { api } = await import("../../src/client/lib/api");
+const { api, ApiError, setApiUnauthorizedHandler } = await import("../../src/client/lib/api");
 
 function mockFetch(body: unknown, options: { status?: number; contentType?: string } = {}) {
   const { status = 200, contentType = "application/json" } = options;
@@ -38,6 +38,7 @@ function jsonResponse(body: unknown, status = 200) {
 describe("api client", () => {
   beforeEach(() => {
     (globalThis as { document: { cookie: string } }).document.cookie = "";
+    setApiUnauthorizedHandler(null);
   });
 
   afterEach(() => {
@@ -51,9 +52,8 @@ describe("api client", () => {
 
       await api.me();
 
-      expect(fetchMock).toHaveBeenCalledWith("/api/auth/me", expect.objectContaining({
-        headers: expect.objectContaining({ "X-CSRF-Token": "my-token-123" })
-      }));
+      const headers = new Headers((fetchMock.mock.calls[0][1] as RequestInit).headers);
+      expect(headers.get("X-CSRF-Token")).toBe("my-token-123");
     });
 
     it("omits X-CSRF-Token header when no cookie", async () => {
@@ -61,8 +61,18 @@ describe("api client", () => {
 
       await api.me();
 
-      const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
-      expect(headers["X-CSRF-Token"]).toBeUndefined();
+      const headers = new Headers((fetchMock.mock.calls[0][1] as RequestInit).headers);
+      expect(headers.has("X-CSRF-Token")).toBe(false);
+    });
+
+    it("ignores a malformed encoded CSRF cookie instead of blocking the request", async () => {
+      (globalThis as { document: { cookie: string } }).document.cookie = "yanto_csrf=%E0%A4%A";
+      const fetchMock = mockFetch({ username: "admin" });
+
+      await api.me();
+
+      const headers = new Headers((fetchMock.mock.calls[0][1] as RequestInit).headers);
+      expect(headers.has("X-CSRF-Token")).toBe(false);
     });
   });
 
@@ -115,9 +125,8 @@ describe("api client", () => {
 
       await api.projects();
 
-      expect(fetchMock).toHaveBeenCalledWith("/api/projects", expect.objectContaining({
-        headers: expect.objectContaining({ "Content-Type": "application/json" })
-      }));
+      const headers = new Headers((fetchMock.mock.calls[0][1] as RequestInit).headers);
+      expect(headers.get("Content-Type")).toBe("application/json");
     });
   });
 
@@ -139,7 +148,7 @@ describe("api client", () => {
       };
       globalThis.fetch = vi.fn().mockResolvedValue(response);
 
-      await expect(api.me()).rejects.toThrow("Request failed.");
+      await expect(api.me()).rejects.toThrow("Internal Server Error");
     });
 
     it("handles JSON parse errors gracefully", async () => {
@@ -154,6 +163,18 @@ describe("api client", () => {
       globalThis.fetch = vi.fn().mockResolvedValue(response);
 
       await expect(api.me()).rejects.toThrow("Server Error");
+    });
+
+    it("notifies the app and exposes the status when authentication expires", async () => {
+      const onUnauthorized = vi.fn();
+      setApiUnauthorizedHandler(onUnauthorized);
+      mockFetch({ message: "Authentication required." }, { status: 401 });
+
+      const rejection = api.me();
+
+      await expect(rejection).rejects.toBeInstanceOf(ApiError);
+      await expect(rejection).rejects.toMatchObject({ status: 401, message: "Authentication required." });
+      expect(onUnauthorized).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -296,6 +317,17 @@ describe("api client", () => {
       }));
     });
 
+    it("deployProject can retry the exact target ref", async () => {
+      const fetchMock = mockFetch({ deployment: {}, reused: false });
+
+      await api.deployProject("p1", { targetRef: "abc123def" });
+
+      expect(fetchMock).toHaveBeenCalledWith("/api/projects/p1/deploy", expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ targetRef: "abc123def" })
+      }));
+    });
+
     it("rollbackPreview sends targetRef to preview endpoint", async () => {
       const fetchMock = mockFetch({ requestedRef: "v1.2.3" });
 
@@ -378,6 +410,17 @@ describe("api client", () => {
       }));
     });
 
+    it("uploads restore files as a raw byte stream", async () => {
+      const fetchMock = mockFetch({ ok: true, target: {} });
+      const file = new File(["{}"], "dump.json", { type: "application/json" });
+
+      await api.restorePostgresTarget("postgres-1", file);
+
+      const request = fetchMock.mock.calls[0][1] as RequestInit;
+      expect(new Headers(request.headers).get("Content-Type")).toBe("application/octet-stream");
+      expect(request.body).toBe(file);
+    });
+
     it("deployments requests the expanded history limit", async () => {
       const fetchMock = mockFetch([]);
 
@@ -438,6 +481,21 @@ describe("api client", () => {
       const fetchMock = mockFetch(undefined, { status: 204 });
       await api.deleteCloudflareTunnel("cft_1", true);
       expect(fetchMock).toHaveBeenCalledWith("/api/cloudflare/tunnels/cft_1?force=true", expect.objectContaining({ method: "DELETE" }));
+    });
+
+    it("controls cloudflared using the deployment node id", async () => {
+      const fetchMock = mockFetch({ ok: true });
+      await api.startCloudflared("node_master_local");
+      expect(fetchMock).toHaveBeenLastCalledWith("/api/cloudflare/tunnels/node/node_master_local/start", expect.objectContaining({ method: "POST" }));
+      await api.stopCloudflared("node_master_local");
+      expect(fetchMock).toHaveBeenLastCalledWith("/api/cloudflare/tunnels/node/node_master_local/stop", expect.objectContaining({ method: "POST" }));
+      await api.restartCloudflared("node_master_local");
+      expect(fetchMock).toHaveBeenLastCalledWith("/api/cloudflare/tunnels/node/node_master_local/restart", expect.objectContaining({ method: "POST" }));
+    });
+
+    it("preserves managed-hostname deletion warnings", async () => {
+      mockFetch({ ok: true, warnings: ["DNS record was already missing."] });
+      await expect(api.deleteCloudflareHostname("route_1")).resolves.toEqual({ ok: true, warnings: ["DNS record was already missing."] });
     });
 
     it("saves the FRP public endpoint", async () => {

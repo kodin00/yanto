@@ -1,4 +1,5 @@
 import type { ContainerInfo } from "../../shared/types.js";
+import { HttpError } from "../http-utils.js";
 import { runCommand } from "./commands.js";
 
 type DockerPsLine = {
@@ -33,9 +34,9 @@ function parseJsonLines<T>(input: string) {
     });
 }
 
-function validateContainerId(id: string): string {
+export function validateContainerId(id: string): string {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id)) {
-    throw new Error("Invalid container identifier.");
+    throw new HttpError(400, "Invalid container identifier.");
   }
   return id;
 }

@@ -4,6 +4,8 @@ import jwt from "jsonwebtoken";
 import { config } from "./config.js";
 
 const cookieName = "yanto_session";
+const sessionIssuer = "yanto";
+const sessionAudience = "yanto-dashboard";
 
 type SessionPayload = {
   sub: string;
@@ -31,11 +33,17 @@ export function setSessionCookie(res: Response) {
       username: config.adminUsername
     },
     config.jwtSecret,
-    { expiresIn: "7d" }
+    {
+      algorithm: "HS256",
+      audience: sessionAudience,
+      expiresIn: "7d",
+      issuer: sessionIssuer
+    }
   );
 
   res.cookie(cookieName, token, {
     httpOnly: true,
+    path: "/",
     sameSite: "lax",
     secure: config.cookieSecure,
     maxAge: 7 * 24 * 60 * 60 * 1000
@@ -43,7 +51,12 @@ export function setSessionCookie(res: Response) {
 }
 
 export function clearSessionCookie(res: Response) {
-  res.clearCookie(cookieName);
+  res.clearCookie(cookieName, {
+    httpOnly: true,
+    path: "/",
+    sameSite: "lax",
+    secure: config.cookieSecure
+  });
 }
 
 export function currentUser(req: Request): SessionPayload | null {
@@ -52,7 +65,19 @@ export function currentUser(req: Request): SessionPayload | null {
     return null;
   }
   try {
-    return jwt.verify(token, config.jwtSecret) as SessionPayload;
+    const payload = jwt.verify(token, config.jwtSecret, {
+      algorithms: ["HS256"],
+      audience: sessionAudience,
+      issuer: sessionIssuer
+    });
+    if (
+      typeof payload === "string" ||
+      payload.sub !== "admin" ||
+      payload.username !== config.adminUsername
+    ) {
+      return null;
+    }
+    return { sub: payload.sub, username: payload.username };
   } catch {
     return null;
   }

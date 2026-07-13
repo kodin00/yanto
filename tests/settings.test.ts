@@ -17,7 +17,8 @@ vi.mock("../src/server/db/index.js", () => ({
   }
 }));
 
-import { publicMultiNodeSettings, saveMultiNodeSettings } from "../src/server/services/settings.js";
+import { decrypt, encrypt, isEncrypted } from "../src/server/services/crypto.js";
+import { getStoredR2Settings, publicMultiNodeSettings, saveMultiNodeSettings, saveR2Settings } from "../src/server/services/settings.js";
 
 describe("multi-node settings", () => {
   beforeEach(() => {
@@ -67,5 +68,59 @@ describe("multi-node settings", () => {
       value: JSON.stringify({ enabled: true }),
       updatedAt: expect.any(Date)
     }));
+  });
+});
+
+describe("R2 credential storage", () => {
+  beforeEach(() => {
+    for (const mock of Object.values(dbMocks)) mock.mockReset();
+    dbMocks.select.mockReturnValue({ from: dbMocks.from });
+    dbMocks.from.mockReturnValue({ where: dbMocks.where });
+    dbMocks.where.mockReturnValue({ limit: dbMocks.limit });
+    dbMocks.insert.mockReturnValue({ values: dbMocks.values });
+    dbMocks.values.mockReturnValue({ onConflictDoUpdate: dbMocks.onConflictDoUpdate });
+    dbMocks.onConflictDoUpdate.mockResolvedValue(undefined);
+  });
+
+  it("reads both legacy plaintext and encrypted credentials", async () => {
+    dbMocks.limit.mockResolvedValueOnce([{ value: JSON.stringify({
+      enabled: true,
+      accountId: "a".repeat(32),
+      bucket: "backups",
+      accessKeyId: "legacy-access",
+      secretAccessKey: encrypt("encrypted-secret"),
+      prefix: "dumps"
+    }) }]);
+
+    await expect(getStoredR2Settings()).resolves.toMatchObject({
+      accessKeyId: "legacy-access",
+      secretAccessKey: "encrypted-secret"
+    });
+  });
+
+  it("encrypts both credentials when settings are saved", async () => {
+    let persisted = "";
+    dbMocks.limit.mockImplementation(async () => persisted ? [{ value: persisted }] : []);
+    dbMocks.values.mockImplementation((row: { value: string }) => {
+      persisted = row.value;
+      return { onConflictDoUpdate: dbMocks.onConflictDoUpdate };
+    });
+
+    await saveR2Settings({
+      enabled: true,
+      accountId: "a".repeat(32),
+      bucket: "backups",
+      accessKeyId: "access-key",
+      secretAccessKey: "secret-key",
+      prefix: "dumps"
+    });
+
+    const stored = JSON.parse(persisted) as { accessKeyId: string; secretAccessKey: string };
+    expect(isEncrypted(stored.accessKeyId)).toBe(true);
+    expect(isEncrypted(stored.secretAccessKey)).toBe(true);
+    expect(decrypt(stored.accessKeyId)).toBe("access-key");
+    expect(decrypt(stored.secretAccessKey)).toBe("secret-key");
+    expect(persisted).not.toContain('"accessKeyId":"access-key"');
+    expect(persisted).not.toContain('"secretAccessKey":"secret-key"');
   });
 });

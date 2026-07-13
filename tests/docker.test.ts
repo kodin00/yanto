@@ -6,12 +6,18 @@ vi.mock("../src/server/services/commands.js", () => ({
   runCommand
 }));
 
-import { cleanupDocker, invalidateContainerCache, listContainers, normalizeDockerCreatedAt, previewDockerCleanup, restartContainer, startContainer, stopContainer } from "../src/server/services/docker.js";
+import { cleanupDocker, invalidateContainerCache, listContainers, normalizeDockerCreatedAt, previewDockerCleanup, restartContainer, startContainer, stopContainer, validateContainerId } from "../src/server/services/docker.js";
 
 describe("docker helpers", () => {
   beforeEach(() => {
     runCommand.mockReset();
     invalidateContainerCache();
+  });
+
+  it("rejects Docker option injection in container identifiers", () => {
+    expect(validateContainerId("web-1")).toBe("web-1");
+    expect(() => validateContainerId("--help")).toThrow("Invalid container identifier");
+    expect(() => validateContainerId("web/name")).toThrow("Invalid container identifier");
   });
 
   it("shares one Docker read across concurrent callers", async () => {

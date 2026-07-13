@@ -17,7 +17,12 @@ describe("worker install/runtime files", () => {
     expect(dockerfile).toContain("YANTO_NODE_ROLE");
     expect(dockerfile).toContain("dist/server/server/worker.js");
     expect(dockerfile).toContain("dist/server/server/index.js");
+    expect(dockerfile).toContain("then exec node dist/server/server/worker.js");
+    expect(dockerfile).toContain("else exec node dist/server/server/index.js");
     expect(dockerfile).toContain("FRP_VERSION=0.69.0");
+    expect(dockerfile).toContain("ARG TARGETARCH\n");
+    expect(dockerfile).not.toContain("ARG TARGETARCH=amd64");
+    expect(dockerfile).toContain("24a4fc82b4c041835103419685ea124c4d6a7dbf83d0425481c5831b4ce4b3a4");
     expect(dockerfile).toContain("sha256sum -c");
   });
 
@@ -27,5 +32,9 @@ describe("worker install/runtime files", () => {
     expect(installer).toContain("master|worker");
     expect(installer).toContain("compose.worker.yml");
     expect(installer).toContain("--join-token");
+    expect(installer).toContain("JWT_SECRET=change-this-to-a-long-random-secret");
+    expect(installer).toContain("ADMIN_PASSWORD=change-this-admin-password");
+    expect(installer).toContain("POSTGRES_PASSWORD=$(random_secret)");
+    expect(installer).toContain("chmod 600 .env");
   });
 });

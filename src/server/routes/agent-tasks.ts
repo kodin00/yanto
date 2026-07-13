@@ -90,7 +90,7 @@ router.get("/api/agent/tasks/:id/events/stream", requireAuth, asyncRoute(async (
     if (direct) deliver(event);
     else buffered.push(event);
   });
-  req.once("close", cleanup);
+  res.once("close", cleanup);
 
   try {
     const task = await getAgentTask(id);

@@ -1,6 +1,6 @@
 import { Copy, KeyRound, Play, Plus, Square, Undo2 } from "lucide-react";
 import { memo } from "react";
-import type { CloudflareRoute, CloudflareRouteDiagnostic, ContainerInfo, Deployment, Project } from "../../shared/types";
+import type { CloudflareRoute, CloudflareRouteDiagnostic, ContainerInfo, Deployment, DeploymentNode, Project } from "../../shared/types";
 import { endpoint, githubWebhookEndpoint } from "../app-utils";
 import { Pagination } from "../components/Pagination";
 import { Button, StatusBadge } from "../components/ui";
@@ -29,6 +29,7 @@ function containerBadge(containers: ContainerInfo[], fallbackCount = 0) {
 type Props = {
   visibleProjects: Project[];
   projects: Project[];
+  nodes: DeploymentNode[];
   containersByProjectFolder: Map<string, ContainerInfo[]>;
   cfRoutesByProject: Record<string, CloudflareRoute[]>;
   routeDiagnosticsByRouteId: Record<string, CloudflareRouteDiagnostic>;
@@ -51,6 +52,7 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
   const {
     visibleProjects,
     projects,
+    nodes,
     containersByProjectFolder,
     cfRoutesByProject,
     routeDiagnosticsByRouteId,
@@ -88,6 +90,7 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
           const runningCount = projectContainers.filter((container) => container.state === "running").length;
           const deploymentStatus = deploymentBadge(latestDeploymentByProject.get(project.id));
           const containerStatus = containerBadge(projectContainers, project.containerCount);
+          const localRuntimeControl = nodes.find((node) => node.id === project.targetNodeId)?.role === "master";
           return (
             <article
               className="project-card"
@@ -155,6 +158,8 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
                   </Button>
                   <Button
                     variant="secondary"
+                    disabled={!localRuntimeControl}
+                    title={localRuntimeControl ? undefined : "Project runtime controls are not available for worker nodes yet."}
                     onClick={() =>
                       setConfirm({
                         title: "Stop project",
@@ -198,6 +203,7 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
           );
         })}
       </div>
+      {!loading && !projects.length ? <p className="muted">No projects registered yet. Add a project to configure and deploy it.</p> : null}
       <Pagination label="Projects" page={projectPage} totalItems={projects.length} onPageChange={setProjectPage} />
     </section>
   );

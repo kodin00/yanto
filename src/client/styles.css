@@ -609,6 +609,30 @@ button:disabled {
   letter-spacing: -0.03em;
 }
 
+.view-error,
+.view-inline-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 18px;
+  padding: 13px 14px;
+  color: var(--red-dark);
+  background: var(--danger-bg);
+  border: 1px solid color-mix(in srgb, var(--red) 45%, var(--line));
+}
+
+.view-error p,
+.view-inline-error p {
+  margin: 3px 0 0;
+  color: inherit;
+  font-size: 11px;
+}
+
+.view-inline-error {
+  margin-bottom: 0;
+}
+
 .button {
   min-height: 38px;
   display: inline-flex;

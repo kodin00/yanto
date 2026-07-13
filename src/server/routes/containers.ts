@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { requireAuth } from "../auth.js";
 import { asyncRoute, actor, routeParam, sendStreamEvent, startEventStream } from "../http-utils.js";
 import { recordAuditLog } from "../services/audit.js";
-import { containerLogs, listContainers, restartContainer, startContainer, stopContainer } from "../services/docker.js";
+import { containerLogs, listContainers, restartContainer, startContainer, stopContainer, validateContainerId } from "../services/docker.js";
 
 const router = Router();
 
@@ -27,16 +27,42 @@ router.get(
   "/api/containers/:id/logs/stream",
   requireAuth,
   asyncRoute(async (req, res) => {
+    const containerId = validateContainerId(routeParam(req, "id"));
     startEventStream(res);
     let closed = false;
-    const child = spawn("docker", ["logs", "--tail", "500", "--follow", routeParam(req, "id")], {
+    let waitingForDrain = false;
+    const child = spawn("docker", ["logs", "--tail", "500", "--follow", containerId], {
       env: process.env,
       shell: false
     });
 
+    const resumeStreams = () => {
+      waitingForDrain = false;
+      if (closed) return;
+      child.stdout.resume();
+      child.stderr.resume();
+    };
+
+    const pauseForBackpressure = () => {
+      if (waitingForDrain || closed) return;
+      waitingForDrain = true;
+      child.stdout.pause();
+      child.stderr.pause();
+      res.once("drain", resumeStreams);
+    };
+
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      res.off("drain", resumeStreams);
+      child.stdout.pause();
+      child.stderr.pause();
+      if (!child.killed) child.kill("SIGTERM");
+    };
+
     const sendChunk = (buffer: Buffer) => {
       if (closed) return;
-      sendStreamEvent(res, { chunk: buffer.toString() });
+      if (!sendStreamEvent(res, { chunk: buffer.toString() })) pauseForBackpressure();
     };
 
     child.stdout.on("data", sendChunk);
@@ -44,20 +70,18 @@ router.get(
     child.on("error", (error) => {
       if (closed) return;
       sendStreamEvent(res, { error: error.message, done: true });
-      closed = true;
+      cleanup();
       res.end();
     });
     child.on("close", (exitCode) => {
       if (closed) return;
       sendStreamEvent(res, { chunk: `\nLog stream closed${exitCode ? ` with exit code ${exitCode}` : ""}.\n`, done: true });
       closed = true;
+      res.off("drain", resumeStreams);
       res.end();
     });
 
-    req.on("close", () => {
-      closed = true;
-      child.kill("SIGTERM");
-    });
+    res.once("close", cleanup);
   })
 );
 

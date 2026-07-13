@@ -13,9 +13,9 @@ import { HttpError } from "../http-utils.js";
 import { cleanupTaskWorktree, pruneTaskWorktrees } from "./agent-worktrees.js";
 import { agentProjectLifecycleKey, withAgentLifecycleLock } from "./agent-lifecycle.js";
 
-export function publicProject<T extends { deployToken: string }>(project: T): Omit<T, "deployToken"> {
+export function publicProject<T extends { deployToken: string; sshPrivateKeyPath?: string | null }>(project: T): Omit<T, "deployToken" | "sshPrivateKeyPath"> {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructured to exclude from output
-  const { deployToken, ...rest } = project;
+  const { deployToken, sshPrivateKeyPath, ...rest } = project;
   return rest;
 }
 

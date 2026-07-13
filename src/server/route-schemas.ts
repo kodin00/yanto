@@ -43,8 +43,8 @@ export const backupInput = z.object({
 
 export const r2SettingsInput = z.object({
   enabled: z.boolean().optional().default(false),
-  accountId: z.string().optional().default(""),
-  bucket: z.string().optional().default(""),
+  accountId: z.string().trim().refine((value) => !value || /^[a-fA-F0-9]{32}$/.test(value), "Cloudflare account ID must be 32 hexadecimal characters").optional().default(""),
+  bucket: z.string().trim().refine((value) => !value || /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(value), "R2 bucket must be a 3-63 character lowercase bucket name").optional().default(""),
   accessKeyId: z.string().optional().default(""),
   secretAccessKey: z.string().optional().default(""),
   prefix: z.string().optional().default("postgres-dumps")
@@ -109,28 +109,34 @@ export const cloudflareDnsRecordInput = z.object({
 });
 
 export const workerRegisterInput = z.object({
-  joinToken: z.string().min(1),
-  name: z.string().optional(),
-  dockerVersion: z.string().optional().nullable(),
-  labels: z.record(z.string(), z.unknown()).optional()
+  joinToken: z.string().min(1).max(1_000),
+  name: z.string().trim().max(200).optional(),
+  dockerVersion: z.string().trim().max(200).optional().nullable(),
+  labels: z.record(
+    z.string().max(100),
+    z.union([z.string().max(500), z.number(), z.boolean(), z.null()])
+  ).refine((value) => Object.keys(value).length <= 64, "Worker labels are limited to 64 entries").optional()
 });
 
 export const workerHeartbeatInput = z.object({
-  name: z.string().optional(),
-  dockerVersion: z.string().optional().nullable(),
-  labels: z.record(z.string(), z.unknown()).optional()
+  name: z.string().trim().max(200).optional(),
+  dockerVersion: z.string().trim().max(200).optional().nullable(),
+  labels: z.record(
+    z.string().max(100),
+    z.union([z.string().max(500), z.number(), z.boolean(), z.null()])
+  ).refine((value) => Object.keys(value).length <= 64, "Worker labels are limited to 64 entries").optional()
 });
 
 export const workerLogInput = z.object({
-  chunk: z.string()
+  chunk: z.string().max(256 * 1024)
 });
 
 export const workerDeploymentUpdateInput = z.object({
   status: z.enum(["success", "failed"]).optional(),
   exitCode: z.number().int().nullable().optional(),
-  commitSha: z.string().nullable().optional(),
-  commitMessage: z.string().nullable().optional(),
-  targetRef: z.string().nullable().optional()
+  commitSha: z.string().max(128).nullable().optional(),
+  commitMessage: z.string().max(2_000).nullable().optional(),
+  targetRef: z.string().max(1_000).nullable().optional()
 });
 
 const frpHost = z.string().trim().min(1).max(255).refine(

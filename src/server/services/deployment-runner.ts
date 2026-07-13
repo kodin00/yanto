@@ -7,6 +7,11 @@ import { pathExists } from "./paths.js";
 import { writeProjectEnv, writeProjectEnvVariables } from "./project-env.js";
 import { gitSshEnv, resolveGitPrivateKeyPath } from "./ssh.js";
 
+export type DeploymentProject = Pick<
+  ProjectRow,
+  "id" | "name" | "localPath" | "gitUrl" | "branch" | "composeFile" | "composeContent" | "envFile" | "autoStart" | "folderName"
+>;
+
 export type DeploymentMetadata = {
   commitSha?: string | null;
   commitMessage?: string | null;
@@ -20,19 +25,73 @@ export type PendingDeploymentEnv =
 export type DeploymentRunnerCallbacks = {
   appendLog: (chunk: string) => Promise<void>;
   updateMetadata?: (metadata: DeploymentMetadata) => Promise<void>;
+  signal?: AbortSignal;
 };
+
+const MAX_PENDING_LOG_CHARS = 256 * 1024;
+const DROPPED_LOG_NOTICE = "\n[... deployment output skipped while log storage was catching up ...]\n";
+
+function createBufferedLogWriter(appendLog: (chunk: string) => Promise<void>) {
+  let pending = "";
+  let writer: Promise<void> | undefined;
+  let failure: unknown;
+
+  const drain = async () => {
+    while (pending && !failure) {
+      const chunk = pending;
+      pending = "";
+      await appendLog(chunk);
+    }
+  };
+
+  const start = () => {
+    if (writer || failure || !pending) return;
+    const current = drain()
+      .catch((error) => {
+        failure = error;
+      })
+      .finally(() => {
+        if (writer === current) writer = undefined;
+        if (pending && !failure) start();
+      });
+    writer = current;
+  };
+
+  return {
+    write(chunk: string) {
+      if (!chunk || failure) return;
+      pending += chunk;
+      if (pending.length > MAX_PENDING_LOG_CHARS) {
+        pending = DROPPED_LOG_NOTICE + pending.slice(-(MAX_PENDING_LOG_CHARS - DROPPED_LOG_NOTICE.length));
+      }
+      start();
+    },
+    async flush() {
+      while (writer || pending) {
+        start();
+        if (writer) await writer;
+        if (failure) throw failure;
+      }
+      if (failure) throw failure;
+    }
+  };
+}
 
 async function runLogged(callbacks: DeploymentRunnerCallbacks, command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<void>;
 async function runLogged(callbacks: DeploymentRunnerCallbacks, command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv | undefined, returnOutput: true): Promise<string>;
 async function runLogged(callbacks: DeploymentRunnerCallbacks, command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv, returnOutput?: boolean): Promise<string | void> {
+  callbacks.signal?.throwIfAborted();
   await callbacks.appendLog(`$ ${command} ${args.join(" ")}\n`);
+  const logWriter = createBufferedLogWriter(callbacks.appendLog);
   const result = await runCommand(command, args, {
     cwd,
     env,
-    onData: (chunk) => {
-      void callbacks.appendLog(chunk);
-    }
+    signal: callbacks.signal,
+    killProcessGroup: true,
+    onData: (chunk) => logWriter.write(chunk)
   });
+  await logWriter.flush();
+  callbacks.signal?.throwIfAborted();
   await callbacks.appendLog("\n");
   if (result.exitCode !== 0) {
     const tail = result.output.trim().split("\n").slice(-12).join("\n");
@@ -41,8 +100,10 @@ async function runLogged(callbacks: DeploymentRunnerCallbacks, command: string, 
   if (returnOutput) return result.output;
 }
 
-async function commandOutput(command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv) {
-  const result = await runCommand(command, args, { cwd, env });
+async function commandOutput(callbacks: DeploymentRunnerCallbacks, command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv) {
+  callbacks.signal?.throwIfAborted();
+  const result = await runCommand(command, args, { cwd, env, signal: callbacks.signal, killProcessGroup: true });
+  callbacks.signal?.throwIfAborted();
   if (result.exitCode !== 0) {
     throw new Error(result.output || `${command} ${args.join(" ")} failed.`);
   }
@@ -56,8 +117,10 @@ function countLines(output: string) {
     .filter(Boolean).length;
 }
 
-async function commandSucceeds(command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv) {
-  const result = await runCommand(command, args, { cwd, env });
+async function commandSucceeds(callbacks: DeploymentRunnerCallbacks, command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv) {
+  callbacks.signal?.throwIfAborted();
+  const result = await runCommand(command, args, { cwd, env, signal: callbacks.signal, killProcessGroup: true });
+  callbacks.signal?.throwIfAborted();
   return result.exitCode === 0;
 }
 
@@ -74,7 +137,7 @@ async function replaceComposeDeployment(callbacks: DeploymentRunnerCallbacks, co
   await runLogged(callbacks, "docker", [...composeArgs, "up", "-d", "--build", "--remove-orphans"], cwd);
 }
 
-async function detectComposeFile(project: ProjectRow) {
+async function detectComposeFile(project: DeploymentProject) {
   const configured = project.composeFile || "docker-compose.yml";
   if (await pathExists(path.join(project.localPath, configured))) {
     return configured;
@@ -90,7 +153,8 @@ async function detectComposeFile(project: ProjectRow) {
   return configured;
 }
 
-export async function runProjectDeployment(project: ProjectRow, deployment: DeploymentRow, callbacks: DeploymentRunnerCallbacks, pendingEnv?: PendingDeploymentEnv) {
+export async function runProjectDeployment(project: DeploymentProject, deployment: DeploymentRow, callbacks: DeploymentRunnerCallbacks, pendingEnv?: PendingDeploymentEnv) {
+  callbacks.signal?.throwIfAborted();
   const privateKeyPath = await resolveGitPrivateKeyPath();
   const env = gitSshEnv(privateKeyPath);
   await callbacks.appendLog(`Starting deployment for ${project.name}\n`);
@@ -123,7 +187,7 @@ export async function runProjectDeployment(project: ProjectRow, deployment: Depl
       await runLogged(callbacks, "git", ["checkout", targetRef], project.localPath, env);
     } else {
       await runLogged(callbacks, "git", ["fetch", "origin", project.branch], project.localPath, env);
-      if (await commandSucceeds("git", ["rev-parse", "--verify", project.branch], project.localPath, env)) {
+      if (await commandSucceeds(callbacks, "git", ["rev-parse", "--verify", project.branch], project.localPath, env)) {
         await runLogged(callbacks, "git", ["checkout", project.branch], project.localPath, env);
         await runLogged(callbacks, "git", ["pull", "--ff-only", "origin", project.branch], project.localPath, env);
       } else {
@@ -135,13 +199,17 @@ export async function runProjectDeployment(project: ProjectRow, deployment: Depl
   }
 
   if (gitDirExists) {
-    const commitSha = await commandOutput("git", ["rev-parse", "HEAD"], project.localPath, env);
-    const commitMessage = await commandOutput("git", ["log", "-1", "--pretty=%s"], project.localPath, env).catch(() => "");
+    const commitSha = await commandOutput(callbacks, "git", ["rev-parse", "HEAD"], project.localPath, env);
+    const commitMessage = await commandOutput(callbacks, "git", ["log", "-1", "--pretty=%s"], project.localPath, env).catch(() => {
+      callbacks.signal?.throwIfAborted();
+      return "";
+    });
     await callbacks.updateMetadata?.({ commitSha, commitMessage, targetRef: deployment.targetRef ?? commitSha });
     await callbacks.appendLog(`Using commit ${commitSha}${commitMessage ? ` (${commitMessage})` : ""}.\n`);
   }
 
   if (pendingEnv) {
+    callbacks.signal?.throwIfAborted();
     if (pendingEnv.mode === "text") {
       await writeProjectEnv(project, pendingEnv.content, pendingEnv.envFile);
     } else {
@@ -151,6 +219,7 @@ export async function runProjectDeployment(project: ProjectRow, deployment: Depl
   }
 
   const composeFile = await detectComposeFile(project);
+  callbacks.signal?.throwIfAborted();
   if (project.composeContent?.trim()) {
     const composePath = path.join(project.localPath, composeFile);
     await fs.mkdir(path.dirname(composePath), { recursive: true });

@@ -130,4 +130,45 @@ describe("project deployment runner", () => {
     expect(logs.join("")).toContain("Wrote .env after source checkout.");
     await expect(fs.readFile(path.join(tempDir, ".env"), "utf8")).resolves.toBe("APP_PORT=3000\n");
   });
+
+  it("serializes streamed output and waits for log persistence before finishing", async () => {
+    await fs.writeFile(path.join(tempDir, "compose.yml"), "services:\n  web:\n    image: nginx\n");
+    commandMocks.runCommand.mockImplementation(async (command: string, args: string[], options: { onData?: (chunk: string) => void }) => {
+      if (command === "docker" && args.at(-1) === "running") {
+        options.onData?.("first chunk\n");
+        options.onData?.("second chunk\n");
+      }
+      return { exitCode: 0, output: "" };
+    });
+
+    const logs: string[] = [];
+    let activeWrites = 0;
+    let maxActiveWrites = 0;
+    await runProjectDeployment(project(), deployment(), {
+      appendLog: async (chunk) => {
+        activeWrites += 1;
+        maxActiveWrites = Math.max(maxActiveWrites, activeWrites);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        logs.push(chunk);
+        activeWrites -= 1;
+      }
+    });
+
+    expect(maxActiveWrites).toBe(1);
+    expect(logs.join("")).toContain("first chunk\nsecond chunk\n");
+    expect(activeWrites).toBe(0);
+  });
+
+  it("forwards cancellation to deployment process groups", async () => {
+    await fs.writeFile(path.join(tempDir, "compose.yml"), "services:\n  web:\n    image: nginx\n");
+    const controller = new AbortController();
+
+    await runProjectDeployment(project(), deployment(), { appendLog: vi.fn(), signal: controller.signal });
+
+    expect(commandMocks.runCommand).toHaveBeenCalledWith(
+      "docker",
+      expect.arrayContaining(["compose"]),
+      expect.objectContaining({ signal: controller.signal, killProcessGroup: true })
+    );
+  });
 });

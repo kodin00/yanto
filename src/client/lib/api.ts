@@ -14,8 +14,9 @@ export type ProjectEnvContent = {
   content: string;
 };
 export type DeploymentEnvPayload =
-  | { envContent: string; envFile?: string }
-  | { envVariables: ProjectEnvVariable[]; envFile?: string };
+  | { targetRef?: string; envContent: string; envVariables?: never; envFile?: string }
+  | { targetRef?: string; envVariables: ProjectEnvVariable[]; envContent?: never; envFile?: string }
+  | { targetRef: string; envContent?: never; envVariables?: never; envFile?: string };
 export type ProjectComposeContent = {
   composeFile: string;
   content: string;
@@ -73,9 +74,27 @@ export type SshKeyStatus = {
   publicKey: string | null;
 };
 
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+let unauthorizedHandler: (() => void) | null = null;
+
+export function setApiUnauthorizedHandler(handler: (() => void) | null) {
+  unauthorizedHandler = handler;
+}
+
 function getCsrfToken(): string {
   const match = document.cookie.match(/(?:^|;\s*)yanto_csrf=([^;]*)/);
-  return match ? decodeURIComponent(match[1]) : "";
+  if (!match) return "";
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return "";
+  }
 }
 
 type InFlightGetRequest = { generation: number; promise: Promise<unknown> };
@@ -83,21 +102,37 @@ type InFlightGetRequest = { generation: number; promise: Promise<unknown> };
 const inFlightGetRequests = new Map<string, InFlightGetRequest>();
 let requestGeneration = 0;
 
+function invalidateReadRequests() {
+  requestGeneration += 1;
+  inFlightGetRequests.clear();
+}
+
+async function responseError(response: Response, fallback: string) {
+  const contentType = response.headers.get("content-type") ?? "";
+  let message = "";
+  if (contentType.includes("application/json")) {
+    const body = await response.json().catch(() => null) as { message?: unknown } | null;
+    if (typeof body?.message === "string") message = body.message;
+  } else if (contentType.includes("text/plain")) {
+    message = (await response.text().catch(() => "")).trim().slice(0, 500);
+  }
+  return new ApiError(message || response.statusText || fallback, response.status);
+}
+
 async function performRequest<T>(path: string, options: RequestInit): Promise<T> {
   const csrfToken = getCsrfToken();
+  const headers = new Headers(options.headers);
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
   const response = await fetch(path, {
+    ...options,
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
-      ...options.headers
-    },
-    ...options
+    headers
   });
 
   if (!response.ok) {
-    const body = (await response.json().catch(() => ({ message: response.statusText }))) as { message?: string };
-    throw new Error(body.message ?? "Request failed.");
+    if (response.status === 401) unauthorizedHandler?.();
+    throw await responseError(response, "Request failed.");
   }
 
   if (response.status === 204) {
@@ -116,8 +151,7 @@ function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (method !== "GET") {
     // A read that began before a mutation is not a valid source for the
     // mutation's follow-up refresh, even when both requests use the same URL.
-    requestGeneration += 1;
-    inFlightGetRequests.clear();
+    invalidateReadRequests();
     return performRequest<T>(path, options);
   }
 
@@ -260,20 +294,23 @@ export const api = {
       body: JSON.stringify(containerId ? { containerId } : {})
     }),
   restorePostgresTarget: async (containerId: string, file: File) => {
+    invalidateReadRequests();
     const csrfToken = getCsrfToken();
     const response = await fetch(`/api/backups/postgres-targets/${containerId}/restore`, {
       method: "POST",
       credentials: "include",
       headers: {
-        "Content-Type": file.type || "application/octet-stream",
+        // Keep the raw restore stream out of Express' JSON/urlencoded parsers,
+        // even if the browser reports a misleading MIME type for the dump.
+        "Content-Type": "application/octet-stream",
         "X-Filename": encodeURIComponent(file.name),
         ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {})
       },
       body: file
     });
     if (!response.ok) {
-      const body = (await response.json().catch(() => ({ message: response.statusText }))) as { message?: string };
-      throw new Error(body.message ?? "Restore failed.");
+      if (response.status === 401) unauthorizedHandler?.();
+      throw await responseError(response, "Restore failed.");
     }
     return response.json() as Promise<{ ok: true; target: PostgresTarget }>;
   },
@@ -358,7 +395,7 @@ export const api = {
   deleteCloudflareAssignment: (id: string) => request<void>(`/api/cloudflare/assignments/${id}`, { method: "DELETE" }),
   cloudflareHostnames: () => request<CloudflareRoute[]>("/api/cloudflare/hostnames"),
   createCloudflareHostname: (payload: { tunnelId: string; assignmentId: string; zoneId: string; hostname: string; protocol: "http" | "https"; port: number; noTlsVerify?: boolean }) => request<CloudflareRoute>("/api/cloudflare/hostnames", { method: "POST", body: JSON.stringify(payload) }),
-  deleteCloudflareHostname: (id: string) => request<void>(`/api/cloudflare/hostnames/${id}`, { method: "DELETE" }),
+  deleteCloudflareHostname: (id: string) => request<void | { ok: true; warnings: string[] }>(`/api/cloudflare/hostnames/${id}`, { method: "DELETE" }),
   retryCloudflareHostname: (id: string) => request<CloudflareRoute>(`/api/cloudflare/hostnames/${id}/retry`, { method: "POST" }),
   cloudflareRouteDiagnostics: () => request<CloudflareRouteDiagnostic[]>("/api/cloudflare/routes/diagnostics"),
   cloudflareDnsRecords: () => request<CloudflareDnsRecord[]>("/api/cloudflare/dns-records"),

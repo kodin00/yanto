@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getStoredR2Settings } from "./settings.js";
@@ -15,6 +16,14 @@ function hmac(key: crypto.BinaryLike, value: string) {
 
 function sha256(value: Buffer | string) {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+async function sha256File(filePath: string) {
+  const hash = crypto.createHash("sha256");
+  for await (const chunk of createReadStream(filePath)) {
+    hash.update(chunk as Buffer);
+  }
+  return hash.digest("hex");
 }
 
 function amzDateParts(date = new Date()) {
@@ -52,14 +61,20 @@ export async function uploadFileToR2(input: UploadInput) {
   if (!settings.accountId || !settings.bucket || !settings.accessKeyId || !settings.secretAccessKey) {
     throw new Error("Cloudflare R2 settings are incomplete.");
   }
+  if (!/^[a-fA-F0-9]{32}$/.test(settings.accountId)) {
+    throw new Error("Cloudflare R2 account ID must be 32 hexadecimal characters.");
+  }
+  if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(settings.bucket)) {
+    throw new Error("Cloudflare R2 bucket must be a 3-63 character lowercase bucket name.");
+  }
 
-  const body = await fs.readFile(input.filePath);
-  const host = `${settings.accountId}.r2.cloudflarestorage.com`;
+  const [stat, payloadHash] = await Promise.all([fs.stat(input.filePath), sha256File(input.filePath)]);
+  if (!stat.isFile()) throw new Error("R2 upload source must be a regular file.");
+  const host = `${settings.accountId.toLowerCase()}.r2.cloudflarestorage.com`;
   const objectKey = [safePrefix(settings.prefix), input.filename].filter(Boolean).join("/");
   const canonicalUri = `/${encodeURIComponent(settings.bucket)}/${encodeKey(objectKey)}`;
   const url = `https://${host}${canonicalUri}`;
   const { amzDate, dateStamp } = amzDateParts();
-  const payloadHash = sha256(body);
   const canonicalHeaders = `host:${host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${amzDate}\n`;
   const signedHeaders = "host;x-amz-content-sha256;x-amz-date";
   const canonicalRequest = ["PUT", canonicalUri, "", canonicalHeaders, signedHeaders, payloadHash].join("\n");
@@ -72,12 +87,14 @@ export async function uploadFileToR2(input: UploadInput) {
     method: "PUT",
     headers: {
       Authorization: `AWS4-HMAC-SHA256 Credential=${settings.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+      "Content-Length": String(stat.size),
       "Content-Type": input.contentType ?? "application/octet-stream",
       "x-amz-content-sha256": payloadHash,
       "x-amz-date": amzDate
     },
-    body
-  });
+    body: createReadStream(input.filePath) as never,
+    duplex: "half"
+  } as RequestInit & { duplex: "half" });
 
   if (!response.ok) {
     const message = await response.text().catch(() => response.statusText);
@@ -89,6 +106,6 @@ export async function uploadFileToR2(input: UploadInput) {
     key: objectKey,
     endpoint: `https://${host}`,
     filename: path.basename(input.filename),
-    size: body.byteLength
+    size: stat.size
   };
 }

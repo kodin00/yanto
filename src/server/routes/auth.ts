@@ -13,6 +13,7 @@ const loginLimiter = rateLimit({
   limit: 5,
   standardHeaders: "draft-7",
   legacyHeaders: false,
+  skipSuccessfulRequests: true,
   message: { message: "Too many login attempts. Try again later." }
 });
 
@@ -20,7 +21,10 @@ router.post(
   "/api/auth/login",
   loginLimiter,
   asyncRoute(async (req, res) => {
-    const body = z.object({ username: z.string(), password: z.string() }).parse(req.body);
+    const body = z.object({
+      username: z.string().max(200),
+      password: z.string().max(10_000)
+    }).parse(req.body);
     const ok = await verifyAdminPassword(body.username, body.password);
     if (!ok) {
       await recordAuditLog({ actor: body.username || "unknown", action: "auth.login.failed", entityType: "auth", metadata: { username: body.username } });

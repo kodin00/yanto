@@ -229,5 +229,5 @@ export async function cleanupTaskWorktree(project: ProjectRow, task: AgentTaskRo
 }
 
 export async function pruneTaskWorktrees(project: ProjectRow) {
-  if (await pathExists(project.localPath)) await git(project, ["worktree", "prune"]);
+  if (await pathExists(path.join(project.localPath, ".git"))) await git(project, ["worktree", "prune"]);
 }
