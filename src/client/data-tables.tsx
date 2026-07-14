@@ -260,13 +260,15 @@ export function ContainerGroups({
   loading,
   onLogs,
   onConfirm,
-  onReload
+  onReload,
+  canControl = () => true
 }: {
   containers: ContainerInfo[];
   loading?: boolean;
   onLogs: (container: ContainerInfo) => void;
   onConfirm: (confirm: LoadingConfirmState) => void;
   onReload: () => Promise<void>;
+  canControl?: (container: ContainerInfo) => boolean;
 }) {
   const createdAtTime = (container: ContainerInfo) => container.createdAt ? Date.parse(container.createdAt) : 0;
   const groups = Array.from(
@@ -301,6 +303,7 @@ export function ContainerGroups({
             {rows.map((container) => {
               const protectedContainer = isProtectedYantoContainer(container);
               const running = container.state === "running";
+              const runtimeAllowed = canControl(container);
               return (
                 <article className="container-row-card" key={container.id}>
                   <div className="container-row-main">
@@ -325,7 +328,7 @@ export function ContainerGroups({
                         <IconButton label="View logs" variant="secondary" onClick={() => void onLogs(container)}>
                           <ScrollText size={15} />
                         </IconButton>
-                        <IconButton
+                        {runtimeAllowed ? <IconButton
                           label="Restart container"
                           variant="secondary"
                           onClick={() =>
@@ -343,8 +346,8 @@ export function ContainerGroups({
                           }
                         >
                           <RotateCw size={15} />
-                        </IconButton>
-                        {running ? (
+                        </IconButton> : null}
+                        {runtimeAllowed && running ? (
                           <IconButton
                             label="Stop container"
                             variant="danger"
@@ -365,7 +368,7 @@ export function ContainerGroups({
                           >
                             <Square size={15} />
                           </IconButton>
-                        ) : (
+                        ) : runtimeAllowed ? (
                           <IconButton
                             label="Start container"
                             variant="secondary"
@@ -385,7 +388,7 @@ export function ContainerGroups({
                           >
                             <Play size={15} />
                           </IconButton>
-                        )}
+                        ) : null}
                       </>
                     )}
                   </div>
@@ -405,7 +408,8 @@ export function DeploymentTable({
   loading,
   onLogs,
   onRetry,
-  compact
+  compact,
+  canRetry = () => true
 }: {
   deployments: Deployment[];
   busy?: string | null;
@@ -413,6 +417,7 @@ export function DeploymentTable({
   onLogs: (deployment: Deployment) => void;
   onRetry?: (deployment: Deployment) => void;
   compact?: boolean;
+  canRetry?: (deployment: Deployment) => boolean;
 }) {
   if (loading && !deployments.length) {
     return <p className="muted">Loading deployments...</p>;
@@ -450,7 +455,7 @@ export function DeploymentTable({
               <td>{durationBetween(deployment.startedAt, deployment.finishedAt)}</td>
               {!compact ? <td>{deploymentChanges(deployment)}</td> : null}
               <td className="table-actions">
-                {!compact && deployment.status === "failed" && onRetry ? (
+                {!compact && deployment.status === "failed" && onRetry && canRetry(deployment) ? (
                   <Button variant="secondary" loading={busy === `deploy:${deployment.projectId}`} onClick={() => onRetry(deployment)} icon={<RotateCw size={15} />}>
                     Retry
                   </Button>

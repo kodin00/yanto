@@ -13,8 +13,11 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-secret}
       MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-localhost:8080,127.0.0.1:8080}
       MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
-      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-this-admin-password}
+      YANTO_SETUP_CODE: ${YANTO_SETUP_CODE:-}
+      # Optional compatibility path for upgrades from the environment-backed
+      # admin account. Fresh installs leave both values empty.
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       PROJECTS_ROOT: /projects
       HOST_PROJECTS_ROOT: ${HOST_PROJECTS_ROOT:-~/projects}
       AGENT_WORKTREES_ROOT: ${AGENT_WORKTREES_ROOT:-/projects/.yanto-worktrees}

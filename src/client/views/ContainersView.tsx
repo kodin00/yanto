@@ -9,10 +9,11 @@ type Props = {
   openContainerLogs: (container: ContainerInfo) => void;
   setConfirm: (state: ConfirmState) => void;
   refreshContainers: () => Promise<void>;
+  canControl: (container: ContainerInfo) => boolean;
 };
 
 export const ContainersView = memo(function ContainersView(props: Props) {
-  const { containers, loading, openContainerLogs, setConfirm, refreshContainers } = props;
+  const { containers, loading, openContainerLogs, setConfirm, refreshContainers, canControl } = props;
 
   return (
     <section className="panel">
@@ -20,7 +21,7 @@ export const ContainersView = memo(function ContainersView(props: Props) {
         <h2>Docker containers</h2>
         <span className="count">{containers.length} found</span>
       </div>
-      <ContainerGroups containers={containers} loading={loading} onLogs={openContainerLogs} onConfirm={(next) => setConfirm(next)} onReload={refreshContainers} />
+      <ContainerGroups containers={containers} loading={loading} onLogs={openContainerLogs} onConfirm={(next) => setConfirm(next)} onReload={refreshContainers} canControl={canControl} />
     </section>
   );
 });

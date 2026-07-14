@@ -2,7 +2,7 @@ import path from "node:path";
 
 const requiredSecretFallback = "change-this-to-a-long-random-secret";
 const unsafeSecretValues = new Set([requiredSecretFallback, "change-this-worker-token-secret"]);
-const unsafeAdminPasswords = new Set(["admin", "change-this-admin-password"]);
+const unsafeLegacyAdminPasswords = new Set(["admin", "change-this-admin-password"]);
 const unsafeWorkerJoinTokens = new Set(["change-this-worker-join-token"]);
 const projectsRoot = path.resolve(process.env.PROJECTS_ROOT ?? "/projects");
 const agentWorktreesRoot = path.resolve(process.env.AGENT_WORKTREES_ROOT ?? path.join(projectsRoot, ".yanto-worktrees"));
@@ -39,8 +39,9 @@ export const config = {
   mcpTokenSecret: configuredSecret(process.env.MCP_TOKEN_SECRET, process.env.WORKER_TOKEN_SECRET, process.env.JWT_SECRET),
   mcpAllowedHosts: process.env.MCP_ALLOWED_HOSTS ?? "",
   mcpAllowedOrigins: process.env.MCP_ALLOWED_ORIGINS ?? "",
-  adminUsername: process.env.ADMIN_USERNAME ?? "admin",
-  adminPassword: process.env.ADMIN_PASSWORD ?? "admin",
+  initialSetupCode: process.env.YANTO_SETUP_CODE ?? "",
+  legacyAdminUsername: process.env.ADMIN_USERNAME?.trim() ?? "",
+  legacyAdminPassword: process.env.ADMIN_PASSWORD ?? "",
   projectsRoot,
   agentWorktreesRoot,
   hostAgentWorktreesRoot: process.env.HOST_AGENT_WORKTREES_ROOT ?? path.join(hostProjectsRoot, path.relative(projectsRoot, agentWorktreesRoot)),
@@ -90,8 +91,8 @@ export function warnOnUnsafeDefaults() {
   if (config.nodeRole === "master" && config.jwtSecret === requiredSecretFallback) {
     console.warn("JWT_SECRET is using the default value. Set a strong secret before exposing this app.");
   }
-  if (config.nodeRole === "master" && unsafeAdminPasswords.has(config.adminPassword)) {
-    console.warn("ADMIN_PASSWORD is using a known placeholder value. Set a strong admin password.");
+  if (config.nodeRole === "master" && config.legacyAdminPassword && unsafeLegacyAdminPasswords.has(config.legacyAdminPassword)) {
+    console.warn("Legacy ADMIN_PASSWORD is using a known placeholder value. Change it before database-owner migration.");
   }
   if (config.nodeRole === "master" && unsafeSecretValues.has(config.workerTokenSecret)) {
     console.warn("WORKER_TOKEN_SECRET is using the default value. Set a strong secret before enrolling workers.");

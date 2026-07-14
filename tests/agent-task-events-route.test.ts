@@ -20,7 +20,15 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("../src/server/auth.js", () => ({
   currentUser: () => ({ username: "admin" }),
-  requireAuth: (_req: Request, _res: Response, next: NextFunction) => next()
+  authPrincipal: (req: Request) => req.yantoAuth,
+  requireOwner: (req: Request, res: Response, next: NextFunction) => {
+    if (req.header("authorization") === "member") {
+      res.status(403).json({ message: "Owner access required." });
+      return;
+    }
+    req.yantoAuth = { id: "usr_owner", username: "admin", role: "owner", status: "active", sessionVersion: 1, projectAccess: [] };
+    next();
+  }
 }));
 vi.mock("../src/server/services/audit.js", () => ({ recordAuditLog: vi.fn() }));
 vi.mock("../src/server/services/agent-events.js", () => ({ agentEventBus: { subscribe: mocks.subscribe } }));
@@ -148,6 +156,27 @@ describe("agent task event streaming", () => {
 
       expect(removed.status).toBe(204);
       expect(mocks.cleanupAgentTask).toHaveBeenCalledWith("agt_test", true);
+    } finally {
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+        server.closeAllConnections();
+      });
+    }
+  });
+
+  it("blocks delegated users even when they have a legacy tasks grant", async () => {
+    const server = createApp().listen(0);
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Server did not start.");
+      const base = `http://127.0.0.1:${address.port}`;
+      const options = { headers: { authorization: "member" } };
+      const [listed, created, run] = await Promise.all([
+        fetch(`${base}/api/agent/tasks`, options),
+        fetch(`${base}/api/agent/tasks`, { ...options, method: "POST", headers: { ...options.headers, "content-type": "application/json" }, body: JSON.stringify({}) }),
+        fetch(`${base}/api/agent/tasks/agt_test/run`, { ...options, method: "POST", headers: { ...options.headers, "content-type": "application/json" }, body: "{}" })
+      ]);
+      expect([listed.status, created.status, run.status]).toEqual([403, 403, 403]);
     } finally {
       await new Promise<void>((resolve) => {
         server.close(() => resolve());

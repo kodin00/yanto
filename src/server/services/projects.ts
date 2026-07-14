@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { agentTasks, cloudflareRoutes, projects } from "../db/schema.js";
 import { createDeployToken, createId } from "./tokens.js";
@@ -67,6 +67,8 @@ export async function createProject(input: CreateProjectInput) {
   const targetNode = await assertDeployableNode(input.targetNodeId?.trim() || config.localNodeId);
   const id = createId("prj");
   const folderName = input.folderName.trim() || slugifyFolderName(input.name);
+  const [folderConflict] = await db.select({ id: projects.id }).from(projects).where(eq(projects.folderName, folderName)).limit(1);
+  if (folderConflict) throw new HttpError(409, "That project folder is already in use.");
   const localPath = projectPath(folderName);
   const gitUrl = input.gitUrl?.trim() || null;
   const composeFile = normalizeComposeFile(input.composeFile ?? "docker-compose.yml");
@@ -138,6 +140,9 @@ export async function updateProject(id: string, input: Partial<CreateProjectInpu
   if (input.folderName !== undefined) {
     const folderName = input.folderName.trim() || (input.name ? slugifyFolderName(input.name) : "");
     if (folderName) {
+      const [folderConflict] = await db.select({ id: projects.id }).from(projects)
+        .where(and(eq(projects.folderName, folderName), ne(projects.id, id))).limit(1);
+      if (folderConflict) throw new HttpError(409, "That project folder is already in use.");
       patch.folderName = folderName;
       patch.localPath = projectPath(folderName);
     }

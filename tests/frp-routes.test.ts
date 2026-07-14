@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../src/server/auth.js", () => ({
   currentUser: () => ({ username: "admin" }),
-  requireAuth: (req: Request, res: Response, next: NextFunction) => {
+  requireOwner: (req: Request, res: Response, next: NextFunction) => {
     if (req.header("authorization") === "ok") return next();
     res.status(401).json({ message: "Authentication required." });
   }

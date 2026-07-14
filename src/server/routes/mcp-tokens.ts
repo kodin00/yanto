@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireAuth } from "../auth.js";
+import { requireOwner } from "../auth.js";
 import { asyncRoute, actor, routeParam } from "../http-utils.js";
 import { mcpTokenCreateInput } from "../route-schemas.js";
 import { createMcpAccessToken, listMcpAccessTokens, revokeMcpAccessToken } from "../services/mcp-tokens.js";
@@ -9,7 +9,7 @@ const router = Router();
 
 router.get(
   "/api/mcp-tokens",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (_req, res) => {
     res.json(await listMcpAccessTokens());
   })
@@ -17,7 +17,7 @@ router.get(
 
 router.post(
   "/api/mcp-tokens",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (req, res) => {
     const body = mcpTokenCreateInput.parse(req.body ?? {});
     const result = await createMcpAccessToken(body);
@@ -34,7 +34,7 @@ router.post(
 
 router.delete(
   "/api/mcp-tokens/:id",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (req, res) => {
     const id = routeParam(req, "id");
     const token = await revokeMcpAccessToken(id);

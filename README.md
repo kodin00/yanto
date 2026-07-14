@@ -1,6 +1,6 @@
 # Yanto Deploy
 
-A small personal deployment platform for a single VPS. It registers Git projects, deploys them with Docker Compose, exposes a token-protected deploy endpoint, and gives you a compact dashboard for deployments, containers, logs, and host usage.
+A small deployment platform for a VPS. It registers Git projects, deploys them with Docker Compose, exposes a token-protected deploy endpoint, and gives you a compact dashboard for deployments, containers, logs, and host usage.
 
 ## Quick Start
 
@@ -11,7 +11,7 @@ npm run build
 make docker
 ```
 
-Open `http://localhost:8080` and sign in with `ADMIN_USERNAME` and `ADMIN_PASSWORD` from `.env`.
+Open `http://localhost:8080` and create the first owner. Set `YANTO_SETUP_CODE` in `.env`, or read the generated one-time code with `docker compose logs app`.
 
 ## One-Line Install
 
@@ -27,7 +27,7 @@ Worker node:
 curl -fsSL https://raw.githubusercontent.com/kodin00/yanto/master/scripts/install.sh | sudo bash -s -- worker --master http://MASTER_IP:PORT --join-token TOKEN
 ```
 
-The installer supports Ubuntu/Debian hosts. It installs Git and Docker when missing, clones Yanto into `/opt/yanto`, and starts Docker Compose.
+The installer supports Ubuntu/Debian hosts. It installs Git and Docker when missing, clones Yanto into `/opt/yanto`, starts Docker Compose, and prints the one-time code used to create the first owner.
 
 ## Docker Runtime
 
@@ -38,11 +38,27 @@ The app is designed to run with:
 - `${SSH_SOURCE_DIR:-~/.ssh}:/root/.ssh:ro` so Git deployments use the SSH key you configured on the VPS.
 - A persistent SSH volume at `/data/ssh` is reserved for app-managed keys.
 
-Docker socket access is powerful. Run this only for your own trusted admin dashboard.
+Docker socket access is powerful. Only the Yanto owner can grant delegated project access; keep owner access and the host itself trusted.
+
+## Users and project access
+
+The first account is Yanto's owner. The owner can invite additional username/password accounts from **Settings → Users & Access**, assign projects, and grant project capabilities for deployments, runtime controls, configuration, secrets, backups, and hostnames. Assignment itself grants read access to the project's status, deployment/container logs, and audit entries.
+
+Nodes, system settings and logs, DNS, FRP, AI Tasks and provider credentials, MCP tokens, host cleanup, and unowned Docker resources remain owner-only. AI Tasks execute host-native commands in the Yanto container and therefore cannot provide a secure project boundary for delegated users. Invite and password-reset links are shown once for the owner to copy and expire after 24 hours.
+
+Project permissions are an application authorization boundary, not hostile-code isolation. A user who can change project code or Compose configuration and deploy it can run that project on the shared Docker host; grant deploy/config access only to trusted project operators.
+
+If the owner is locked out, generate a one-time reset URL from the host:
+
+```bash
+docker compose exec app npm run owner:reset
+```
+
+Upgrades with explicit `ADMIN_USERNAME` and `ADMIN_PASSWORD` values migrate that account into the database owner automatically. Those variables are ignored after a database owner exists and are not used by fresh installs.
 
 ## AI task workspace
 
-The **AI Tasks** tab adds a single-admin, Git-backed coding workspace:
+The owner-only **AI Tasks** tab adds a Git-backed coding workspace:
 
 - Sign in with a ChatGPT/Codex account using the device-code flow, or register OpenAI Responses, OpenAI-compatible Chat Completions, and Anthropic Messages providers. API keys are encrypted at rest; model IDs can be fetched or entered manually.
 - Create a task from a registered Git project, choose the freshly fetched source branch, and create or explicitly resume a task branch.
@@ -101,8 +117,8 @@ Important environment variables:
 - `MCP_TOKEN_SECRET`, optional; defaults to `WORKER_TOKEN_SECRET`/`JWT_SECRET`; set a stable long random value before creating MCP tokens
 - `MCP_ALLOWED_HOSTS`, comma-separated hosts allowed to call `/mcp`
 - `MCP_ALLOWED_ORIGINS`, comma-separated browser origins allowed to call `/mcp`
-- `ADMIN_USERNAME`
-- `ADMIN_PASSWORD`
+- `YANTO_SETUP_CODE`, required only while claiming a fresh installation; the installer generates it automatically
+- `ADMIN_USERNAME` and `ADMIN_PASSWORD`, optional legacy upgrade inputs used once to create the database owner
 - `PROJECTS_ROOT` inside the container, default `/projects`
 - `HOST_PROJECTS_ROOT` for display, default `~/projects`
 - `AGENT_WORKTREES_ROOT` inside the app, default `${PROJECTS_ROOT}/.yanto-worktrees`

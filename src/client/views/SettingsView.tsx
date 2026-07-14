@@ -2,11 +2,14 @@ import { Check, Cloud, Copy, DatabaseZap, GitBranch, GitPullRequest, KeyRound, R
 import { memo } from "react";
 import type { FormEvent } from "react";
 import { Button, CustomSelect, LogViewer, StatusBadge, TextAreaField, TextField, ToggleField } from "../components/ui";
+import { UserAccessPanel } from "../components/UserAccessPanel";
 import { api } from "../lib/api";
-import type { McpAccessLevel, McpAccessToken } from "../../shared/types";
+import type { McpAccessLevel, McpAccessToken, Project, SessionUser } from "../../shared/types";
 import type { CfFormState, ConfirmState, CreatedMcpTokenState, McpTokenFormState, R2FormState, SettingsState } from "./types";
 
 type Props = {
+  session: SessionUser;
+  projects: Project[];
   settings: SettingsState;
   mcpTokens: McpAccessToken[];
   mcpTokenForm: McpTokenFormState;
@@ -47,6 +50,8 @@ type Props = {
 
 export const SettingsView = memo(function SettingsView(props: Props) {
   const {
+    session,
+    projects,
     settings,
     mcpTokens,
     mcpTokenForm,
@@ -87,6 +92,9 @@ export const SettingsView = memo(function SettingsView(props: Props) {
 
   return (
     <section className="settings-grid">
+      <div className="settings-column settings-column-wide">
+        <UserAccessPanel projects={projects} currentUserId={session.id} copyText={copyText} />
+      </div>
       <div className="settings-column">
         <section className="panel r2-settings-panel">
           <div className="panel-head">

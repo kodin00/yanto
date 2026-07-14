@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../auth.js";
+import { accessibleProjectIds, assertProjectAccess, startStreamAuthorizationGuard } from "../authorization.js";
 import { asyncRoute, routeParam, sendStreamEvent, startEventStream } from "../http-utils.js";
 import { findDeployment, latestDeployments } from "../services/deployments.js";
 import { deploymentEvents, type DeploymentLogEvent } from "../services/deployment-events.js";
@@ -12,7 +13,8 @@ router.get(
   asyncRoute(async (req, res) => {
     const requestedLimit = Number(req.query.limit ?? 500);
     const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 500) : 500;
-    res.json(await latestDeployments(limit));
+    const projectIds = accessibleProjectIds(req);
+    res.json(await latestDeployments(limit, projectIds === null ? undefined : [...projectIds]));
   })
 );
 
@@ -25,6 +27,7 @@ router.get(
       res.status(404).json({ message: "Deployment not found." });
       return;
     }
+    assertProjectAccess(req, deployment.projectId);
     res.json(deployment);
   })
 );
@@ -38,6 +41,7 @@ router.get(
       res.status(404).json({ message: "Deployment not found." });
       return;
     }
+    assertProjectAccess(req, deployment.projectId);
     res.type("text/plain").send(deployment.logs);
   })
 );
@@ -52,10 +56,12 @@ router.get(
     let waitingForDrain = false;
     let pendingEvent: DeploymentLogEvent | undefined;
     let unsubscribe = () => {};
+    let stopAuthorizationGuard = () => {};
     const cleanup = () => {
       if (closed) return;
       closed = true;
       pendingEvent = undefined;
+      stopAuthorizationGuard();
       res.removeListener("drain", flushPending);
       unsubscribe();
     };
@@ -100,8 +106,19 @@ router.get(
         res.status(404).json({ message: "Deployment not found." });
         return;
       }
+      assertProjectAccess(req, initial.projectId);
 
       startEventStream(res);
+      stopAuthorizationGuard = startStreamAuthorizationGuard(req, async () => {
+        const current = await findDeployment(id);
+        if (!current) throw new Error("Deployment no longer exists.");
+        assertProjectAccess(req, current.projectId);
+      }, () => {
+        if (closed) return;
+        sendStreamEvent(res, { error: "Authorization was revoked.", done: true });
+        cleanup();
+        res.end();
+      }).stop;
       ready = true;
       deliver({
         deploymentId: id,

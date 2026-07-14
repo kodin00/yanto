@@ -42,8 +42,18 @@ const cloudflareMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/server/auth.js", () => ({
+  authPrincipal: (req: Request) => req.yantoAuth,
   requireAuth: (req: Request, res: Response, next: NextFunction) => {
     if (req.header("authorization") === "ok") {
+      req.yantoAuth = { id: "usr_owner", username: "admin", role: "owner", status: "active", sessionVersion: 1, projectAccess: [] };
+      next();
+      return;
+    }
+    res.status(401).json({ message: "Authentication required." });
+  },
+  requireOwner: (req: Request, res: Response, next: NextFunction) => {
+    if (req.header("authorization") === "ok") {
+      req.yantoAuth = { id: "usr_owner", username: "admin", role: "owner", status: "active", sessionVersion: 1, projectAccess: [] };
       next();
       return;
     }

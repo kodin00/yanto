@@ -26,7 +26,11 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("../src/server/auth.js", () => ({
-  requireAuth: (_req: Request, _res: Response, next: NextFunction) => next()
+  authPrincipal: (req: Request) => req.yantoAuth,
+  requireAuth: (req: Request, _res: Response, next: NextFunction) => {
+    req.yantoAuth = { id: "usr_owner", username: "admin", role: "owner", status: "active", sessionVersion: 1, projectAccess: [] };
+    next();
+  }
 }));
 vi.mock("../src/server/services/deployments.js", () => ({
   findDeployment: mocks.findDeployment,

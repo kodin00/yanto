@@ -11,11 +11,12 @@ type Props = {
   loading?: boolean;
   openDeploymentLogs: (deployment: Deployment) => void;
   retryDeployment: (deployment: Deployment) => void;
+  canRetry: (deployment: Deployment) => boolean;
   setDeploymentPage: (page: number) => void;
 };
 
 export const DeploymentsView = memo(function DeploymentsView(props: Props) {
-  const { deployments, visibleDeployments, deploymentPage, busy, loading, openDeploymentLogs, retryDeployment, setDeploymentPage } = props;
+  const { deployments, visibleDeployments, deploymentPage, busy, loading, openDeploymentLogs, retryDeployment, canRetry, setDeploymentPage } = props;
 
   return (
     <section className="panel">
@@ -23,7 +24,7 @@ export const DeploymentsView = memo(function DeploymentsView(props: Props) {
         <h2>Deployment history</h2>
         <span className="count">{deployments.length} records</span>
       </div>
-      <DeploymentTable deployments={visibleDeployments} busy={busy} loading={loading} onLogs={openDeploymentLogs} onRetry={retryDeployment} />
+      <DeploymentTable deployments={visibleDeployments} busy={busy} loading={loading} onLogs={openDeploymentLogs} onRetry={retryDeployment} canRetry={canRetry} />
       <Pagination label="Deployments" page={deploymentPage} totalItems={deployments.length} onPageChange={setDeploymentPage} />
     </section>
   );

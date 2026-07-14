@@ -8,6 +8,7 @@ import { api, type PostgresTarget } from "../lib/api";
 import type { ConfirmState } from "./types";
 
 type Props = {
+  isOwner: boolean;
   postgresTargets: PostgresTarget[];
   visibleBackups: Backup[];
   backups: Backup[];
@@ -25,6 +26,7 @@ type Props = {
 
 export const BackupsView = memo(function BackupsView(props: Props) {
   const {
+    isOwner,
     postgresTargets,
     visibleBackups,
     backups,
@@ -47,9 +49,9 @@ export const BackupsView = memo(function BackupsView(props: Props) {
           <h2>Postgres targets</h2>
           <div className="actions">
             <span className="count">{postgresTargets.length} detected</span>
-            <Button loading={busy === "backup:yanto"} onClick={() => void dumpPostgresTarget()} icon={<Archive size={16} />}>
+            {isOwner ? <Button loading={busy === "backup:yanto"} onClick={() => void dumpPostgresTarget()} icon={<Archive size={16} />}>
               {busy === "backup:yanto" ? "Dumping" : "Dump Yanto DB"}
-            </Button>
+            </Button> : null}
           </div>
         </div>
         <PostgresTargetTable targets={postgresTargets} busy={busy} loading={loading} onDump={dumpPostgresTarget} onRestore={restorePostgresTarget} />

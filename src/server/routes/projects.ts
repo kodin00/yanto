@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { requireAuth } from "../auth.js";
+import { requireAuth, requireOwner } from "../auth.js";
+import { accessibleProjectIds, assertProjectPermission, hasProjectPermission, isOwner } from "../authorization.js";
 import { asyncRoute, actor, routeParam } from "../http-utils.js";
 import { deploymentInput, envInput, envVariablesInput, projectInput, rollbackInput } from "../route-schemas.js";
 import { recordAuditLog } from "../services/audit.js";
@@ -16,15 +17,30 @@ const router = Router();
 router.get(
   "/api/projects",
   requireAuth,
-  asyncRoute(async (_req, res) => {
+  asyncRoute(async (req, res) => {
     const rows = await listProjectsWithContainerCounts();
-    res.json(rows.map(publicProject));
+    const projectIds = accessibleProjectIds(req);
+    const folderCounts = new Map<string, number>();
+    for (const project of rows) folderCounts.set(project.folderName, (folderCounts.get(project.folderName) ?? 0) + 1);
+    res.json(rows.filter((project) => projectIds === null || projectIds.has(project.id)).map((project) => {
+      const view = publicProject(project);
+      const ambiguousContainerMapping = (folderCounts.get(project.folderName) ?? 0) > 1;
+      return {
+        ...view,
+        ...(!hasProjectPermission(req, project.id, "config") ? { composeContent: null } : {}),
+        ...(!hasProjectPermission(req, project.id, "hostnames") ? { cloudflareRoutes: [] } : {}),
+        ...(ambiguousContainerMapping && !isOwner(req) ? { containerCount: 0 } : {}),
+        ...(ambiguousContainerMapping && isOwner(req)
+          ? { containerMappingWarning: "Multiple projects use this folder; delegated container access is disabled until folder names are unique." }
+          : {})
+      };
+    }));
   })
 );
 
 router.post(
   "/api/projects",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (req, res) => {
     const body = projectInput.parse(req.body);
     const project = await createProject(body);
@@ -38,7 +54,13 @@ router.patch(
   requireAuth,
   asyncRoute(async (req, res) => {
     const body = projectInput.partial().parse(req.body);
-    const project = await updateProject(routeParam(req, "id"), body);
+    const projectId = routeParam(req, "id");
+    assertProjectPermission(req, projectId, "config");
+    if (!isOwner(req) && (body.folderName !== undefined || body.targetNodeId !== undefined)) {
+      res.status(403).json({ message: "Only the owner can change a project's folder or target node." });
+      return;
+    }
+    const project = await updateProject(projectId, body);
     if (!project) {
       res.status(404).json({ message: "Project not found." });
       return;
@@ -53,6 +75,7 @@ router.get(
   requireAuth,
   asyncRoute(async (req, res) => {
     const id = routeParam(req, "id");
+    assertProjectPermission(req, id, "secrets");
     const deployToken = await getProjectDeployToken(id);
     if (!deployToken) {
       res.status(404).json({ message: "Project not found." });
@@ -65,7 +88,7 @@ router.get(
 
 router.delete(
   "/api/projects/:id",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (req, res) => {
     const id = routeParam(req, "id");
     await deleteProject(id);
@@ -80,6 +103,10 @@ router.post(
   asyncRoute(async (req, res) => {
     const body = deploymentInput.parse(req.body ?? {});
     const projectId = routeParam(req, "id");
+    assertProjectPermission(req, projectId, "deploy");
+    if (body.envContent !== undefined || body.envVariables !== undefined) {
+      assertProjectPermission(req, projectId, "secrets");
+    }
     const project = await getProject(projectId);
     if (!project) {
       res.status(404).json({ message: "Project not found." });
@@ -113,7 +140,9 @@ router.post(
   requireAuth,
   asyncRoute(async (req, res) => {
     const body = rollbackInput.parse(req.body ?? {});
-    const preview = await previewRollbackForProject(routeParam(req, "id"), body.targetRef ?? "");
+    const projectId = routeParam(req, "id");
+    assertProjectPermission(req, projectId, "deploy");
+    const preview = await previewRollbackForProject(projectId, body.targetRef ?? "");
     res.json(preview);
   })
 );
@@ -124,6 +153,7 @@ router.post(
   asyncRoute(async (req, res) => {
     const body = rollbackInput.parse(req.body ?? {});
     const projectId = routeParam(req, "id");
+    assertProjectPermission(req, projectId, "deploy");
     const target = await rollbackTargetForProject(projectId, body.deploymentId, body.targetRef);
     const result = await startDeployment(projectId, "rollback", {
       targetRef: target.targetRef,
@@ -145,7 +175,9 @@ router.get(
   "/api/projects/:id/compose/content",
   requireAuth,
   asyncRoute(async (req, res) => {
-    const project = await getProject(routeParam(req, "id"));
+    const projectId = routeParam(req, "id");
+    assertProjectPermission(req, projectId, "config");
+    const project = await getProject(projectId);
     if (!project) {
       res.status(404).json({ message: "Project not found." });
       return;
@@ -158,7 +190,9 @@ router.get(
   "/api/projects/:id/env",
   requireAuth,
   asyncRoute(async (req, res) => {
-    const project = await getProject(routeParam(req, "id"));
+    const projectId = routeParam(req, "id");
+    assertProjectPermission(req, projectId, "secrets");
+    const project = await getProject(projectId);
     if (!project) {
       res.status(404).json({ message: "Project not found." });
       return;
@@ -171,7 +205,9 @@ router.get(
   "/api/projects/:id/env/content",
   requireAuth,
   asyncRoute(async (req, res) => {
-    const project = await getProject(routeParam(req, "id"));
+    const projectId = routeParam(req, "id");
+    assertProjectPermission(req, projectId, "secrets");
+    const project = await getProject(projectId);
     if (!project) {
       res.status(404).json({ message: "Project not found." });
       return;
@@ -184,7 +220,9 @@ router.get(
   "/api/projects/:id/env/preview",
   requireAuth,
   asyncRoute(async (req, res) => {
-    const project = await getProject(routeParam(req, "id"));
+    const projectId = routeParam(req, "id");
+    assertProjectPermission(req, projectId, "secrets");
+    const project = await getProject(projectId);
     if (!project) {
       res.status(404).json({ message: "Project not found." });
       return;
@@ -197,6 +235,7 @@ router.post(
   "/api/projects/:id/env/preview",
   requireAuth,
   asyncRoute(async (req, res) => {
+    assertProjectPermission(req, routeParam(req, "id"), "secrets");
     const body = envInput.parse(req.body);
     res.json(previewEnvContent(body.content, body.envFile ?? ".env"));
   })
@@ -206,7 +245,9 @@ router.put(
   "/api/projects/:id/env",
   requireAuth,
   asyncRoute(async (req, res) => {
-    const project = await getProject(routeParam(req, "id"));
+    const projectId = routeParam(req, "id");
+    assertProjectPermission(req, projectId, "secrets");
+    const project = await getProject(projectId);
     if (!project) {
       res.status(404).json({ message: "Project not found." });
       return;
@@ -229,7 +270,9 @@ router.patch(
   "/api/projects/:id/env",
   requireAuth,
   asyncRoute(async (req, res) => {
-    const project = await getProject(routeParam(req, "id"));
+    const projectId = routeParam(req, "id");
+    assertProjectPermission(req, projectId, "secrets");
+    const project = await getProject(projectId);
     if (!project) {
       res.status(404).json({ message: "Project not found." });
       return;
@@ -252,7 +295,9 @@ router.post(
   "/api/projects/:id/stop",
   requireAuth,
   asyncRoute(async (req, res) => {
-    const project = await getProject(routeParam(req, "id"));
+    const projectId = routeParam(req, "id");
+    assertProjectPermission(req, projectId, "runtime");
+    const project = await getProject(projectId);
     if (!project) {
       res.status(404).json({ message: "Project not found." });
       return;
@@ -271,7 +316,9 @@ router.post(
   "/api/projects/:id/restart",
   requireAuth,
   asyncRoute(async (req, res) => {
-    const project = await getProject(routeParam(req, "id"));
+    const projectId = routeParam(req, "id");
+    assertProjectPermission(req, projectId, "runtime");
+    const project = await getProject(projectId);
     if (!project) {
       res.status(404).json({ message: "Project not found." });
       return;

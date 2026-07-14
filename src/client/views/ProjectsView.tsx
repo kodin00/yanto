@@ -1,10 +1,11 @@
-import { Copy, KeyRound, Play, Plus, Square, Undo2 } from "lucide-react";
+import { AlertTriangle, Copy, KeyRound, Play, Plus, RotateCw, Square, Undo2 } from "lucide-react";
 import { memo } from "react";
-import type { CloudflareRoute, CloudflareRouteDiagnostic, ContainerInfo, Deployment, DeploymentNode, Project } from "../../shared/types";
+import type { CloudflareRoute, CloudflareRouteDiagnostic, ContainerInfo, Deployment, DeploymentNode, Project, SessionUser } from "../../shared/types";
 import { endpoint, githubWebhookEndpoint } from "../app-utils";
 import { Pagination } from "../components/Pagination";
 import { Button, StatusBadge } from "../components/ui";
 import { api } from "../lib/api";
+import { canManageProject } from "../permissions";
 import type { ConfirmState, SettingsState } from "./types";
 
 function deploymentBadge(deployment?: Deployment) {
@@ -27,6 +28,7 @@ function containerBadge(containers: ContainerInfo[], fallbackCount = 0) {
 }
 
 type Props = {
+  session: SessionUser;
   visibleProjects: Project[];
   projects: Project[];
   nodes: DeploymentNode[];
@@ -51,6 +53,7 @@ type Props = {
 export const ProjectsView = memo(function ProjectsView(props: Props) {
   const {
     visibleProjects,
+    session,
     projects,
     nodes,
     containersByProjectFolder,
@@ -75,9 +78,7 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
     <section className="panel">
       <div className="panel-head">
         <h2>Registered projects</h2>
-        <Button onClick={() => openProject()} icon={<Plus size={16} />}>
-          Add project
-        </Button>
+        {session.role === "owner" ? <Button onClick={() => openProject()} icon={<Plus size={16} />}>Add project</Button> : null}
       </div>
       {loading && !visibleProjects.length ? <p className="muted">Loading projects...</p> : null}
       <div className="project-grid">
@@ -90,16 +91,22 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
           const runningCount = projectContainers.filter((container) => container.state === "running").length;
           const deploymentStatus = deploymentBadge(latestDeploymentByProject.get(project.id));
           const containerStatus = containerBadge(projectContainers, project.containerCount);
-          const localRuntimeControl = nodes.find((node) => node.id === project.targetNodeId)?.role === "master";
+          const canConfigure = canManageProject(session, project.id, "config");
+          const canDeploy = canManageProject(session, project.id, "deploy");
+          const canUseSecrets = canManageProject(session, project.id, "secrets");
+          const canUseRuntime = canManageProject(session, project.id, "runtime");
+          const localRuntimeControl = session.role === "owner"
+            ? nodes.find((node) => node.id === project.targetNodeId)?.role === "master"
+            : project.targetNodeId === session.localNodeId;
           return (
             <article
-              className="project-card"
+              className={`project-card ${canConfigure ? "" : "read-only"}`}
               key={project.id}
-              role="button"
-              tabIndex={0}
-              onClick={() => openProject(project)}
+              role={canConfigure ? "button" : undefined}
+              tabIndex={canConfigure ? 0 : undefined}
+              onClick={() => { if (canConfigure) openProject(project); }}
               onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
+                if (canConfigure && (event.key === "Enter" || event.key === " ")) {
                   event.preventDefault();
                   openProject(project);
                 }
@@ -118,6 +125,9 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
                   <span>{runningCount}/{projectContainers.length || project.containerCount || 0} running</span>
                   <span>{project.folderName}</span>
                 </div>
+                {session.role === "owner" && project.containerMappingWarning ? (
+                  <p className="project-mapping-warning"><AlertTriangle size={13} />{project.containerMappingWarning}</p>
+                ) : null}
                 <div className="project-route-summary">
                   {primaryRoute ? (
                     <>
@@ -145,18 +155,12 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
                   <Button variant="ghost" onClick={() => void copyText(githubWebhookEndpoint(project, settings.appBaseUrl))} icon={<Copy size={14} />}>
                     Webhook
                   </Button>
-                  <Button variant="ghost" loading={busy === `token:${project.id}`} onClick={() => void copyDeployToken(project)} icon={<KeyRound size={14} />}>
-                    Secret
-                  </Button>
+                  {canUseSecrets ? <Button variant="ghost" loading={busy === `token:${project.id}`} onClick={() => void copyDeployToken(project)} icon={<KeyRound size={14} />}>Secret</Button> : null}
                 </div>
                 <div className="actions" onClick={(event) => event.stopPropagation()}>
-                  <Button variant="secondary" onClick={() => openRollback(project)} icon={<Undo2 size={15} />}>
-                    Rollback
-                  </Button>
-                  <Button disabled={!project.manualDeployEnabled} loading={busy === `deploy:${project.id}`} onClick={() => void deploy(project)} icon={<Play size={15} />}>
-                    {busy === `deploy:${project.id}` ? "Deploying" : "Deploy"}
-                  </Button>
-                  <Button
+                  {canDeploy ? <Button variant="secondary" onClick={() => openRollback(project)} icon={<Undo2 size={15} />}>Rollback</Button> : null}
+                  {canDeploy ? <Button disabled={!project.manualDeployEnabled} loading={busy === `deploy:${project.id}`} onClick={() => void deploy(project)} icon={<Play size={15} />}>{busy === `deploy:${project.id}` ? "Deploying" : "Deploy"}</Button> : null}
+                  {canUseRuntime ? <Button
                     variant="secondary"
                     disabled={!localRuntimeControl}
                     title={localRuntimeControl ? undefined : "Project runtime controls are not available for worker nodes yet."}
@@ -177,8 +181,29 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
                     icon={<Square size={15} />}
                   >
                     Stop
-                  </Button>
-                  <Button
+                  </Button> : null}
+                  {canUseRuntime ? <Button
+                    variant="secondary"
+                    disabled={!localRuntimeControl}
+                    title={localRuntimeControl ? undefined : "Project runtime controls are not available for worker nodes yet."}
+                    onClick={() =>
+                      setConfirm({
+                        title: "Restart project",
+                        body: `Restart containers for ${project.name}?`,
+                        label: "Restart",
+                        loadingMessage: `Restarting ${project.name}...`,
+                        successMessage: "Project restarted.",
+                        action: async () => {
+                          await api.restartProject(project.id);
+                          await refreshProjects();
+                        },
+                      })
+                    }
+                    icon={<RotateCw size={15} />}
+                  >
+                    Restart
+                  </Button> : null}
+                  {session.role === "owner" ? <Button
                     variant="danger"
                     onClick={() =>
                       setConfirm({
@@ -196,7 +221,7 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
                     }
                   >
                     Remove
-                  </Button>
+                  </Button> : null}
                 </div>
               </div>
             </article>

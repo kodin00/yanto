@@ -6,6 +6,7 @@ import { DeploymentTable } from "../data-tables";
 import type { SettingsState } from "./types";
 
 type Props = {
+  isOwner: boolean;
   projects: Project[];
   nodes: DeploymentNode[];
   containers: ContainerInfo[];
@@ -23,6 +24,7 @@ type Props = {
 
 export const DashboardView = memo(function DashboardView(props: Props) {
   const {
+    isOwner,
     projects,
     nodes,
     containers,
@@ -41,11 +43,11 @@ export const DashboardView = memo(function DashboardView(props: Props) {
   return (
     <section className="dashboard">
       <section className="stat-grid">
-        <StatTile label="Projects" value={projects.length} detail={`${settings.hostProjectsRoot} root`} />
-        <StatTile label="Nodes" value={nodes.length || 1} detail={`${nodes.filter((node) => node.status === "online").length || 1} online`} />
+        <StatTile label="Projects" value={projects.length} detail={isOwner ? `${settings.hostProjectsRoot} root` : "Assigned to you"} />
+        {isOwner ? <StatTile label="Nodes" value={nodes.length || 1} detail={`${nodes.filter((node) => node.status === "online").length || 1} online`} /> : null}
         {runningDeployments.length ? <StatTile label="Active deploys" value={runningDeployments.length} detail="Deployment in progress" /> : null}
         <StatTile label="Running containers" value={containers.filter((container) => container.state === "running").length} detail={`${containers.length} total containers`} />
-        <StatTile label="RAM used" value={usage ? `${usage.memory.usedPercent}%` : "-"} detail={usage ? `${bytes(usage.memory.used)} of ${bytes(usage.memory.total)}` : "Unavailable"} />
+        {isOwner ? <StatTile label="RAM used" value={usage ? `${usage.memory.usedPercent}%` : "-"} detail={usage ? `${bytes(usage.memory.used)} of ${bytes(usage.memory.total)}` : "Unavailable"} /> : null}
       </section>
 
       {setupCanReopen ? (
@@ -63,7 +65,7 @@ export const DashboardView = memo(function DashboardView(props: Props) {
       <div className="dashboard-main-grid">
         <div className="dashboard-left-column">
           <WarningsPanel failingProjects={failingProjects} unhealthyContainers={unhealthyContainers} warningDisks={warningDisks} />
-          <UsagePanel usage={usage} />
+          {isOwner ? <UsagePanel usage={usage} /> : null}
           <section className="panel">
             <div className="section-kicker">Build history</div>
             <div className="panel-head">

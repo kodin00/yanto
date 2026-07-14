@@ -1,4 +1,4 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import { spawn } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
@@ -187,6 +187,12 @@ async function inspectContainerEnv(containerId: string) {
 
 export async function listBackups(limit = 50) {
   return db.select().from(backups).orderBy(desc(backups.createdAt)).limit(limit);
+}
+
+export async function listBackupsForProjects(projectIds: string[], limit = 50) {
+  if (projectIds.length === 0) return [];
+  return db.select().from(backups).where(inArray(backups.projectId, projectIds))
+    .orderBy(desc(backups.createdAt)).limit(limit);
 }
 
 export async function getBackup(id: string) {

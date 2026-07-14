@@ -41,7 +41,7 @@ const NodesView = lazy(() => import("./views/NodesView").then(m => ({ default: m
 const ProjectsView = lazy(() => import("./views/ProjectsView").then(m => ({ default: m.ProjectsView })));
 const SettingsView = lazy(() => import("./views/SettingsView").then(m => ({ default: m.SettingsView })));
 const TasksView = lazy(() => import("./views/TasksView").then(m => ({ default: m.TasksView })));
-import type { CloudflareClient, CloudflareDnsRecord, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, ContainerInfo, Deployment, DeploymentNode, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../shared/types";
+import type { AppView, CloudflareClient, CloudflareDnsRecord, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, ContainerInfo, Deployment, DeploymentNode, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SessionUser, SetupWizardStatus, SystemUsage } from "../shared/types";
 import {
   cloudflareServiceUrl,
   endpoint,
@@ -56,9 +56,10 @@ import { Button, ConfirmDialog, CustomSelect, IconButton, LoadingInline, LogView
 import { EnvEditor, type ProjectEnvState } from "./components/EnvEditor";
 import { YantoBootLoader } from "./components/YantoBootLoader";
 import { api, setApiUnauthorizedHandler, type AuditLogEntry, type BackupRecord, type CloudflareDnsRecordPayload, type CloudflareRoutePayload, type PostgresTarget } from "./lib/api";
+import { canManageProject, canView } from "./permissions";
 import packageJson from "../../package.json";
 
-type View = "dashboard" | "projects" | "tasks" | "deployments" | "containers" | "nodes" | "backups" | "hostnames" | "frp" | "dns" | "audit" | "settings";
+type View = AppView;
 type ToastState = { message: string; kind?: "ok" | "error" | "loading" } | null;
 type LogModalState = { title: string; logs: string; streamPath?: string; live?: boolean; status?: string };
 type LogStreamPayload = { logs?: string; chunk?: string; status?: string; error?: string; done?: boolean };
@@ -161,6 +162,12 @@ function getInitialTheme(): ThemeMode {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+function getAccountToken(): string {
+  if (typeof window === "undefined") return "";
+  const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  return params.get("token") ?? "";
+}
+
 function parseCfServiceTarget(serviceTarget: string): Pick<CfRouteForm, "protocol" | "localTarget"> {
   const match = serviceTarget.trim().match(/^(https?):\/\/(.+)$/);
   if (!match) return { protocol: "http", localTarget: serviceTarget.trim() };
@@ -233,8 +240,12 @@ function ViewSkeleton() {
 }
 
 export function App() {
-  const [user, setUser] = useState<string | null>(null);
-  const [login, setLogin] = useState({ username: "admin", password: "" });
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [login, setLogin] = useState({ username: "", password: "" });
+  const [needsSetup, setNeedsSetup] = useState(false);
+  const [accountToken] = useState(getAccountToken);
+  const [ownerSetup, setOwnerSetup] = useState({ username: "", password: "", setupCode: "" });
+  const [accountPassword, setAccountPassword] = useState("");
   const [view, setView] = useState<View>("dashboard");
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -306,6 +317,11 @@ export function App() {
   }, [theme]);
 
   useEffect(() => {
+    if (!accountToken) return;
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+  }, [accountToken]);
+
+  useEffect(() => {
     if (!user) {
       setApiUnauthorizedHandler(null);
       return;
@@ -363,9 +379,10 @@ export function App() {
   }, []);
 
   const refreshSettings = useCallback(async () => {
-    const [settingRows, tokenRows] = await Promise.all([api.settings(), api.mcpTokens()]);
+    const [settingRows, tokenRows, projectRows] = await Promise.all([api.settings(), api.mcpTokens(), api.projects()]);
     setSettings(settingRows);
     setMcpTokens(tokenRows);
+    setProjects(projectRows);
   }, []);
 
   const refreshRouteDiagnostics = useCallback(async () => {
@@ -384,38 +401,34 @@ export function App() {
 
   const loadView = useCallback(async (targetView: View) => {
     if (targetView === "dashboard") {
-      const [projectRows, deploymentRows, containerRows, nodeRows, systemRows, settingRows] = await Promise.all([
-        api.projects(),
-        api.deployments(),
-        fetchContainerRows(),
-        api.nodes(),
-        api.systemUsage().catch(() => null),
-        api.settings()
-      ]);
+      const [projectRows, deploymentRows, containerRows] = await Promise.all([api.projects(), api.deployments(), fetchContainerRows()]);
       setProjects(projectRows);
       setDeployments(deploymentRows);
       setContainers(containerRows);
-      setNodes(nodeRows);
-      setUsage(systemRows);
-      setSettings(settingRows);
+      if (user?.role === "owner") {
+        const [nodeRows, systemRows, settingRows] = await Promise.all([api.nodes(), api.systemUsage().catch(() => null), api.settings()]);
+        setNodes(nodeRows);
+        setUsage(systemRows);
+        setSettings(settingRows);
+      } else if (user) {
+        setSettings((current) => ({ ...current, appBaseUrl: user.appBaseUrl }));
+      }
       setSettingsLoaded(true);
       return;
     }
 
     if (targetView === "projects") {
-      const [projectRows, deploymentRows, containerRows, nodeRows, settingRows, diagnostics] = await Promise.all([
-        api.projects(),
-        api.deployments(),
-        fetchContainerRows(),
-        api.nodes(),
-        api.settings(),
-        api.cloudflareRouteDiagnostics().catch(() => [])
-      ]);
+      const [projectRows, deploymentRows, containerRows, diagnostics] = await Promise.all([api.projects(), api.deployments(), fetchContainerRows(), api.cloudflareRouteDiagnostics().catch(() => [])]);
       setProjects(projectRows);
       setDeployments(deploymentRows);
       setContainers(containerRows);
-      setNodes(nodeRows);
-      setSettings(settingRows);
+      if (user?.role === "owner") {
+        const [nodeRows, settingRows] = await Promise.all([api.nodes(), api.settings()]);
+        setNodes(nodeRows);
+        setSettings(settingRows);
+      } else if (user) {
+        setSettings((current) => ({ ...current, appBaseUrl: user.appBaseUrl }));
+      }
       setRouteDiagnostics(diagnostics);
       setSettingsLoaded(true);
       return;
@@ -427,7 +440,7 @@ export function App() {
     }
 
     if (targetView === "tasks") {
-      setProjects(await api.projects());
+      if (user?.role === "owner") setProjects(await api.projects());
       return;
     }
 
@@ -501,16 +514,18 @@ export function App() {
       return;
     }
 
-    const [settingRows, tokenRows] = await Promise.all([api.settings(), api.mcpTokens()]);
+    if (user?.role !== "owner") return;
+    const [settingRows, tokenRows, projectRows] = await Promise.all([api.settings(), api.mcpTokens(), api.projects()]);
     setSettings(settingRows);
     setMcpTokens(tokenRows);
+    setProjects(projectRows);
     setSettingsLoaded(true);
     setBusy((current) => current ?? "system-logs");
     void api.systemLogs()
       .then((logRows) => setSystemLogs(logRows))
       .catch(() => setSystemLogs(""))
       .finally(() => setBusy((current) => (current === "system-logs" ? null : current)));
-  }, [fetchContainerRows]);
+  }, [fetchContainerRows, user]);
 
   const loadViewWithState = useCallback((targetView: View, options: ViewLoadOptions = {}) => {
     const { showLoading = true, maxAgeMs = 0 } = options;
@@ -545,12 +560,18 @@ export function App() {
 
   useEffect(() => {
     let active = true;
-    void api.me()
-      .then((result) => { if (active) setUser(result.username); })
+    void api.setupStatus()
+      .then(async (status) => {
+        if (!active) return;
+        setNeedsSetup(status.needsSetup);
+        if (status.needsSetup || accountToken) return;
+        const result = await api.me();
+        if (active) setUser(result);
+      })
       .catch(() => { if (active) setUser(null); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, []);
+  }, [accountToken]);
 
   useEffect(() => {
     if (!user || !autoRefreshViews.has(view)) return;
@@ -594,7 +615,7 @@ export function App() {
   }, [cfFormDirty, settings.cf]);
 
   useEffect(() => {
-    if (!user || !settingsLoaded || setupAutoPrompted) return;
+    if (!user || user.role !== "owner" || !settingsLoaded || setupAutoPrompted) return;
     if (settings.setupWizard.completedAt || settings.setupWizard.dismissedAt) return;
     setSetupStep("intro");
     setSetupModalOpen(true);
@@ -670,7 +691,7 @@ export function App() {
     }
     return map;
   }, [containers]);
-  const multiNodeEnabled = settings.multiNode?.enabled ?? false;
+  const multiNodeEnabled = user?.role === "owner" && (settings.multiNode?.enabled ?? false);
   const nodeOptions = useMemo(() => (nodes.length ? nodes : [{ id: "node_master_local", name: "Master", role: "master", status: "online" } as DeploymentNode]).map((node) => ({
     label: `${node.name} (${node.role})`,
     value: node.id
@@ -687,7 +708,21 @@ export function App() {
   const setupStepIndex = setupSteps.indexOf(setupStep);
   const setupCanGoBack = setupStepIndex > 0;
   const setupCanGoNext = setupStepIndex < setupSteps.length - 1;
-  const setupCanReopen = settingsLoaded && !setupModalOpen && !settings.setupWizard.completedAt && Boolean(settings.setupWizard.dismissedAt);
+  const setupCanReopen = user?.role === "owner" && settingsLoaded && !setupModalOpen && !settings.setupWizard.completedAt && Boolean(settings.setupWizard.dismissedAt);
+
+  const availableViews = useMemo<View[]>(() => {
+    const ownerOnly = new Set<View>(["tasks", "nodes", "dns", "frp", "settings"]);
+    const allViews: View[] = ["dashboard", "projects", "tasks", "containers", "nodes", "deployments", "hostnames", "dns", "frp", "audit", "backups", "settings"];
+    if (!user) return [];
+    return allViews.filter((candidate) => (user.role === "owner" || !ownerOnly.has(candidate)) && canView(user, candidate));
+  }, [user]);
+  const canControlContainer = useCallback((container: ContainerInfo) => {
+    if (!user) return false;
+    if (user.role === "owner") return true;
+    const matches = projects.filter((project) => project.folderName === container.composeProject);
+    return matches.length === 1 && canManageProject(user, matches[0].id, "runtime");
+  }, [projects, user]);
+  const hostnameProjects = useMemo(() => user ? projects.filter((project) => canManageProject(user, project.id, "hostnames")) : [], [projects, user]);
 
   useEffect(() => {
     const routeEntries = projects.map((project) => [project.id, project.cloudflareRoutes ?? []] as const);
@@ -704,9 +739,14 @@ export function App() {
 
   useEffect(() => {
     if (!multiNodeEnabled && view === "nodes") {
-      setView("settings");
+      setView(user?.role === "owner" ? "settings" : "dashboard");
     }
-  }, [multiNodeEnabled, view]);
+  }, [multiNodeEnabled, user?.role, view]);
+
+  useEffect(() => {
+    if (!user || availableViews.includes(view)) return;
+    setView(availableViews.includes("dashboard") ? "dashboard" : availableViews[0] ?? "projects");
+  }, [availableViews, user, view]);
 
   useEffect(() => {
     setBackupPage((page) => Math.min(page, totalPages(backups)));
@@ -726,10 +766,41 @@ export function App() {
     setToast({ message: "Signing in...", kind: "loading" });
     try {
       const result = await api.login(login.username, login.password);
-      setUser(result.username);
+      setUser(result);
       setToast({ message: "Signed in." });
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Unable to sign in.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function submitOwnerSetup(event: FormEvent) {
+    event.preventDefault();
+    setBusy("owner-setup");
+    setToast({ message: "Creating owner account...", kind: "loading" });
+    try {
+      const result = await api.createOwner(ownerSetup.username, ownerSetup.password, ownerSetup.setupCode);
+      setNeedsSetup(false);
+      setUser(result);
+      setToast({ message: "Owner account created." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to create the owner account.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function submitAccountPassword(event: FormEvent) {
+    event.preventDefault();
+    setBusy("account-setup");
+    setToast({ message: "Saving password...", kind: "loading" });
+    try {
+      const result = await api.completeAccountSetup(accountToken, accountPassword);
+      setUser(result);
+      setToast({ message: "Password saved. Signed in." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to set the account password.", kind: "error" });
     } finally {
       setBusy(null);
     }
@@ -765,8 +836,11 @@ export function App() {
 
   async function persistProjectDetails(event?: FormEvent, after?: "deploy" | "restart") {
     event?.preventDefault();
-    if (!projectModal) return;
+    if (!projectModal || !user) return;
     const creatingProject = projectModal === "new";
+    if ((creatingProject && user.role !== "owner") || (!creatingProject && !canManageProject(user, projectModal.id, "config"))) return;
+    if (!creatingProject && after === "deploy" && !canManageProject(user, projectModal.id, "deploy")) return;
+    if (!creatingProject && projectEnv.opened && !canManageProject(user, projectModal.id, "secrets")) return;
     let savedProject: Project | ProjectWithDeployToken | null = null;
     setBusy("project");
     setToast({ message: after === "deploy" ? "Saving project and starting deployment..." : after === "restart" ? "Saving project and restarting..." : "Saving project...", kind: "loading" });
@@ -955,6 +1029,7 @@ export function App() {
   }
 
   function openProject(project?: Project) {
+    if (!user || (!project && user.role !== "owner") || (project && !canManageProject(user, project.id, "config"))) return;
     setProjectEditorModal(null);
     setCfRouteEditorOpen(false);
     if (project) {
@@ -978,7 +1053,7 @@ export function App() {
       setCfRouteForm(buildCfRouteForm(projectRoutes[0]?.hostname ?? "", projectRoutes[0]?.serviceTarget || detectedServiceTarget, projectRoutes[0]?.noTlsVerify ?? false));
       setCfRoutes(projectRoutes);
       setProjectModal(project);
-      void api.projectCfRoutes(project.id)
+      if (canManageProject(user, project.id, "hostnames")) void api.projectCfRoutes(project.id)
         .then((routes) => {
           setCfRoutes(routes);
           setCfRoutesByProject((current) => ({ ...current, [project.id]: routes }));
@@ -1038,6 +1113,7 @@ export function App() {
 
   async function openEnvEditor() {
     if (!projectModal || projectEnv.loading) return;
+    if (projectModal !== "new" && (!user || !canManageProject(user, projectModal.id, "secrets"))) return;
     if (projectEnv.opened) {
       setProjectEditorModal("env");
       return;
@@ -1561,6 +1637,40 @@ export function App() {
     );
   }
 
+  if (accountToken && !user) {
+    return (
+      <main className="login-shell">
+        <form className="login-panel" onSubmit={submitAccountPassword}>
+          <h1>Set your password</h1>
+          <p>This one-time link will activate the account or replace its existing password.</p>
+          <TextField label="New password" type="password" value={accountPassword} onChange={setAccountPassword} autoComplete="new-password" required />
+          <Button type="submit" disabled={busy === "account-setup" || !accountPassword} icon={busy === "account-setup" ? <RefreshCw size={16} className="spin" /> : <KeyRound size={16} />}>
+            Save password
+          </Button>
+        </form>
+        {toast ? <Toast {...toast} onClose={() => setToast(null)} /> : null}
+      </main>
+    );
+  }
+
+  if (needsSetup && !user) {
+    return (
+      <main className="login-shell">
+        <form className="login-panel" onSubmit={submitOwnerSetup}>
+          <h1>Create the owner</h1>
+          <p>Use the one-time setup code printed by the installer or in the server startup logs.</p>
+          <TextField label="Username" value={ownerSetup.username} onChange={(username) => setOwnerSetup((current) => ({ ...current, username }))} autoComplete="username" required />
+          <TextField label="Password" type="password" value={ownerSetup.password} onChange={(password) => setOwnerSetup((current) => ({ ...current, password }))} autoComplete="new-password" required />
+          <TextField label="Setup code" type="password" value={ownerSetup.setupCode} onChange={(setupCode) => setOwnerSetup((current) => ({ ...current, setupCode }))} autoComplete="off" required />
+          <Button type="submit" disabled={busy === "owner-setup" || !ownerSetup.username.trim() || !ownerSetup.password || !ownerSetup.setupCode.trim()} icon={busy === "owner-setup" ? <RefreshCw size={16} className="spin" /> : <ShieldCheck size={16} />}>
+            Create owner
+          </Button>
+        </form>
+        {toast ? <Toast {...toast} onClose={() => setToast(null)} /> : null}
+      </main>
+    );
+  }
+
   if (!user) {
     return (
       <main className="login-shell">
@@ -1581,6 +1691,9 @@ export function App() {
   const rollbackTarget = rollbackModal?.targetRef.trim() ?? "";
   const rollbackPreview = rollbackModal?.preview?.requestedRef === rollbackTarget ? rollbackModal.preview : null;
   const rollbackBusy = rollbackModal ? busy === `rollback:${rollbackModal.project.id}` : false;
+  const modalProjectId = projectModal && projectModal !== "new" ? projectModal.id : null;
+  const modalCanDeploy = projectModal === "new" ? user.role === "owner" : Boolean(modalProjectId && canManageProject(user, modalProjectId, "deploy"));
+  const modalCanUseSecrets = projectModal === "new" ? user.role === "owner" : Boolean(modalProjectId && canManageProject(user, modalProjectId, "secrets"));
 
   return (
     <div className="app-shell">
@@ -1588,16 +1701,16 @@ export function App() {
         <div className="brand">
           <div>
             <strong>Yanto</strong>
-            <span>{settings.hostProjectsRoot}</span>
+            <span>{user.role === "owner" ? settings.hostProjectsRoot : user.username}</span>
           </div>
         </div>
         <nav>
-          {[
+          {([
             ["dashboard", Activity, "Dashboard"],
             ["projects", GitBranch, "Projects"],
             ["tasks", Bot, "AI Tasks"],
             ["containers", Container, "Containers"],
-            ...(multiNodeEnabled ? [["nodes", Server, "Nodes"] as const] : []),
+            ["nodes", Server, "Nodes"],
             ["deployments", Boxes, "Deployments"],
             ["hostnames", Globe2, "Hostnames"],
             ["dns", Cloud, "DNS"],
@@ -1605,7 +1718,7 @@ export function App() {
             ["audit", FileClock, "Logs"],
             ["backups", Archive, "Backups"],
             ["settings", Settings, "Settings"]
-          ].map(([id, Icon, label]) => (
+          ] as const).filter(([id]) => availableViews.includes(id) && (id !== "nodes" || multiNodeEnabled)).map(([id, Icon, label]) => (
             <button
               key={id as string}
               className={view === id ? "active" : ""}
@@ -1680,6 +1793,7 @@ export function App() {
 
         {view === "dashboard" && viewLoading.dashboard && !settingsLoaded ? <ViewSkeleton /> : view === "dashboard" ? (
           <DashboardView
+            isOwner={user.role === "owner"}
             projects={projects}
             nodes={nodes}
             containers={containers}
@@ -1699,6 +1813,7 @@ export function App() {
         <Suspense fallback={<ViewSkeleton />}>
         {view === "projects" ? (
           <ProjectsView
+            session={user}
             visibleProjects={visibleProjects}
             projects={projects}
             nodes={nodes}
@@ -1721,7 +1836,7 @@ export function App() {
           />
         ) : null}
 
-        {view === "tasks" ? <TasksView projects={projects} refreshKey={tasksRefreshKey} toast={(message, kind) => setToast({ message, kind })} /> : null}
+        {view === "tasks" && user.role === "owner" ? <TasksView projects={projects} refreshKey={tasksRefreshKey} toast={(message, kind) => setToast({ message, kind })} /> : null}
 
         {view === "deployments" ? (
           <DeploymentsView
@@ -1732,18 +1847,20 @@ export function App() {
             loading={viewLoading.deployments}
             openDeploymentLogs={openDeploymentLogs}
             retryDeployment={retryDeployment}
+            canRetry={(deployment) => canManageProject(user, deployment.projectId, "deploy")}
             setDeploymentPage={setDeploymentPage}
           />
         ) : null}
 
         {view === "backups" ? (
           <BackupsView
+            isOwner={user.role === "owner"}
             postgresTargets={postgresTargets}
             visibleBackups={visibleBackups}
             backups={backups}
             busy={busy}
             loading={viewLoading.backups}
-            r2Ready={r2Ready}
+            r2Ready={user.role === "owner" ? r2Ready : true}
             backupPage={backupPage}
             dumpPostgresTarget={dumpPostgresTarget}
             restorePostgresTarget={restorePostgresTarget}
@@ -1776,7 +1893,7 @@ export function App() {
           />
         ) : null}
 
-        {view === "hostnames" ? <HostnamesView projects={projects} containers={containers} refreshKey={hostnamesRefreshKey} toast={(message, kind) => setToast({ message, kind })} /> : null}
+        {view === "hostnames" ? <HostnamesView projects={hostnameProjects} containers={containers} refreshKey={hostnamesRefreshKey} isOwner={user.role === "owner"} toast={(message, kind) => setToast({ message, kind })} /> : null}
 
         {view === "frp" ? (
           <FrpView
@@ -1803,6 +1920,7 @@ export function App() {
             openContainerLogs={openContainerLogs}
             setConfirm={setConfirm}
             refreshContainers={refreshContainers}
+            canControl={canControlContainer}
           />
         ) : null}
 
@@ -1812,6 +1930,8 @@ export function App() {
 
         {view === "settings" && viewLoading.settings && !settingsLoaded ? <ViewSkeleton /> : view === "settings" ? (
           <SettingsView
+            session={user}
+            projects={projects}
             settings={settings}
             mcpTokens={mcpTokens}
             mcpTokenForm={mcpTokenForm}
@@ -2039,9 +2159,9 @@ export function App() {
                   <TextField label="Branch" value={projectForm.branch} onChange={(branch) => setProjectForm((current) => ({ ...current, branch }))} required />
                   <TextField label="Compose file" value={projectForm.composeFile} onChange={(composeFile) => setProjectForm((current) => ({ ...current, composeFile }))} placeholder="docker-compose.yml" required />
                 </div>
-                <TextField label="Folder name" value={projectForm.folderName} onChange={(folderName) => setProjectForm((current) => ({ ...current, folderName }))} placeholder={slugifyFolderName(projectForm.name) || "Auto from project name"} />
+                <TextField label="Folder name" value={projectForm.folderName} onChange={(folderName) => setProjectForm((current) => ({ ...current, folderName }))} placeholder={slugifyFolderName(projectForm.name) || "Auto from project name"} disabled={user.role !== "owner"} />
                 {multiNodeEnabled ? (
-                  <CustomSelect label="Deployment node" value={projectForm.targetNodeId} options={nodeOptions} onChange={(targetNodeId) => setProjectForm((current) => ({ ...current, targetNodeId }))} />
+                  <CustomSelect label="Deployment node" value={projectForm.targetNodeId} options={nodeOptions} onChange={(targetNodeId) => setProjectForm((current) => ({ ...current, targetNodeId }))} disabled={user.role !== "owner"} />
                 ) : null}
                 <ToggleField
                   label="Auto start after restart"
@@ -2076,7 +2196,7 @@ export function App() {
                       {projectCompose.loading ? <RefreshCw size={15} className="spin" /> : <FileText size={15} />}
                     </span>
                   </button>
-                  <button className="editor-launch-row" type="button" onClick={() => void openEnvEditor()} disabled={projectEnv.loading}>
+                  {modalCanUseSecrets ? <button className="editor-launch-row" type="button" onClick={() => void openEnvEditor()} disabled={projectEnv.loading}>
                     <List size={16} />
                     <span>
                       <strong>Environment</strong>
@@ -2085,10 +2205,10 @@ export function App() {
                     <span className="editor-launch-action" aria-hidden="true">
                       {projectEnv.loading ? <RefreshCw size={15} className="spin" /> : <List size={15} />}
                     </span>
-                  </button>
+                  </button> : null}
                 </section>
 
-                {projectModal !== "new" ? (
+                {projectModal !== "new" && user.role === "owner" ? (
                   <section className="project-edit-section cf-routes-section">
                     <div className="cf-route-head">
                       <div>
@@ -2185,9 +2305,9 @@ export function App() {
               </div>
             </div>
             <div className="actions project-edit-actions">
-              <Button type="button" variant="secondary" disabled={projectEnv.loading || !projectForm.manualDeployEnabled} loading={busy === "project"} onClick={() => void persistProjectDetails(undefined, "deploy")} icon={<Play size={15} />}>
+              {modalCanDeploy ? <Button type="button" variant="secondary" disabled={projectEnv.loading || !projectForm.manualDeployEnabled} loading={busy === "project"} onClick={() => void persistProjectDetails(undefined, "deploy")} icon={<Play size={15} />}>
                 {busy === "project" ? "Saving" : "Save & Deploy"}
-              </Button>
+              </Button> : null}
               <Button type="submit" disabled={projectEnv.loading} loading={busy === "project"}>
                 {busy === "project" ? "Saving" : "Save project"}
               </Button>

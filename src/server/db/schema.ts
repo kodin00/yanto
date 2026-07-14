@@ -1,5 +1,26 @@
 import { sql } from "drizzle-orm";
-import { type AnyPgColumn, bigint, boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { type AnyPgColumn, bigint, boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import type { ProjectPermission } from "../../shared/types.js";
+
+export const users = pgTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    username: text("username").notNull(),
+    role: text("role").notNull(),
+    status: text("status").notNull(),
+    passwordHash: text("password_hash"),
+    sessionVersion: integer("session_version").notNull().default(1),
+    lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    uniqueIndex("users_username_lower_idx").on(sql`lower(${table.username})`),
+    uniqueIndex("users_single_owner_idx").on(table.role).where(sql`${table.role} = 'owner'`),
+    index("users_status_idx").on(table.status)
+  ]
+);
 
 export const deploymentNodes = pgTable(
   "deployment_nodes",
@@ -42,6 +63,39 @@ export const projects = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
   },
   (table) => [index("projects_created_at_idx").on(table.createdAt), index("projects_folder_name_idx").on(table.folderName)]
+);
+
+export const userProjectAccess = pgTable(
+  "user_project_access",
+  {
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    permissions: jsonb("permissions").$type<ProjectPermission[]>().notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.projectId] }),
+    index("user_project_access_project_idx").on(table.projectId)
+  ]
+);
+
+export const accountTokens = pgTable(
+  "account_tokens",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    purpose: text("purpose").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    uniqueIndex("account_tokens_hash_idx").on(table.tokenHash),
+    index("account_tokens_user_active_idx").on(table.userId, table.usedAt),
+    index("account_tokens_expires_idx").on(table.expiresAt)
+  ]
 );
 
 export const aiProviders = pgTable(
@@ -342,6 +396,10 @@ export const frpTunnels = pgTable(
 
 export type ProjectRow = typeof projects.$inferSelect;
 export type NewProjectRow = typeof projects.$inferInsert;
+export type UserRow = typeof users.$inferSelect;
+export type NewUserRow = typeof users.$inferInsert;
+export type UserProjectAccessRow = typeof userProjectAccess.$inferSelect;
+export type AccountTokenRow = typeof accountTokens.$inferSelect;
 export type AiProviderRow = typeof aiProviders.$inferSelect;
 export type AiModelRow = typeof aiModels.$inferSelect;
 export type AgentTaskRow = typeof agentTasks.$inferSelect;

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import type { CloudflareClient, CloudflareRoute, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareZone, ContainerInfo, Project } from "../../shared/types";
-import { cloudflareAssignmentTcpPorts } from "../app-utils";
+import { cloudflareAssignmentTcpPorts, cloudflareServiceUrl } from "../app-utils";
 import { api } from "../lib/api";
 import { Button, ConfirmDialog, CustomSelect, LoadingInline, StatusBadge, TextField, ToggleField } from "../components/ui";
 
@@ -9,7 +9,13 @@ type Tab = "hostnames" | "tunnels" | "clients";
 type Toast = (message: string, kind?: "ok" | "error" | "loading") => void;
 type ConfirmState = { title: string; body: string; label: string; actionLabel: string; action: () => Promise<string | void> };
 
-export function HostnamesView({ projects, containers, refreshKey, toast }: { projects: Project[]; containers: ContainerInfo[]; refreshKey: number; toast: Toast }) {
+type HostnamesProps = { projects: Project[]; containers: ContainerInfo[]; refreshKey: number; isOwner: boolean; toast: Toast };
+
+export function HostnamesView(props: HostnamesProps) {
+  return props.isOwner ? <OwnerHostnamesView {...props} /> : <ProjectHostnamesView {...props} />;
+}
+
+function OwnerHostnamesView({ projects, containers, refreshKey, toast }: HostnamesProps) {
   const [tab, setTab] = useState<Tab>("hostnames");
   const [clients, setClients] = useState<CloudflareClient[]>([]);
   const [tunnels, setTunnels] = useState<CloudflareTunnel[]>([]);
@@ -175,6 +181,89 @@ export function HostnamesView({ projects, containers, refreshKey, toast }: { pro
         <section className="panel"><h3>Managed routes & hostnames</h3><div className="cf-manager-list">{hostnames.map((route) => <div className="cf-manager-row" key={route.id}><div><a href={`https://${route.hostname}`} target="_blank" rel="noreferrer"><strong>{route.hostname}</strong></a><span>{route.serviceTarget}</span>{route.lastError ? <span className="danger-text">{route.lastError}</span> : null}</div><StatusBadge status={route.syncStatus} /><div className="actions">{route.syncStatus === "error" ? <Button variant="secondary" disabled={busy} onClick={() => void act("Retrying hostname synchronization...", async () => { await api.retryCloudflareHostname(route.id); })}>Retry</Button> : null}<Button variant="danger" disabled={busy} onClick={() => setConfirm({ title: "Delete public hostname?", body: `Delete ${route.hostname} and its managed Cloudflare DNS record?`, label: "Delete hostname", actionLabel: "Deleting hostname and DNS...", action: async () => { const result = await api.deleteCloudflareHostname(route.id); return result?.warnings.length ? `Hostname deleted with warnings: ${result.warnings.join("; ")}` : undefined; } })} icon={<Trash2 size={14} />}>Delete</Button></div></div>)}{!hostnames.length && !loading ? <p className="muted">No managed hostnames configured.</p> : null}</div></section>
       </> : null}
       {confirm ? <ConfirmDialog title={confirm.title} body={confirm.body} confirmLabel={confirm.label} danger onClose={() => setConfirm(null)} onConfirm={() => { const pending = confirm; setConfirm(null); void act(pending.actionLabel, pending.action); }} /> : null}
+    </section>
+  );
+}
+
+function ProjectHostnamesView({ projects, containers, refreshKey, toast }: HostnamesProps) {
+  const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
+  const [routes, setRoutes] = useState<Record<string, CloudflareRoute[]>>({});
+  const [form, setForm] = useState({ hostname: "", serviceTarget: "", noTlsVerify: false });
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [removeRoute, setRemoveRoute] = useState<CloudflareRoute | null>(null);
+  const project = projects.find((entry) => entry.id === projectId);
+
+  useEffect(() => {
+    if (projects.some((entry) => entry.id === projectId)) return;
+    setProjectId(projects[0]?.id ?? "");
+  }, [projectId, projects]);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    void Promise.all(projects.map(async (entry) => [entry.id, await api.projectCfRoutes(entry.id)] as const))
+      .then((entries) => { if (active) setRoutes(Object.fromEntries(entries)); })
+      .catch((error) => { if (active) toast(error instanceof Error ? error.message : "Unable to load hostnames.", "error"); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [projects, refreshKey]);
+
+  useEffect(() => {
+    if (!project) return;
+    const projectContainers = containers.filter((container) => container.composeProject === project.folderName);
+    setForm((current) => current.serviceTarget ? current : { ...current, serviceTarget: cloudflareServiceUrl(project, projectContainers) });
+  }, [containers, project]);
+
+  async function publish() {
+    if (!project || !form.hostname.trim() || !form.serviceTarget.trim()) return;
+    setBusy(true);
+    toast("Publishing hostname...", "loading");
+    try {
+      const route = await api.publishCfRoute(project.id, form);
+      setRoutes((current) => ({ ...current, [project.id]: [route] }));
+      setForm((current) => ({ ...current, hostname: "" }));
+      toast("Hostname published.");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "Unable to publish hostname.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(route: CloudflareRoute) {
+    setBusy(true);
+    setRemoveRoute(null);
+    try {
+      await api.deleteCfRoute(route.id);
+      setRoutes((current) => Object.fromEntries(Object.entries(current).map(([id, entries]) => [id, entries.filter((entry) => entry.id !== route.id)])));
+      toast("Hostname removed.");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "Unable to remove hostname.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="cloudflare-manager">
+      <div className="panel-head"><div><h2>Project hostnames</h2><p className="muted">Publish and manage routes for projects assigned to you.</p></div></div>
+      <section className="panel compact-form">
+        <CustomSelect label="Project" value={projectId} options={projects.map((entry) => ({ label: entry.name, value: entry.id }))} onChange={(nextProjectId) => { setProjectId(nextProjectId); setForm({ hostname: "", serviceTarget: "", noTlsVerify: false }); }} />
+        <TextField label="Hostname" value={form.hostname} onChange={(hostname) => setForm({ ...form, hostname })} placeholder="app.example.com" />
+        <TextField label="Service target" value={form.serviceTarget} onChange={(serviceTarget) => setForm({ ...form, serviceTarget })} placeholder="http://service:3000" />
+        <ToggleField label="No TLS verify" value={form.noTlsVerify} onChange={(noTlsVerify) => setForm({ ...form, noTlsVerify })} />
+        <div className="actions"><Button disabled={busy || !projectId || !form.hostname.trim() || !form.serviceTarget.trim()} onClick={() => void publish()} icon={<Plus size={15} />}>Publish hostname</Button></div>
+      </section>
+      <section className="panel">
+        <h3>Managed routes</h3>
+        <div className="cf-manager-list">
+          {(routes[projectId] ?? []).map((route) => <div className="cf-manager-row" key={route.id}><div><a href={`https://${route.hostname}`} target="_blank" rel="noreferrer"><strong>{route.hostname}</strong></a><span>{route.serviceTarget}</span></div><StatusBadge status={route.enabled ? "enabled" : "disabled"} /><Button variant="danger" disabled={busy} onClick={() => setRemoveRoute(route)} icon={<Trash2 size={14} />}>Delete</Button></div>)}
+          {!loading && !(routes[projectId] ?? []).length ? <p className="muted">No hostname configured for this project.</p> : null}
+          {loading ? <LoadingInline label="Loading project hostnames…" /> : null}
+        </div>
+      </section>
+      {removeRoute ? <ConfirmDialog title="Delete public hostname?" body={`Delete ${removeRoute.hostname} and its managed DNS record?`} confirmLabel="Delete hostname" danger onClose={() => setRemoveRoute(null)} onConfirm={() => void remove(removeRoute)} /> : null}
     </section>
   );
 }

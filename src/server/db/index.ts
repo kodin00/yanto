@@ -2,6 +2,8 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import { config } from "../config.js";
 import { encrypt, isEncrypted } from "../services/crypto.js";
+import { hashPassword } from "../services/passwords.js";
+import { createId } from "../services/tokens.js";
 import * as schema from "./schema.js";
 
 export const pool = new pg.Pool({
@@ -429,4 +431,66 @@ export async function migrate() {
   await pool.query(`CREATE INDEX IF NOT EXISTS frp_tunnels_node_id_idx ON frp_tunnels(node_id);`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS frp_tunnels_protocol_remote_port_idx ON frp_tunnels(protocol, remote_port);`);
   await pool.query(`DROP TABLE IF EXISTS frp_worker_states;`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id text PRIMARY KEY,
+      username text NOT NULL,
+      role text NOT NULL,
+      status text NOT NULL,
+      password_hash text,
+      session_version integer NOT NULL DEFAULT 1,
+      last_login_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT users_role_check CHECK (role IN ('owner', 'member')),
+      CONSTRAINT users_status_check CHECK (status IN ('invited', 'active', 'disabled')),
+      CONSTRAINT users_username_nonempty_check CHECK (length(username) > 0)
+    );
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON users(lower(username));`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_single_owner_idx ON users(role) WHERE role = 'owner';`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS users_status_idx ON users(status);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_project_access (
+      user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      permissions jsonb NOT NULL DEFAULT '[]'::jsonb,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, project_id),
+      CONSTRAINT user_project_access_permissions_array_check CHECK (jsonb_typeof(permissions) = 'array')
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS user_project_access_project_idx ON user_project_access(project_id);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS account_tokens (
+      id text PRIMARY KEY,
+      user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      purpose text NOT NULL,
+      token_hash text NOT NULL,
+      expires_at timestamptz NOT NULL,
+      used_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT account_tokens_purpose_check CHECK (purpose IN ('invite', 'reset'))
+    );
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS account_tokens_hash_idx ON account_tokens(token_hash);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS account_tokens_user_active_idx ON account_tokens(user_id, used_at);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS account_tokens_expires_idx ON account_tokens(expires_at);`);
+
+  if (config.legacyAdminUsername && config.legacyAdminPassword) {
+    const existing = await pool.query<{ count: string }>(`SELECT count(*)::text AS count FROM users`);
+    if (existing.rows[0]?.count === "0") {
+      const passwordHash = config.legacyAdminPassword.startsWith("$2")
+        ? config.legacyAdminPassword
+        : await hashPassword(config.legacyAdminPassword);
+      await pool.query(
+        `INSERT INTO users (id, username, role, status, password_hash) VALUES ($1, $2, 'owner', 'active', $3) ON CONFLICT DO NOTHING`,
+        [createId("usr"), config.legacyAdminUsername, passwordHash]
+      );
+    }
+  }
 }

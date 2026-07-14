@@ -439,6 +439,43 @@ button:disabled {
   line-height: 1.5;
 }
 
+.settings-column-wide { grid-column: 1 / -1; }
+.user-access-panel { display: grid; gap: 16px; }
+.user-access-panel .panel-head-title { align-items: flex-start; }
+.user-access-create { display: grid; gap: 13px; padding: 14px; border: 1px solid var(--line); background: var(--field); }
+.user-access-create-head { display: flex; align-items: center; gap: 9px; }
+.user-access-create-head > div { display: grid; gap: 2px; }
+.access-editor { display: grid; gap: 8px; }
+.access-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 11px; }
+.access-editor-head > span { color: var(--muted); }
+.access-project-list, .managed-user-list { display: grid; gap: 8px; }
+.access-project-row { display: grid; gap: 10px; padding: 10px; border: 1px solid var(--line-light); background: var(--panel); }
+.access-project-row.assigned { border-color: color-mix(in srgb, var(--green) 45%, var(--line)); }
+.access-project-toggle { display: flex; align-items: center; gap: 9px; cursor: pointer; }
+.access-project-toggle > input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.access-project-toggle > span:last-child { display: grid; }
+.access-project-toggle small { color: var(--muted); font-size: 9px; }
+.checked-mark:not(:empty) { border-color: var(--green); background: var(--green); }
+.access-project-controls { display: grid; gap: 9px; padding-left: 26px; }
+.access-presets { display: flex; flex-wrap: wrap; gap: 5px; }
+.access-presets button, .access-presets > span { padding: 4px 7px; border: 1px solid var(--line); background: var(--field); color: var(--muted); font-size: 9px; }
+.access-presets button.active, .access-presets > span.active { border-color: var(--green); background: var(--success-bg); color: var(--green-dark); }
+.access-permission-grid { display: grid; grid-template-columns: repeat(4, minmax(90px, 1fr)); gap: 5px 10px; }
+.access-permission-grid label { display: flex; align-items: center; gap: 6px; font-size: 10px; }
+.managed-user-card { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--line); background: var(--panel-strong); }
+.managed-user-card > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.managed-user-card > header > div { display: grid; gap: 2px; }
+.managed-user-card > header span { color: var(--muted); font-size: 9px; }
+.user-access-error { margin: 0; padding: 9px 10px; border: 1px solid var(--red); background: var(--danger-bg); color: var(--red-dark); }
+.project-card.read-only { cursor: default; }
+.project-mapping-warning { display: flex; align-items: flex-start; gap: 6px; margin: 0; padding: 7px 8px; border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--line)); background: var(--warning-bg); color: var(--amber); font-size: 10px; }
+.project-mapping-warning svg { flex: 0 0 auto; margin-top: 1px; }
+
+@media (max-width: 700px) {
+  .access-permission-grid { grid-template-columns: repeat(2, minmax(90px, 1fr)); }
+  .access-project-controls { padding-left: 0; }
+}
+
 .brand-mark {
   width: 38px;
   height: 38px;

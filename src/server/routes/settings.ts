@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { requireAuth } from "../auth.js";
+import { requireOwner } from "../auth.js";
 import { config } from "../config.js";
 import { db } from "../db/index.js";
 import { projects } from "../db/schema.js";
@@ -15,7 +15,7 @@ const router = Router();
 
 router.get(
   "/api/settings",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (_req, res) => {
     const [count, sshKey, r2, cf, setupWizard, multiNode] = await Promise.all([
       db.select().from(projects),
@@ -42,7 +42,7 @@ router.get(
 
 router.post(
   "/api/settings/r2",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (req, res) => {
     const body = r2SettingsInput.parse(req.body ?? {});
     const r2 = await saveR2Settings(body);
@@ -53,7 +53,7 @@ router.post(
 
 router.post(
   "/api/settings/cloudflare",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (req, res) => {
     const body = cloudflareSettingsInput.parse(req.body ?? {});
     const cf = await saveCloudflareSettings(body);
@@ -64,7 +64,7 @@ router.post(
 
 router.post(
   "/api/settings/cloudflare/validate",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (req, res) => {
     const body = cloudflareSettingsInput.parse(req.body ?? {});
     const result = await validateCloudflareSettings(body);
@@ -75,7 +75,7 @@ router.post(
 
 router.post(
   "/api/settings/ssh-key",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (req, res) => {
     const body = z.object({ privateKey: z.string().min(1) }).parse(req.body);
     const sshKey = await saveManagedSshPrivateKey(body.privateKey);
@@ -86,7 +86,7 @@ router.post(
 
 router.post(
   "/api/settings/ssh-key/generate",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (req, res) => {
     const sshKey = await generateManagedSshPrivateKey();
     await recordAuditLog({ actor: actor(req), action: "settings.ssh_key.generate", entityType: "settings" });
@@ -96,7 +96,7 @@ router.post(
 
 router.post(
   "/api/settings/setup-wizard",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (req, res) => {
     const body = setupWizardInput.parse(req.body ?? {});
     const setupWizard = await saveSetupWizardSettings(body.action);
@@ -107,7 +107,7 @@ router.post(
 
 router.post(
   "/api/settings/multi-node",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (req, res) => {
     const body = multiNodeSettingsInput.parse(req.body ?? {});
     const multiNode = await saveMultiNodeSettings(body);

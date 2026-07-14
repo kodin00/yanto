@@ -1,6 +1,38 @@
 export type DeploymentStatus = "running" | "success" | "failed";
 export type DeploymentTrigger = "manual" | "webhook" | "github" | "rollback";
 export type McpAccessLevel = "read" | "write" | "admin";
+export type UserRole = "owner" | "member";
+export type UserStatus = "invited" | "active" | "disabled";
+export type ProjectPermission = "deploy" | "runtime" | "config" | "secrets" | "backups" | "tasks" | "hostnames";
+export type AppView = "dashboard" | "projects" | "tasks" | "deployments" | "containers" | "nodes" | "backups" | "hostnames" | "frp" | "dns" | "audit" | "settings";
+
+export type UserProjectAccess = {
+  projectId: string;
+  projectName: string;
+  permissions: ProjectPermission[];
+};
+
+export type SessionUser = {
+  id: string;
+  username: string;
+  role: UserRole;
+  status: UserStatus;
+  projectAccess: UserProjectAccess[];
+  allowedViews: AppView[];
+  appBaseUrl: string;
+  localNodeId: string;
+};
+
+export type ManagedUser = {
+  id: string;
+  username: string;
+  role: UserRole;
+  status: UserStatus;
+  lastLoginAt: string | null;
+  projectAccess: UserProjectAccess[];
+  createdAt: string;
+  updatedAt: string;
+};
 
 export type McpAccessToken = {
   id: string;
@@ -30,6 +62,7 @@ export type Project = {
   agentImage: string;
   containerCount?: number;
   cloudflareRoutes?: CloudflareRoute[];
+  containerMappingWarning?: string;
   createdAt: string;
   updatedAt: string;
 };

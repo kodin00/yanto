@@ -15,6 +15,7 @@ import { recoverInterruptedDeployments } from "./services/deployments.js";
 import { ensureEnabledCloudflaredConnectors, reconcileTunnelAssignments } from "./services/cloudflare.js";
 
 import authRouter from "./routes/auth.js";
+import usersRouter from "./routes/users.js";
 import projectsRouter from "./routes/projects.js";
 import deploymentsRouter from "./routes/deployments.js";
 import containersRouter from "./routes/containers.js";
@@ -30,6 +31,7 @@ import aiProvidersRouter from "./routes/ai-providers.js";
 import agentTasksRouter from "./routes/agent-tasks.js";
 import { archiveCompletedAgentTasks, drainActiveAgentRuns, recoverInterruptedAgentRuns } from "./services/agent-tasks.js";
 import { warmCodexAccountStatus } from "./services/codex-auth.js";
+import { logSetupCodeIfNeeded } from "./services/accounts.js";
 
 const app = express();
 
@@ -110,6 +112,7 @@ app.use(csrfProtection);
 
 app.use(mcpRouter);
 app.use(authRouter);
+app.use(usersRouter);
 app.use(projectsRouter);
 app.use(deploymentsRouter);
 app.use(containersRouter);
@@ -146,6 +149,7 @@ app.get(/.*/, (_req, res) => {
 async function main() {
   warnOnUnsafeDefaults();
   await migrate();
+  await logSetupCodeIfNeeded();
   await ensureLocalMasterNode();
   await recoverInterruptedDeployments();
   await recoverInterruptedAgentRuns();

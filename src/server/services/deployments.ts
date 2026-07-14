@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { deploymentNodes, deployments, projects, type DeploymentRow, type ProjectRow } from "../db/schema.js";
 import { config } from "../config.js";
@@ -208,7 +208,7 @@ export async function startDeployment(projectId: string, trigger: "manual" | "we
   return { deployment: result.deployment, reused: result.reused };
 }
 
-export async function latestDeployments(limit = 500) {
+export async function latestDeployments(limit = 500, projectIds?: string[]) {
   return db
     .select({
       id: deployments.id,
@@ -229,6 +229,7 @@ export async function latestDeployments(limit = 500) {
     .from(deployments)
     .leftJoin(projects, eq(projects.id, deployments.projectId))
     .leftJoin(deploymentNodes, eq(deploymentNodes.id, deployments.nodeId))
+    .where(projectIds ? (projectIds.length ? inArray(deployments.projectId, projectIds) : sql`false`) : undefined)
     .orderBy(desc(deployments.startedAt))
     .limit(limit);
 }

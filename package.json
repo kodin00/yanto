@@ -14,6 +14,7 @@
     "build:server": "tsc -p tsconfig.server.json",
     "start": "node dist/server/server/index.js",
     "start:mcp:stdio": "node dist/server/server/mcp/stdio.js",
+    "owner:reset": "node dist/server/server/cli/owner-reset.js",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "test": "vitest",
     "test:run": "vitest run",

@@ -54,7 +54,13 @@ write_master_env() {
   chmod 600 .env
   grep -q '^YANTO_NODE_ROLE=' .env && sed -i 's/^YANTO_NODE_ROLE=.*/YANTO_NODE_ROLE=master/' .env || echo 'YANTO_NODE_ROLE=master' >> .env
   grep -q '^JWT_SECRET=change-this-to-a-long-random-secret' .env && sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$(random_secret)/" .env || true
-  grep -q '^ADMIN_PASSWORD=change-this-admin-password' .env && sed -i "s/^ADMIN_PASSWORD=.*/ADMIN_PASSWORD=$(random_secret)/" .env || true
+  if grep -q '^YANTO_SETUP_CODE=' .env; then
+    if [ -z "$(sed -n 's/^YANTO_SETUP_CODE=//p' .env | head -n 1)" ]; then
+      sed -i "s/^YANTO_SETUP_CODE=.*/YANTO_SETUP_CODE=$(random_secret)/" .env
+    fi
+  else
+    echo "YANTO_SETUP_CODE=$(random_secret)" >> .env
+  fi
   grep -q '^POSTGRES_PASSWORD=' .env || echo "POSTGRES_PASSWORD=$(random_secret)" >> .env
   grep -q '^WORKER_JOIN_TOKEN=change-this-worker-join-token' .env && sed -i "s/^WORKER_JOIN_TOKEN=.*/WORKER_JOIN_TOKEN=$(random_secret)/" .env || true
   grep -q '^WORKER_TOKEN_SECRET=change-this-worker-token-secret' .env && sed -i "s/^WORKER_TOKEN_SECRET=.*/WORKER_TOKEN_SECRET=$(random_secret)/" .env || true
@@ -86,7 +92,13 @@ EOF
 run_master() {
   cd "$INSTALL_DIR"
   docker compose -f compose.yml --env-file .env up -d --build
-  echo "Yanto is running. Admin credentials are stored in $INSTALL_DIR/.env (mode 0600)."
+  echo "Yanto is running."
+  if grep -q '^ADMIN_USERNAME=.' .env && grep -q '^ADMIN_PASSWORD=.' .env; then
+    echo "The legacy admin credentials in $INSTALL_DIR/.env will be migrated to the database owner."
+  else
+    echo "Open Yanto and create the first owner with this one-time setup code:"
+    sed -n 's/^YANTO_SETUP_CODE=//p' .env | head -n 1
+  fi
 }
 
 run_worker() {

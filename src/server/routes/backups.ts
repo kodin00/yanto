@@ -4,11 +4,12 @@ import fs from "node:fs";
 import path from "node:path";
 import express from "express";
 import { requireAuth } from "../auth.js";
+import { accessibleProjectIds, assertProjectPermission, filterByProjectPermission, isOwner, listAccessibleContainers, projectForContainer, revalidateRequestPrincipal } from "../authorization.js";
 import { config } from "../config.js";
 import { HttpError, asyncRoute, actor, routeParam } from "../http-utils.js";
 import { backupInput } from "../route-schemas.js";
 import { recordAuditLog } from "../services/audit.js";
-import { createPostgresBackup, deleteBackup, getBackup, listBackups, listPostgresBackupTargets, markBackupDownloaded, restorePostgresBackupTarget, uploadBackupToR2 } from "../services/backups.js";
+import { createPostgresBackup, deleteBackup, getBackup, listBackups, listBackupsForProjects, listPostgresBackupTargets, markBackupDownloaded, restorePostgresBackupTarget, uploadBackupToR2 } from "../services/backups.js";
 
 const router = Router();
 
@@ -77,15 +78,27 @@ router.get(
   requireAuth,
   asyncRoute(async (req, res) => {
     const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 50)));
-    res.json(await listBackups(limit));
+    const projectIds = accessibleProjectIds(req);
+    if (projectIds === null) {
+      res.json(await listBackups(limit));
+      return;
+    }
+    const allowedIds = filterByProjectPermission(req, [...projectIds].map((projectId) => ({ projectId })), "backups").map((row) => row.projectId);
+    res.json(await listBackupsForProjects(allowedIds, limit));
   })
 );
 
 router.get(
   "/api/backups/postgres-targets",
   requireAuth,
-  asyncRoute(async (_req, res) => {
-    res.json(await listPostgresBackupTargets());
+  asyncRoute(async (req, res) => {
+    const targets = await listPostgresBackupTargets();
+    if (isOwner(req)) {
+      res.json(targets);
+      return;
+    }
+    const accessibleContainerIds = new Set((await listAccessibleContainers(req)).map((container) => container.id));
+    res.json(filterByProjectPermission(req, targets, "backups").filter((target) => accessibleContainerIds.has(target.containerId)));
   })
 );
 
@@ -94,6 +107,8 @@ router.post(
   requireAuth,
   asyncRoute(async (req, res) => {
     const body = backupInput.parse(req.body ?? {});
+    if (body.containerId) await projectForContainer(req, body.containerId, "backups");
+    else if (!isOwner(req)) throw new HttpError(403, "Only the owner can back up the Yanto database.");
     const backup = await createPostgresBackup(body.containerId);
     await recordAuditLog({
       actor: actor(req),
@@ -111,9 +126,13 @@ router.post(
   "/api/backups/postgres-targets/:containerId/restore",
   requireAuth,
   asyncRoute(async (req, res) => {
+    await projectForContainer(req, routeParam(req, "containerId"), "backups");
     const upload = await saveRequestBodyToTempFile(req);
     try {
-      const target = await restorePostgresBackupTarget(routeParam(req, "containerId"), upload.filePath, upload.originalFilename);
+      const containerId = routeParam(req, "containerId");
+      await revalidateRequestPrincipal(req);
+      await projectForContainer(req, containerId, "backups");
+      const target = await restorePostgresBackupTarget(containerId, upload.filePath, upload.originalFilename);
       await recordAuditLog({
         actor: actor(req),
         action: "backup.restore",
@@ -133,7 +152,11 @@ router.post(
   "/api/backups/:id/upload-r2",
   requireAuth,
   asyncRoute(async (req, res) => {
-    const { backup, result } = await uploadBackupToR2(routeParam(req, "id"));
+    const id = routeParam(req, "id");
+    const existing = await getBackup(id);
+    if (!existing?.projectId && !isOwner(req)) throw new HttpError(404, "Backup not found.");
+    if (existing?.projectId) assertProjectPermission(req, existing.projectId, "backups");
+    const { backup, result } = await uploadBackupToR2(id);
     await recordAuditLog({
       actor: actor(req),
       action: "backup.r2_upload",
@@ -155,8 +178,10 @@ router.get(
       res.status(404).json({ message: "Backup not found." });
       return;
     }
+    if (!backup.projectId && !isOwner(req)) throw new HttpError(404, "Backup not found.");
+    if (backup.projectId) assertProjectPermission(req, backup.projectId, "backups");
     await markBackupDownloaded(backup.id);
-    await recordAuditLog({ actor: actor(req), action: "backup.download", entityType: "backup", entityId: backup.id, metadata: { filename: backup.filename } });
+    await recordAuditLog({ actor: actor(req), action: "backup.download", entityType: "backup", entityId: backup.id, projectId: backup.projectId, metadata: { filename: backup.filename } });
     res.download(backup.filePath, backup.filename);
   })
 );
@@ -165,7 +190,11 @@ router.delete(
   "/api/backups/:id",
   requireAuth,
   asyncRoute(async (req, res) => {
-    const backup = await deleteBackup(routeParam(req, "id"));
+    const id = routeParam(req, "id");
+    const existing = await getBackup(id);
+    if (!existing?.projectId && !isOwner(req)) throw new HttpError(404, "Backup not found.");
+    if (existing?.projectId) assertProjectPermission(req, existing.projectId, "backups");
+    const backup = await deleteBackup(id);
     if (!backup) {
       res.status(404).json({ message: "Backup not found." });
       return;

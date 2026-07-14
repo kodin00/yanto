@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { auditLogs } from "../db/schema.js";
 import { createId } from "./tokens.js";
@@ -40,4 +40,10 @@ export async function listAuditLogs(limit = 100, projectId?: string) {
     return query.where(eq(auditLogs.projectId, projectId)).orderBy(desc(auditLogs.createdAt)).limit(safeLimit);
   }
   return query.orderBy(desc(auditLogs.createdAt)).limit(safeLimit);
+}
+
+export async function listAuditLogsForProjects(projectIds: string[], limit = 100) {
+  if (projectIds.length === 0) return [];
+  return db.select().from(auditLogs).where(inArray(auditLogs.projectId, projectIds))
+    .orderBy(desc(auditLogs.createdAt)).limit(Math.min(limit, 500));
 }

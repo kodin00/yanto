@@ -1,9 +1,10 @@
 import { Router } from "express";
-import { requireAuth } from "../auth.js";
+import { requireAuth, requireOwner } from "../auth.js";
+import { accessibleProjectIds, assertProjectAccess } from "../authorization.js";
 import { config } from "../config.js";
 import { asyncRoute, actor } from "../http-utils.js";
 import { recordAuditLog } from "../services/audit.js";
-import { listAuditLogs } from "../services/audit.js";
+import { listAuditLogs, listAuditLogsForProjects } from "../services/audit.js";
 import { cleanupDocker, previewDockerCleanup } from "../services/docker.js";
 import { ensureWorkerJoinToken } from "../services/settings.js";
 import { listNodes } from "../services/nodes.js";
@@ -25,7 +26,7 @@ router.get(
 
 router.get(
   "/api/nodes",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (_req, res) => {
     res.json(await listNodes());
   })
@@ -33,7 +34,7 @@ router.get(
 
 router.post(
   "/api/nodes/join-token",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (req, res) => {
     const token = await ensureWorkerJoinToken();
     const command = `curl -fsSL https://raw.githubusercontent.com/kodin00/yanto/master/scripts/install.sh | sudo bash -s -- worker --master ${config.appBaseUrl} --join-token ${token}`;
@@ -47,13 +48,18 @@ router.get(
   requireAuth,
   asyncRoute(async (req, res) => {
     const limit = Math.min(500, Math.max(1, Number(req.query.limit ?? 100)));
-    res.json(await listAuditLogs(limit, typeof req.query.projectId === "string" ? req.query.projectId : undefined));
+    const projectId = typeof req.query.projectId === "string" ? req.query.projectId : undefined;
+    if (projectId) assertProjectAccess(req, projectId);
+    const projectIds = accessibleProjectIds(req);
+    res.json(projectIds === null || projectId
+      ? await listAuditLogs(limit, projectId)
+      : await listAuditLogsForProjects([...projectIds], limit));
   })
 );
 
 router.get(
   "/api/system/usage",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (_req, res) => {
     res.json(await systemUsage());
   })
@@ -61,7 +67,7 @@ router.get(
 
 router.get(
   "/api/system/logs",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (_req, res) => {
     res.type("text/plain").send(logger.history() || "No system log entries recorded yet.");
   })
@@ -69,7 +75,7 @@ router.get(
 
 router.get(
   "/api/system/cleanup/preview",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (_req, res) => {
     res.json({ logs: await previewDockerCleanup() });
   })
@@ -77,7 +83,7 @@ router.get(
 
 router.post(
   "/api/system/cleanup",
-  requireAuth,
+  requireOwner,
   asyncRoute(async (req, res) => {
     const logs = await cleanupDocker();
     await recordAuditLog({ actor: actor(req), action: "system.cleanup", entityType: "system", metadata: { protected: true } });

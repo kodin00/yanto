@@ -1,4 +1,4 @@
-import type { AgentGitPreview, AgentRun, AgentTask, AgentTaskDetail, AgentTaskWorktree, AiModel, AiProvider, AiProviderProtocol, AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, CodexAccountStatus, ContainerInfo, Deployment, DeploymentNode, FrpClientSetup, FrpOverview, FrpSettings, FrpTunnel, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectBranch, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SetupWizardStatus, SystemUsage } from "../../shared/types";
+import type { AgentGitPreview, AgentRun, AgentTask, AgentTaskDetail, AgentTaskWorktree, AiModel, AiProvider, AiProviderProtocol, AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, CodexAccountStatus, ContainerInfo, Deployment, DeploymentNode, FrpClientSetup, FrpOverview, FrpSettings, FrpTunnel, ManagedUser, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectBranch, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SessionUser, SetupWizardStatus, SystemUsage, UserProjectAccess } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -182,13 +182,42 @@ function normalizeProjectEnv(payload: unknown): ProjectEnvVariable[] {
 }
 
 export const api = {
+  setupStatus: () => request<{ needsSetup: boolean }>("/api/setup/status"),
+  createOwner: (username: string, password: string, setupCode: string) =>
+    request<SessionUser>("/api/setup/owner", {
+      method: "POST",
+      body: JSON.stringify({ username, password, setupCode })
+    }),
   login: (username: string, password: string) =>
-    request<{ username: string }>("/api/auth/login", {
+    request<SessionUser>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password })
     }),
   logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
-  me: () => request<{ username: string }>("/api/auth/me"),
+  me: () => request<SessionUser>("/api/auth/me"),
+  completeAccountSetup: (token: string, password: string) =>
+    request<SessionUser>("/api/auth/account/setup", {
+      method: "POST",
+      body: JSON.stringify({ token, password })
+    }),
+  users: () => request<ManagedUser[]>("/api/users"),
+  createUser: (username: string, projectAccess: UserProjectAccess[]) =>
+    request<{ user: ManagedUser; setupUrl: string }>("/api/users", {
+      method: "POST",
+      body: JSON.stringify({ username, projectAccess })
+    }),
+  replaceUserAccess: (id: string, projectAccess: UserProjectAccess[]) =>
+    request<ManagedUser>(`/api/users/${id}/access`, {
+      method: "PUT",
+      body: JSON.stringify({ projectAccess })
+    }),
+  setUserStatus: (id: string, status: "active" | "disabled") =>
+    request<ManagedUser>(`/api/users/${id}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status })
+    }),
+  createUserResetLink: (id: string) =>
+    request<{ resetUrl: string }>(`/api/users/${id}/reset-link`, { method: "POST" }),
   projects: () => request<Project[]>("/api/projects"),
   nodes: () => request<DeploymentNode[]>("/api/nodes"),
   workerJoinToken: () => request<{ token: string; command: string }>("/api/nodes/join-token", { method: "POST" }),

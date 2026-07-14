@@ -33,7 +33,9 @@ describe("worker install/runtime files", () => {
     expect(installer).toContain("compose.worker.yml");
     expect(installer).toContain("--join-token");
     expect(installer).toContain("JWT_SECRET=change-this-to-a-long-random-secret");
-    expect(installer).toContain("ADMIN_PASSWORD=change-this-admin-password");
+    expect(installer).toContain("YANTO_SETUP_CODE=$(random_secret)");
+    expect(installer).toContain("one-time setup code");
+    expect(installer).not.toContain("ADMIN_PASSWORD=change-this-admin-password");
     expect(installer).toContain("POSTGRES_PASSWORD=$(random_secret)");
     expect(installer).toContain("chmod 600 .env");
   });
