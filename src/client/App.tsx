@@ -2212,6 +2212,16 @@ export function App() {
               }}
               placeholder={"Optional. Paste docker-compose.yml content here for compose-only projects or to override the file during deploy."}
             />
+            <div className="actions">
+              <Button
+                type="button"
+                disabled={!projectCompose.available || projectEnv.loading}
+                loading={busy === "project"}
+                onClick={() => void persistProjectDetails()}
+              >
+                {busy === "project" ? "Saving" : "Save compose"}
+              </Button>
+            </div>
           </div>
         </Modal>
       ) : null}
@@ -2226,6 +2236,16 @@ export function App() {
             ) : (
               <p className="muted">Environment could not be loaded. Project fields can still be saved.</p>
             )}
+            <div className="actions">
+              <Button
+                type="button"
+                disabled={projectEnv.loading || !projectEnv.available}
+                loading={busy === "project"}
+                onClick={() => void persistProjectDetails()}
+              >
+                {busy === "project" ? "Saving" : "Save environment"}
+              </Button>
+            </div>
           </div>
         </Modal>
       ) : null}
