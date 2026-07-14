@@ -94,9 +94,6 @@ export function warnOnUnsafeDefaults() {
     console.warn("JWT_SECRET is using the default value. Set a strong secret before exposing this app.");
   }
   if (config.nodeRole === "master" && unsafeAdminPasswords.has(config.adminPassword)) {
-    if (config.nodeEnv === "production") {
-      throw new Error("FATAL: ADMIN_PASSWORD is using a known placeholder value. Set a strong admin password before running in production.");
-    }
     console.warn("ADMIN_PASSWORD is using a known placeholder value. Set a strong admin password.");
   }
   if (config.nodeRole === "master" && unsafeSecretValues.has(config.workerTokenSecret)) {
