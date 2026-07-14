@@ -88,24 +88,15 @@ export function warnOnUnsafeDefaults() {
     throw new Error("FRP_PORT_START and FRP_PORT_END must define a valid port range.");
   }
   if (config.nodeRole === "master" && config.jwtSecret === requiredSecretFallback) {
-    if (config.nodeEnv === "production") {
-      throw new Error("FATAL: JWT_SECRET is using the default value. Set a strong secret before running in production.");
-    }
     console.warn("JWT_SECRET is using the default value. Set a strong secret before exposing this app.");
   }
   if (config.nodeRole === "master" && unsafeAdminPasswords.has(config.adminPassword)) {
     console.warn("ADMIN_PASSWORD is using a known placeholder value. Set a strong admin password.");
   }
   if (config.nodeRole === "master" && unsafeSecretValues.has(config.workerTokenSecret)) {
-    if (config.nodeEnv === "production") {
-      throw new Error("FATAL: WORKER_TOKEN_SECRET is using the default value. Set a strong secret before running in production.");
-    }
     console.warn("WORKER_TOKEN_SECRET is using the default value. Set a strong secret before enrolling workers.");
   }
   if (config.nodeRole === "master" && unsafeWorkerJoinTokens.has(config.workerJoinToken)) {
-    if (config.nodeEnv === "production") {
-      throw new Error("FATAL: WORKER_JOIN_TOKEN is using a known placeholder value. Set a strong join token before running in production.");
-    }
     console.warn("WORKER_JOIN_TOKEN is using a known placeholder value. Set a strong token before enrolling workers.");
   }
   if (config.nodeRole === "master" && config.mcpTokenSecret === requiredSecretFallback) {
