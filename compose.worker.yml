@@ -11,7 +11,7 @@ services:
       YANTO_WORKER_NAME: ${YANTO_WORKER_NAME:-}
       YANTO_WORKER_TOKEN_PATH: /data/worker-token
       PROJECTS_ROOT: /projects
-      HOST_PROJECTS_ROOT: ${HOST_PROJECTS_ROOT:-~/projects}
+      HOST_PROJECTS_ROOT: ${HOST_PROJECTS_ROOT:-/var/lib/yanto/projects}
       SSH_KEYS_DIR: /data/ssh
       SSH_PRIVATE_KEY_PATH: ${SSH_PRIVATE_KEY_PATH:-/root/.ssh/id_ed25519}
       MANAGED_SSH_PRIVATE_KEY_PATH: ${MANAGED_SSH_PRIVATE_KEY_PATH:-/data/ssh/id_ed25519}
@@ -19,8 +19,8 @@ services:
       COMMAND_OUTPUT_MAX_BYTES: ${COMMAND_OUTPUT_MAX_BYTES:-2097152}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${HOST_PROJECTS_ROOT:-~/projects}:/projects
-      - ${SSH_SOURCE_DIR:-~/.ssh}:/root/.ssh:ro
+      - ${HOST_PROJECTS_ROOT:-/var/lib/yanto/projects}:/projects
+      - ${SSH_SOURCE_DIR:-/var/lib/yanto/ssh-source}:/root/.ssh:ro
       - yanto_worker_data:/data
     extra_hosts:
       - "host.docker.internal:host-gateway"

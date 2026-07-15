@@ -19,9 +19,9 @@ services:
       ADMIN_USERNAME: ${ADMIN_USERNAME:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       PROJECTS_ROOT: /projects
-      HOST_PROJECTS_ROOT: ${HOST_PROJECTS_ROOT:-~/projects}
+      HOST_PROJECTS_ROOT: ${HOST_PROJECTS_ROOT:-/var/lib/yanto/projects}
       AGENT_WORKTREES_ROOT: ${AGENT_WORKTREES_ROOT:-/projects/.yanto-worktrees}
-      HOST_AGENT_WORKTREES_ROOT: ${HOST_AGENT_WORKTREES_ROOT:-${HOST_PROJECTS_ROOT:-~/projects}/.yanto-worktrees}
+      HOST_AGENT_WORKTREES_ROOT: ${HOST_AGENT_WORKTREES_ROOT:-${HOST_PROJECTS_ROOT:-/var/lib/yanto/projects}/.yanto-worktrees}
       SSH_KEYS_DIR: /data/ssh
       SSH_PRIVATE_KEY_PATH: ${SSH_PRIVATE_KEY_PATH:-/root/.ssh/id_ed25519}
       MANAGED_SSH_PRIVATE_KEY_PATH: ${MANAGED_SSH_PRIVATE_KEY_PATH:-/data/ssh/id_ed25519}
@@ -43,8 +43,8 @@ services:
       AGENT_COMMAND_TIMEOUT_MS: ${AGENT_COMMAND_TIMEOUT_MS:-600000}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${HOST_PROJECTS_ROOT:-~/projects}:/projects
-      - ${SSH_SOURCE_DIR:-~/.ssh}:/root/.ssh:ro
+      - ${HOST_PROJECTS_ROOT:-/var/lib/yanto/projects}:/projects
+      - ${SSH_SOURCE_DIR:-/var/lib/yanto/ssh-source}:/root/.ssh:ro
       - yanto_ssh:/data/ssh
       - yanto_backups:/data/backups
       - yanto_frp:/data/frp:ro

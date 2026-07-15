@@ -5,10 +5,14 @@ umask 077
 REPO_URL="${YANTO_REPO_URL:-https://github.com/kodin00/yanto.git}"
 BRANCH="${YANTO_BRANCH:-master}"
 INSTALL_DIR="${YANTO_INSTALL_DIR:-/opt/yanto}"
+PROJECTS_DIR="/var/lib/yanto/projects"
+HOST_USER=""
+PROJECTS_DIR_EXPLICIT=false
+HOST_USER_EXPLICIT=false
 ROLE="${1:-}"
 
 usage() {
-  echo "Usage: install.sh master|worker [--master URL] [--join-token TOKEN] [--name NAME] [--dir PATH]"
+  echo "Usage: install.sh master|worker [--master URL] [--join-token TOKEN] [--name NAME] [--dir PATH] [--projects-dir PATH] [--host-user USER]"
 }
 
 need_root() {
@@ -46,10 +50,87 @@ random_secret() {
   openssl rand -hex 32 2>/dev/null | tr -d '\n' || date +%s%N
 }
 
+set_env_value() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local escaped
+  escaped="$(printf '%s' "$value" | sed 's/[&|\\]/\\&/g')"
+  if grep -q "^${key}=" "$file"; then
+    sed -i "s|^${key}=.*|${key}=${escaped}|" "$file"
+  else
+    printf '%s=%s\n' "$key" "$value" >> "$file"
+  fi
+}
+
+prepare_fresh_host_paths() {
+  case "$PROJECTS_DIR" in
+    /)
+      echo "--projects-dir cannot be the filesystem root."
+      exit 1
+      ;;
+    /*) ;;
+    *)
+      echo "--projects-dir must be an absolute path; '~' and relative paths are not supported."
+      exit 1
+      ;;
+  esac
+
+  local selected_user="$HOST_USER"
+  if [ -z "$selected_user" ]; then
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+      selected_user="$SUDO_USER"
+    else
+      selected_user="root"
+    fi
+  fi
+
+  local passwd_entry
+  passwd_entry="$(getent passwd "$selected_user" || true)"
+  if [ -z "$passwd_entry" ]; then
+    echo "Host user '$selected_user' does not exist."
+    exit 1
+  fi
+
+  local host_home
+  host_home="$(printf '%s' "$passwd_entry" | cut -d: -f6)"
+  if [ -z "$host_home" ] || [ "${host_home#/}" = "$host_home" ]; then
+    echo "Host user '$selected_user' does not have a valid absolute home directory."
+    exit 1
+  fi
+
+  if [ -e "$PROJECTS_DIR" ] && [ ! -d "$PROJECTS_DIR" ]; then
+    echo "Projects path '$PROJECTS_DIR' exists but is not a directory."
+    exit 1
+  fi
+  if [ ! -d "$PROJECTS_DIR" ]; then
+    install -d -m 0750 "$PROJECTS_DIR"
+  fi
+  SSH_SOURCE_DIR="$host_home/.ssh"
+  if [ ! -d "$SSH_SOURCE_DIR" ]; then
+    SSH_SOURCE_DIR="/var/lib/yanto/ssh-source"
+    install -d -m 0700 "$SSH_SOURCE_DIR"
+  fi
+}
+
+reject_path_overrides_for_existing_install() {
+  local env_file="$1"
+  if $PROJECTS_DIR_EXPLICIT || $HOST_USER_EXPLICIT; then
+    echo "$env_file already exists; path overrides are only applied to fresh installs. Update that file deliberately if you want to move existing data."
+    exit 1
+  fi
+}
+
 write_master_env() {
   cd "$INSTALL_DIR"
   if [ ! -f .env ]; then
+    prepare_fresh_host_paths
     cp .env.example .env
+    set_env_value .env HOST_PROJECTS_ROOT "$PROJECTS_DIR"
+    set_env_value .env HOST_AGENT_WORKTREES_ROOT "$PROJECTS_DIR/.yanto-worktrees"
+    set_env_value .env SSH_SOURCE_DIR "$SSH_SOURCE_DIR"
+  else
+    reject_path_overrides_for_existing_install .env
   fi
   chmod 600 .env
   grep -q '^YANTO_NODE_ROLE=' .env && sed -i 's/^YANTO_NODE_ROLE=.*/YANTO_NODE_ROLE=master/' .env || echo 'YANTO_NODE_ROLE=master' >> .env
@@ -75,14 +156,23 @@ write_worker_env() {
     exit 1
   fi
   cd "$INSTALL_DIR"
+  if [ -f .env.worker ]; then
+    reject_path_overrides_for_existing_install .env.worker
+    set_env_value .env.worker YANTO_MASTER_URL "$master_url"
+    set_env_value .env.worker WORKER_JOIN_TOKEN "$join_token"
+    set_env_value .env.worker YANTO_WORKER_NAME "$worker_name"
+    chmod 600 .env.worker
+    return
+  fi
+  prepare_fresh_host_paths
   cat > .env.worker <<EOF
 YANTO_NODE_ROLE=worker
 YANTO_MASTER_URL=$master_url
 WORKER_JOIN_TOKEN=$join_token
 YANTO_WORKER_TOKEN=
 YANTO_WORKER_NAME=$worker_name
-HOST_PROJECTS_ROOT=/opt/yanto-projects
-SSH_SOURCE_DIR=/root/.ssh
+HOST_PROJECTS_ROOT=$PROJECTS_DIR
+SSH_SOURCE_DIR=$SSH_SOURCE_DIR
 COMMAND_TIMEOUT_MS=3600000
 COMMAND_OUTPUT_MAX_BYTES=2097152
 EOF
@@ -133,6 +223,16 @@ while [ "$#" -gt 0 ]; do
       ;;
     --dir)
       INSTALL_DIR="${2:-}"
+      shift 2
+      ;;
+    --projects-dir)
+      PROJECTS_DIR="${2:-}"
+      PROJECTS_DIR_EXPLICIT=true
+      shift 2
+      ;;
+    --host-user)
+      HOST_USER="${2:-}"
+      HOST_USER_EXPLICIT=true
       shift 2
       ;;
     *)

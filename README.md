@@ -27,15 +27,15 @@ Worker node:
 curl -fsSL https://raw.githubusercontent.com/kodin00/yanto/master/scripts/install.sh | sudo bash -s -- worker --master http://MASTER_IP:PORT --join-token TOKEN
 ```
 
-The installer supports Ubuntu/Debian hosts. It installs Git and Docker when missing, clones Yanto into `/opt/yanto`, starts Docker Compose, and prints the one-time code used to create the first owner.
+The installer supports Ubuntu/Debian hosts. It installs Git and Docker when missing, clones Yanto into `/opt/yanto`, stores managed projects under `/var/lib/yanto/projects`, starts Docker Compose, and prints the one-time code used to create the first owner. The installer detects the account that invoked `sudo` when mounting existing SSH keys; use `--host-user USER` to override it or `--projects-dir /absolute/path` to choose a different projects directory on a fresh install.
 
 ## Docker Runtime
 
 The app is designed to run with:
 
 - `/var/run/docker.sock:/var/run/docker.sock` so it can inspect and control Docker.
-- `${HOST_PROJECTS_ROOT:-~/projects}:/projects` so registered projects are cloned or deployed from the host projects folder.
-- `${SSH_SOURCE_DIR:-~/.ssh}:/root/.ssh:ro` so Git deployments use the SSH key you configured on the VPS.
+- `${HOST_PROJECTS_ROOT:-/var/lib/yanto/projects}:/projects` so registered projects are cloned or deployed from Yanto's host data directory.
+- `${SSH_SOURCE_DIR:-/var/lib/yanto/ssh-source}:/root/.ssh:ro` so Git deployments use the SSH key selected during installation, when available.
 - A persistent SSH volume at `/data/ssh` is reserved for app-managed keys.
 
 Docker socket access is powerful. Only the Yanto owner can grant delegated project access; keep owner access and the host itself trusted.
@@ -62,7 +62,7 @@ The owner-only **AI Tasks** tab adds a Git-backed coding workspace:
 
 - Sign in with a ChatGPT/Codex account using the device-code flow, or register OpenAI Responses, OpenAI-compatible Chat Completions, and Anthropic Messages providers. API keys are encrypted at rest; model IDs can be fetched or entered manually.
 - Create a task from a registered Git project, choose the freshly fetched source branch, and create or explicitly resume a task branch.
-- Each task gets a real Git worktree under `/projects/.yanto-worktrees` (host-visible at `~/projects/.yanto-worktrees` by default). The project's deployment checkout is never switched by an agent task.
+- Each task gets a real Git worktree under `/projects/.yanto-worktrees` (host-visible at `/var/lib/yanto/projects/.yanto-worktrees` by default). The project's deployment checkout is never switched by an agent task.
 - Codex and API-key provider tools run directly in Yanto's runtime with the task worktree as their working directory; Yanto no longer launches a per-task Docker container or Codex playground. File tools reject traversal, Git metadata, and symlink escapes, and shell tools receive a stripped environment.
 - Review streamed tool activity, continue the persistent task conversation, inspect/select changed files, commit, push, and clean the worktree. Retained worktrees have their own manager so completed-task worktrees can be removed manually without deleting task history. Auto-commit, auto-push, and auto-clean are independent per-task switches and default off.
 
@@ -120,10 +120,10 @@ Important environment variables:
 - `YANTO_SETUP_CODE`, required only while claiming a fresh installation; the installer generates it automatically
 - `ADMIN_USERNAME` and `ADMIN_PASSWORD`, optional legacy upgrade inputs used once to create the database owner
 - `PROJECTS_ROOT` inside the container, default `/projects`
-- `HOST_PROJECTS_ROOT` for display, default `~/projects`
+- `HOST_PROJECTS_ROOT` for display, default `/var/lib/yanto/projects`
 - `AGENT_WORKTREES_ROOT` inside the app, default `${PROJECTS_ROOT}/.yanto-worktrees`
 - `HOST_AGENT_WORKTREES_ROOT` host-visible worktree path for display, default `${HOST_PROJECTS_ROOT}/.yanto-worktrees`
-- `SSH_SOURCE_DIR` host SSH folder mounted read-only into the app, for example `/home/ubuntu/.ssh`
+- `SSH_SOURCE_DIR` host SSH folder mounted read-only into the app; fresh installs use the invoking sudo user's `.ssh` directory when it exists
 - `SSH_PRIVATE_KEY_PATH` private key path inside the app container, default `/root/.ssh/id_ed25519`
 - `SSH_KEYS_DIR`, default `/data/ssh`
 - `APP_BASE_URL`

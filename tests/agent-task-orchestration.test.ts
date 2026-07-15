@@ -438,7 +438,7 @@ describe("agent task orchestration", () => {
         taskTitle: "agt_one",
         projectName: "Project",
         branch: "task/agt_one",
-        hostPath: "~/projects/.yanto-worktrees/project/agt_one",
+        hostPath: "/var/lib/yanto/projects/.yanto-worktrees/project/agt_one",
         exists: false,
         removable: true
       })

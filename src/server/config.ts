@@ -6,7 +6,7 @@ const unsafeLegacyAdminPasswords = new Set(["admin", "change-this-admin-password
 const unsafeWorkerJoinTokens = new Set(["change-this-worker-join-token"]);
 const projectsRoot = path.resolve(process.env.PROJECTS_ROOT ?? "/projects");
 const agentWorktreesRoot = path.resolve(process.env.AGENT_WORKTREES_ROOT ?? path.join(projectsRoot, ".yanto-worktrees"));
-const hostProjectsRoot = process.env.HOST_PROJECTS_ROOT ?? "~/projects";
+const hostProjectsRoot = process.env.HOST_PROJECTS_ROOT ?? "/var/lib/yanto/projects";
 
 function configuredSecret(...values: Array<string | undefined>) {
   return values.find((value) => value && !unsafeSecretValues.has(value)) ?? requiredSecretFallback;

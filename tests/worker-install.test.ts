@@ -32,11 +32,30 @@ describe("worker install/runtime files", () => {
     expect(installer).toContain("master|worker");
     expect(installer).toContain("compose.worker.yml");
     expect(installer).toContain("--join-token");
+    expect(installer).toContain("--projects-dir");
+    expect(installer).toContain("--host-user");
+    expect(installer).toContain('PROJECTS_DIR="/var/lib/yanto/projects"');
+    expect(installer).toContain('SUDO_USER');
+    expect(installer).not.toContain("HOST_PROJECTS_ROOT=/opt/yanto-projects");
+    expect(installer).not.toContain("HOST_PROJECTS_ROOT=~/projects");
     expect(installer).toContain("JWT_SECRET=change-this-to-a-long-random-secret");
     expect(installer).toContain("YANTO_SETUP_CODE=$(random_secret)");
     expect(installer).toContain("one-time setup code");
     expect(installer).not.toContain("ADMIN_PASSWORD=change-this-admin-password");
     expect(installer).toContain("POSTGRES_PASSWORD=$(random_secret)");
     expect(installer).toContain("chmod 600 .env");
+  });
+
+  it("uses absolute service-managed host path defaults", () => {
+    const master = fs.readFileSync("compose.yml", "utf8");
+    const worker = fs.readFileSync("compose.worker.yml", "utf8");
+    const exampleEnv = fs.readFileSync(".env.example", "utf8");
+
+    for (const file of [master, worker, exampleEnv]) {
+      expect(file).toContain("/var/lib/yanto/projects");
+      expect(file).not.toContain("~/projects");
+    }
+    expect(master).not.toContain("~/.ssh");
+    expect(worker).not.toContain("~/.ssh");
   });
 });

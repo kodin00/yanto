@@ -268,7 +268,7 @@ export function App() {
   const [postgresTargets, setPostgresTargets] = useState<PostgresTarget[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
   const [usage, setUsage] = useState<SystemUsage | null>(null);
-  const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: "", sshKey: emptySshKeySettings, r2: emptyR2Settings, cf: emptyCfSettings, setupWizard: emptySetupWizardStatus, multiNode: emptyMultiNodeSettings });
+  const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "/var/lib/yanto/projects", sshKeysDir: "", appBaseUrl: "", sshKey: emptySshKeySettings, r2: emptyR2Settings, cf: emptyCfSettings, setupWizard: emptySetupWizardStatus, multiNode: emptyMultiNodeSettings });
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [mcpTokens, setMcpTokens] = useState<McpAccessToken[]>([]);
   const [mcpTokenForm, setMcpTokenForm] = useState<{ name: string; accessLevel: McpAccessLevel }>({ name: "", accessLevel: "read" });
