@@ -24,7 +24,7 @@ const mocks = vi.hoisted(() => {
   return {
     client,
     userRow,
-    pool: { connect: vi.fn(async () => client) },
+    pool: { connect: vi.fn(async () => client), query: vi.fn() },
     db: { select: vi.fn(() => userBuilder) }
   };
 });
@@ -37,7 +37,7 @@ vi.mock("../src/server/services/passwords.js", () => ({
 }));
 vi.mock("../src/server/logger.js", () => ({ logger: { warn: vi.fn() } }));
 
-import { completeAccountSetup, setUserStatus } from "../src/server/services/accounts.js";
+import { accountSetupDetails, completeAccountSetup, deleteMember, setUserStatus } from "../src/server/services/accounts.js";
 
 describe("disabled account token revocation", () => {
   beforeEach(() => {
@@ -70,5 +70,37 @@ describe("disabled account token revocation", () => {
 
     expect(mocks.client.query).toHaveBeenCalledWith("ROLLBACK");
     expect(mocks.client.query).not.toHaveBeenCalledWith(expect.stringContaining("UPDATE users SET password_hash"), expect.anything());
+  });
+
+  it("shows the username only for a valid unused account link", async () => {
+    mocks.pool.query.mockResolvedValueOnce({ rows: [{ username: "deploy-operator" }] });
+
+    await expect(accountSetupDetails("valid-link")).resolves.toEqual({ username: "deploy-operator" });
+    expect(mocks.pool.query).toHaveBeenCalledWith(expect.stringContaining("t.expires_at > now()"), [expect.any(String)]);
+
+    mocks.pool.query.mockResolvedValueOnce({ rows: [] });
+    await expect(accountSetupDetails("expired-link")).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("permanently removes a member account", async () => {
+    mocks.client.query.mockImplementation(async (query: string) => {
+      if (query.includes("SELECT role, username")) return { rows: [{ role: "member", username: "deploy-operator" }] };
+      return { rows: [], rowCount: 0 };
+    });
+
+    await expect(deleteMember("usr_member")).resolves.toEqual({ id: "usr_member", username: "deploy-operator" });
+    expect(mocks.client.query).toHaveBeenCalledWith("DELETE FROM users WHERE id = $1", ["usr_member"]);
+    expect(mocks.client.query).toHaveBeenCalledWith("COMMIT");
+  });
+
+  it("never removes the owner account", async () => {
+    mocks.client.query.mockImplementation(async (query: string) => {
+      if (query.includes("SELECT role, username")) return { rows: [{ role: "owner", username: "owner" }] };
+      return { rows: [], rowCount: 0 };
+    });
+
+    await expect(deleteMember("usr_owner")).rejects.toMatchObject({ status: 400 });
+    expect(mocks.client.query).not.toHaveBeenCalledWith("DELETE FROM users WHERE id = $1", expect.anything());
+    expect(mocks.client.query).toHaveBeenCalledWith("ROLLBACK");
   });
 });

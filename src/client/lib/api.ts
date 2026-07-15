@@ -183,10 +183,10 @@ function normalizeProjectEnv(payload: unknown): ProjectEnvVariable[] {
 
 export const api = {
   setupStatus: () => request<{ needsSetup: boolean }>("/api/setup/status"),
-  createOwner: (username: string, password: string, setupCode: string) =>
+  createOwner: (username: string, password: string, passwordConfirmation: string, setupCode: string) =>
     request<SessionUser>("/api/setup/owner", {
       method: "POST",
-      body: JSON.stringify({ username, password, setupCode })
+      body: JSON.stringify({ username, password, passwordConfirmation, setupCode })
     }),
   login: (username: string, password: string) =>
     request<SessionUser>("/api/auth/login", {
@@ -195,10 +195,15 @@ export const api = {
     }),
   logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
   me: () => request<SessionUser>("/api/auth/me"),
-  completeAccountSetup: (token: string, password: string) =>
+  accountSetupDetails: (token: string) =>
+    request<{ username: string }>("/api/auth/account/setup/preview", {
+      method: "POST",
+      body: JSON.stringify({ token })
+    }),
+  completeAccountSetup: (token: string, password: string, passwordConfirmation: string) =>
     request<SessionUser>("/api/auth/account/setup", {
       method: "POST",
-      body: JSON.stringify({ token, password })
+      body: JSON.stringify({ token, password, passwordConfirmation })
     }),
   users: () => request<ManagedUser[]>("/api/users"),
   createUser: (username: string, projectAccess: UserProjectAccess[]) =>
@@ -218,6 +223,7 @@ export const api = {
     }),
   createUserResetLink: (id: string) =>
     request<{ resetUrl: string }>(`/api/users/${id}/reset-link`, { method: "POST" }),
+  deleteUser: (id: string) => request<void>(`/api/users/${id}`, { method: "DELETE" }),
   projects: () => request<Project[]>("/api/projects"),
   nodes: () => request<DeploymentNode[]>("/api/nodes"),
   workerJoinToken: () => request<{ token: string; command: string }>("/api/nodes/join-token", { method: "POST" }),

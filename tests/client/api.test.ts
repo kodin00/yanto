@@ -221,6 +221,36 @@ describe("api client", () => {
       }));
     });
 
+    it("previews an account link without putting its token in the URL", async () => {
+      const fetchMock = mockFetch({ username: "deploy-operator" });
+
+      await api.accountSetupDetails("secret-token");
+
+      expect(fetchMock).toHaveBeenCalledWith("/api/auth/account/setup/preview", expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ token: "secret-token" })
+      }));
+    });
+
+    it("sends both password entries when completing account setup", async () => {
+      const fetchMock = mockFetch({ username: "deploy-operator" });
+
+      await api.completeAccountSetup("secret-token", "new-password", "new-password");
+
+      expect(fetchMock).toHaveBeenCalledWith("/api/auth/account/setup", expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ token: "secret-token", password: "new-password", passwordConfirmation: "new-password" })
+      }));
+    });
+
+    it("deletes a managed user", async () => {
+      const fetchMock = mockFetch(undefined, { status: 204 });
+
+      await api.deleteUser("usr_member");
+
+      expect(fetchMock).toHaveBeenCalledWith("/api/users/usr_member", expect.objectContaining({ method: "DELETE" }));
+    });
+
     it("logout sends POST to /api/auth/logout", async () => {
       const fetchMock = mockFetch({ ok: true });
 

@@ -263,6 +263,24 @@ export async function createResetLink(userId: string) {
   return issueAccountToken(userId, "reset", true);
 }
 
+export async function accountSetupDetails(token: string) {
+  if (!token) throw new HttpError(400, "Account token is required.");
+  const result = await pool.query<{ username: string }>(
+    `SELECT u.username
+     FROM account_tokens t
+     INNER JOIN users u ON u.id = t.user_id
+     WHERE t.token_hash = $1
+       AND t.used_at IS NULL
+       AND t.expires_at > now()
+       AND u.status <> 'disabled'
+     LIMIT 1`,
+    [accountTokenHash(token)]
+  );
+  const account = result.rows[0];
+  if (!account) throw new HttpError(400, "Account token is invalid or expired.");
+  return { username: account.username };
+}
+
 export async function completeAccountSetup(token: string, password: string) {
   if (!token) throw new HttpError(400, "Account token is required.");
   const passwordHash = await hashPassword(password);
@@ -324,6 +342,28 @@ async function managedUser(userId: string): Promise<ManagedUser | null> {
 export async function listManagedUsers() {
   const rows = await db.select({ id: users.id }).from(users).orderBy(asc(users.createdAt));
   return (await Promise.all(rows.map((row) => managedUser(row.id)))).filter((user): user is ManagedUser => Boolean(user));
+}
+
+export async function deleteMember(userId: string) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const found = await client.query<{ role: string; username: string }>(
+      `SELECT role, username FROM users WHERE id = $1 FOR UPDATE`,
+      [userId]
+    );
+    const user = found.rows[0];
+    if (!user) throw new HttpError(404, "User not found.");
+    if (user.role === "owner") throw new HttpError(400, "The owner cannot be removed.");
+    await client.query(`DELETE FROM users WHERE id = $1`, [userId]);
+    await client.query("COMMIT");
+    return { id: userId, username: user.username };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function recoverOwnerAccount() {

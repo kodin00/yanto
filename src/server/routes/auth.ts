@@ -2,8 +2,9 @@ import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { clearSessionCookie, requireAuth, setSessionCookie } from "../auth.js";
-import { asyncRoute, actor } from "../http-utils.js";
+import { HttpError, asyncRoute, actor } from "../http-utils.js";
 import {
+  accountSetupDetails,
   authenticateUser,
   completeAccountSetup,
   createInitialOwner,
@@ -34,6 +35,10 @@ const accountSetupLimiter = rateLimit({
 
 const password = z.string().min(1, "Password cannot be empty.");
 
+function assertPasswordsMatch(passwordValue: string, confirmation: string) {
+  if (passwordValue !== confirmation) throw new HttpError(400, "Passwords do not match.");
+}
+
 router.get("/api/setup/status", asyncRoute(async (_req, res) => {
   res.json(await setupStatus());
 }));
@@ -42,8 +47,10 @@ router.post("/api/setup/owner", accountSetupLimiter, asyncRoute(async (req, res)
   const body = z.object({
     username: z.string().trim().min(1).max(200),
     password,
+    passwordConfirmation: password,
     setupCode: z.string().min(1).max(1_000)
   }).parse(req.body);
+  assertPasswordsMatch(body.password, body.passwordConfirmation);
   const principal = await createInitialOwner(body);
   setSessionCookie(res, principal);
   await recordAuditLog({ actor: principal.username, action: "auth.setup.owner", entityType: "user", entityId: principal.id });
@@ -70,8 +77,14 @@ router.post(
   })
 );
 
+router.post("/api/auth/account/setup/preview", accountSetupLimiter, asyncRoute(async (req, res) => {
+  const body = z.object({ token: z.string().min(1).max(2_000) }).parse(req.body);
+  res.json(await accountSetupDetails(body.token));
+}));
+
 router.post("/api/auth/account/setup", accountSetupLimiter, asyncRoute(async (req, res) => {
-  const body = z.object({ token: z.string().min(1).max(2_000), password }).parse(req.body);
+  const body = z.object({ token: z.string().min(1).max(2_000), password, passwordConfirmation: password }).parse(req.body);
+  assertPasswordsMatch(body.password, body.passwordConfirmation);
   const principal = await completeAccountSetup(body.token, body.password);
   setSessionCookie(res, principal);
   await recordAuditLog({ actor: principal.username, action: "auth.account_setup.complete", entityType: "user", entityId: principal.id });

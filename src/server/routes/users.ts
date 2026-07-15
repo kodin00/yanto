@@ -6,6 +6,7 @@ import {
   PROJECT_PERMISSIONS,
   createMember,
   createResetLink,
+  deleteMember,
   listManagedUsers,
   replaceProjectAccess,
   setUserStatus
@@ -54,6 +55,13 @@ router.post("/api/users/:id/reset-link", requireOwner, asyncRoute(async (req, re
   const resetUrl = await createResetLink(id);
   await recordAuditLog({ actor: actor(req), action: "user.reset_link.create", entityType: "user", entityId: id });
   res.json({ resetUrl });
+}));
+
+router.delete("/api/users/:id", requireOwner, asyncRoute(async (req, res) => {
+  const id = routeParam(req, "id");
+  const removed = await deleteMember(id);
+  await recordAuditLog({ actor: actor(req), action: "user.delete", entityType: "user", entityId: id, metadata: { username: removed.username } });
+  res.status(204).end();
 }));
 
 export default router;

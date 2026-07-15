@@ -244,8 +244,10 @@ export function App() {
   const [login, setLogin] = useState({ username: "", password: "" });
   const [needsSetup, setNeedsSetup] = useState(false);
   const [accountToken] = useState(getAccountToken);
-  const [ownerSetup, setOwnerSetup] = useState({ username: "", password: "", setupCode: "" });
-  const [accountPassword, setAccountPassword] = useState("");
+  const [ownerSetup, setOwnerSetup] = useState({ username: "", password: "", passwordConfirmation: "", setupCode: "" });
+  const [accountPassword, setAccountPassword] = useState({ password: "", passwordConfirmation: "" });
+  const [accountSetupIdentity, setAccountSetupIdentity] = useState<{ username: string } | null>(null);
+  const [accountLinkError, setAccountLinkError] = useState<string | null>(null);
   const [view, setView] = useState<View>("dashboard");
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -564,11 +566,20 @@ export function App() {
       .then(async (status) => {
         if (!active) return;
         setNeedsSetup(status.needsSetup);
-        if (status.needsSetup || accountToken) return;
+        if (accountToken) {
+          const identity = await api.accountSetupDetails(accountToken);
+          if (active) setAccountSetupIdentity(identity);
+          return;
+        }
+        if (status.needsSetup) return;
         const result = await api.me();
         if (active) setUser(result);
       })
-      .catch(() => { if (active) setUser(null); })
+      .catch((error) => {
+        if (!active) return;
+        setUser(null);
+        if (accountToken) setAccountLinkError(error instanceof Error ? error.message : "This account link is invalid or expired.");
+      })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [accountToken]);
@@ -777,10 +788,14 @@ export function App() {
 
   async function submitOwnerSetup(event: FormEvent) {
     event.preventDefault();
+    if (ownerSetup.password !== ownerSetup.passwordConfirmation) {
+      setToast({ message: "Passwords do not match.", kind: "error" });
+      return;
+    }
     setBusy("owner-setup");
     setToast({ message: "Creating owner account...", kind: "loading" });
     try {
-      const result = await api.createOwner(ownerSetup.username, ownerSetup.password, ownerSetup.setupCode);
+      const result = await api.createOwner(ownerSetup.username, ownerSetup.password, ownerSetup.passwordConfirmation, ownerSetup.setupCode);
       setNeedsSetup(false);
       setUser(result);
       setToast({ message: "Owner account created." });
@@ -793,10 +808,14 @@ export function App() {
 
   async function submitAccountPassword(event: FormEvent) {
     event.preventDefault();
+    if (accountPassword.password !== accountPassword.passwordConfirmation) {
+      setToast({ message: "Passwords do not match.", kind: "error" });
+      return;
+    }
     setBusy("account-setup");
     setToast({ message: "Saving password...", kind: "loading" });
     try {
-      const result = await api.completeAccountSetup(accountToken, accountPassword);
+      const result = await api.completeAccountSetup(accountToken, accountPassword.password, accountPassword.passwordConfirmation);
       setUser(result);
       setToast({ message: "Password saved. Signed in." });
     } catch (error) {
@@ -1638,13 +1657,26 @@ export function App() {
   }
 
   if (accountToken && !user) {
+    if (accountLinkError) {
+      return (
+        <main className="login-shell">
+          <section className="login-panel account-link-error">
+            <h1>Account link unavailable</h1>
+            <p role="alert">{accountLinkError}</p>
+            <a className="button secondary" href="/">Return to sign in</a>
+          </section>
+        </main>
+      );
+    }
     return (
       <main className="login-shell">
         <form className="login-panel" onSubmit={submitAccountPassword}>
           <h1>Set your password</h1>
           <p>This one-time link will activate the account or replace its existing password.</p>
-          <TextField label="New password" type="password" value={accountPassword} onChange={setAccountPassword} autoComplete="new-password" required />
-          <Button type="submit" disabled={busy === "account-setup" || !accountPassword} icon={busy === "account-setup" ? <RefreshCw size={16} className="spin" /> : <KeyRound size={16} />}>
+          <div className="account-setup-identity"><span>Username</span><strong>{accountSetupIdentity?.username}</strong></div>
+          <TextField label="New password" type="password" value={accountPassword.password} onChange={(password) => setAccountPassword((current) => ({ ...current, password }))} autoComplete="new-password" required />
+          <TextField label="Confirm password" type="password" value={accountPassword.passwordConfirmation} onChange={(passwordConfirmation) => setAccountPassword((current) => ({ ...current, passwordConfirmation }))} autoComplete="new-password" required />
+          <Button type="submit" disabled={busy === "account-setup" || !accountSetupIdentity || !accountPassword.password || !accountPassword.passwordConfirmation} icon={busy === "account-setup" ? <RefreshCw size={16} className="spin" /> : <KeyRound size={16} />}>
             Save password
           </Button>
         </form>
@@ -1661,8 +1693,9 @@ export function App() {
           <p>Use the one-time setup code printed by the installer or in the server startup logs.</p>
           <TextField label="Username" value={ownerSetup.username} onChange={(username) => setOwnerSetup((current) => ({ ...current, username }))} autoComplete="username" required />
           <TextField label="Password" type="password" value={ownerSetup.password} onChange={(password) => setOwnerSetup((current) => ({ ...current, password }))} autoComplete="new-password" required />
+          <TextField label="Confirm password" type="password" value={ownerSetup.passwordConfirmation} onChange={(passwordConfirmation) => setOwnerSetup((current) => ({ ...current, passwordConfirmation }))} autoComplete="new-password" required />
           <TextField label="Setup code" type="password" value={ownerSetup.setupCode} onChange={(setupCode) => setOwnerSetup((current) => ({ ...current, setupCode }))} autoComplete="off" required />
-          <Button type="submit" disabled={busy === "owner-setup" || !ownerSetup.username.trim() || !ownerSetup.password || !ownerSetup.setupCode.trim()} icon={busy === "owner-setup" ? <RefreshCw size={16} className="spin" /> : <ShieldCheck size={16} />}>
+          <Button type="submit" disabled={busy === "owner-setup" || !ownerSetup.username.trim() || !ownerSetup.password || !ownerSetup.passwordConfirmation || !ownerSetup.setupCode.trim()} icon={busy === "owner-setup" ? <RefreshCw size={16} className="spin" /> : <ShieldCheck size={16} />}>
             Create owner
           </Button>
         </form>

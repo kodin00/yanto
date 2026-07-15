@@ -42,7 +42,7 @@ Docker socket access is powerful. Only the Yanto owner can grant delegated proje
 
 ## Users and project access
 
-The first account is Yanto's owner. The owner can invite additional username/password accounts from **Settings → Users & Access**, assign projects, and grant project capabilities for deployments, runtime controls, configuration, secrets, backups, and hostnames. Assignment itself grants read access to the project's status, deployment/container logs, and audit entries.
+The first account is Yanto's owner. The owner can invite or remove additional username/password accounts from **Settings → Users & Access**, assign projects, and grant project capabilities for deployments, runtime controls, configuration, secrets, backups, and hostnames. Member rows stay compact until selected, while still summarizing their assigned projects and capabilities. Assignment itself grants read access to the project's status, deployment/container logs, and audit entries. Account setup shows the link's username and requires password confirmation.
 
 Nodes, system settings and logs, DNS, FRP, AI Tasks and provider credentials, MCP tokens, host cleanup, and unowned Docker resources remain owner-only. AI Tasks execute host-native commands in the Yanto container and therefore cannot provide a secure project boundary for delegated users. Invite and password-reset links are shown once for the owner to copy and expire after 24 hours.
 

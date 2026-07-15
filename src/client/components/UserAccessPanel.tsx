@@ -1,4 +1,4 @@
-import { Check, Copy, KeyRound, Plus, RefreshCw, ShieldCheck, UserRoundCog } from "lucide-react";
+import { Check, ChevronDown, Copy, FolderKanban, KeyRound, Plus, RefreshCw, ShieldCheck, Trash2, UserRoundCog } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ManagedUser, Project, ProjectPermission, UserProjectAccess } from "../../shared/types";
 import { api } from "../lib/api";
@@ -38,6 +38,11 @@ function detectPreset(values: ProjectPermission[]): AccessPreset {
     if ([...presetPermissions[preset]].sort().join(",") === normalized) return preset;
   }
   return "custom";
+}
+
+function permissionLabels(access: UserProjectAccess[]) {
+  const granted = new Set(access.flatMap((entry) => entry.permissions));
+  return permissions.filter((permission) => granted.has(permission.id)).map((permission) => permission.label);
 }
 
 function ProjectAccessEditor({ projects, value, onChange }: { projects: Project[]; value: DraftAccess; onChange: (value: DraftAccess) => void }) {
@@ -114,6 +119,8 @@ export function UserAccessPanel({ projects, currentUserId, copyText }: { project
   const [newAccess, setNewAccess] = useState<DraftAccess>({});
   const [drafts, setDrafts] = useState<Record<string, DraftAccess>>({});
   const [secretLink, setSecretLink] = useState<{ title: string; url: string } | null>(null);
+  const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -148,6 +155,7 @@ export function UserAccessPanel({ projects, currentUserId, copyText }: { project
       setSecretLink({ title: `Setup link for ${result.user.username}`, url: result.setupUrl });
       setUsername("");
       setNewAccess({});
+      setExpandedUserId(result.user.id);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unable to create user.");
     } finally {
@@ -197,6 +205,30 @@ export function UserAccessPanel({ projects, currentUserId, copyText }: { project
     }
   }
 
+  async function removeMember(user: ManagedUser) {
+    if (deleteConfirmId !== user.id) {
+      setDeleteConfirmId(user.id);
+      return;
+    }
+    setBusy(`delete:${user.id}`);
+    setError(null);
+    try {
+      await api.deleteUser(user.id);
+      setUsers((current) => current.filter((entry) => entry.id !== user.id));
+      setDrafts((current) => {
+        const next = { ...current };
+        delete next[user.id];
+        return next;
+      });
+      setExpandedUserId(null);
+      setDeleteConfirmId(null);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to remove member.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <section className="panel user-access-panel">
       <div className="panel-head">
@@ -226,26 +258,55 @@ export function UserAccessPanel({ projects, currentUserId, copyText }: { project
       <div className="managed-user-list">
         {owner ? (
           <article className="managed-user-card owner-card">
-            <header><div><strong>{owner.username}</strong><span>Owner · access to every project</span></div><StatusBadge status={owner.status} /></header>
+            <header><div><div className="managed-user-name"><strong>{owner.username}</strong><span className="user-type-badge">Owner</span></div><span>Access to every project</span></div><StatusBadge status={owner.status} /></header>
             <div className="actions"><Button variant="secondary" loading={busy === `reset:${owner.id}`} onClick={() => void resetLink(owner)} icon={<KeyRound size={14} />}>Owner reset link</Button></div>
           </article>
         ) : null}
-        {members.map((user) => (
-          <article className="managed-user-card" key={user.id}>
-            <header>
-              <div><strong>{user.username}</strong><span>{user.lastLoginAt ? `Last login ${new Date(user.lastLoginAt).toLocaleString()}` : "Never signed in"}</span></div>
-              <StatusBadge status={user.status} />
-            </header>
-            <ProjectAccessEditor projects={projects} value={drafts[user.id] ?? {}} onChange={(value) => setDrafts((current) => ({ ...current, [user.id]: value }))} />
-            <div className="actions">
-              <Button variant="secondary" loading={busy === `reset:${user.id}`} onClick={() => void resetLink(user)} icon={<KeyRound size={14} />}>Reset link</Button>
-              <Button variant="secondary" loading={busy === `access:${user.id}`} onClick={() => void saveAccess(user)}>Save access</Button>
-              <Button variant={user.status === "disabled" ? "secondary" : "danger"} disabled={user.id === currentUserId} loading={busy === `status:${user.id}`} onClick={() => void toggleStatus(user)}>
-                {user.status === "disabled" ? "Enable" : "Disable"}
-              </Button>
-            </div>
-          </article>
-        ))}
+        {members.map((user) => {
+          const expanded = expandedUserId === user.id;
+          const capabilities = permissionLabels(user.projectAccess);
+          return (
+            <article className={`managed-user-card member-card ${expanded ? "expanded" : ""}`} key={user.id}>
+              <button
+                className="managed-user-summary"
+                type="button"
+                aria-expanded={expanded}
+                aria-controls={`member-access-${user.id}`}
+                onClick={() => {
+                  setExpandedUserId(expanded ? null : user.id);
+                  setDeleteConfirmId(null);
+                }}
+              >
+                <div className="managed-user-summary-main">
+                  <div className="managed-user-name"><strong>{user.username}</strong><span className="user-type-badge">Member</span></div>
+                  <div className="member-access-summary">
+                    <span><FolderKanban size={12} />{user.projectAccess.length ? user.projectAccess.map((entry) => entry.projectName).join(", ") : "No projects"}</span>
+                    <span>{capabilities.length ? capabilities.join(" · ") : "View only"}</span>
+                  </div>
+                </div>
+                <div className="managed-user-summary-state"><StatusBadge status={user.status} /><ChevronDown size={17} className={expanded ? "expanded" : ""} /></div>
+              </button>
+              {expanded ? (
+                <div className="managed-user-editor" id={`member-access-${user.id}`}>
+                  <p className="member-last-login">{user.lastLoginAt ? `Last login ${new Date(user.lastLoginAt).toLocaleString()}` : "Never signed in"}</p>
+                  <ProjectAccessEditor projects={projects} value={drafts[user.id] ?? {}} onChange={(value) => setDrafts((current) => ({ ...current, [user.id]: value }))} />
+                  <div className="actions member-actions">
+                    <Button variant="secondary" loading={busy === `reset:${user.id}`} onClick={() => void resetLink(user)} icon={<KeyRound size={14} />}>Reset link</Button>
+                    <Button variant="secondary" loading={busy === `access:${user.id}`} onClick={() => void saveAccess(user)}>Save access</Button>
+                    <Button variant={user.status === "disabled" ? "secondary" : "danger"} disabled={user.id === currentUserId} loading={busy === `status:${user.id}`} onClick={() => void toggleStatus(user)}>
+                      {user.status === "disabled" ? "Enable" : "Disable"}
+                    </Button>
+                    {deleteConfirmId === user.id ? <Button variant="ghost" onClick={() => setDeleteConfirmId(null)}>Cancel</Button> : null}
+                    <Button variant="danger" loading={busy === `delete:${user.id}`} onClick={() => void removeMember(user)} icon={<Trash2 size={14} />}>
+                      {deleteConfirmId === user.id ? "Confirm removal" : "Remove member"}
+                    </Button>
+                  </div>
+                  {deleteConfirmId === user.id ? <p className="member-delete-warning">This permanently removes the account and immediately ends its access.</p> : null}
+                </div>
+              ) : null}
+            </article>
+          );
+        })}
         {!loading && !members.length ? <p className="muted">No delegated users yet.</p> : null}
       </div>
     </section>
