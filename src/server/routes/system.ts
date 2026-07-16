@@ -2,12 +2,13 @@ import { Router } from "express";
 import { requireAuth, requireOwner } from "../auth.js";
 import { accessibleProjectIds, assertProjectAccess } from "../authorization.js";
 import { config } from "../config.js";
-import { asyncRoute, actor } from "../http-utils.js";
+import { asyncRoute, actor, routeParam } from "../http-utils.js";
 import { recordAuditLog } from "../services/audit.js";
 import { listAuditLogs, listAuditLogsForProjects } from "../services/audit.js";
 import { cleanupDocker, previewDockerCleanup } from "../services/docker.js";
 import { ensureWorkerJoinToken } from "../services/settings.js";
-import { listNodes } from "../services/nodes.js";
+import { listNodes, updateNodeBackupDestination } from "../services/nodes.js";
+import { backupDestinationInput } from "../route-schemas.js";
 import { healthStatus, systemUsage } from "../services/system.js";
 import { logger } from "../logger.js";
 
@@ -40,6 +41,16 @@ router.post(
     const command = `curl -fsSL https://raw.githubusercontent.com/kodin00/yanto/master/scripts/install.sh | sudo bash -s -- worker --master ${config.appBaseUrl} --join-token ${token}`;
     await recordAuditLog({ actor: actor(req), action: "node.join_token.view", entityType: "deployment_node" });
     res.json({ token, command });
+  })
+);
+
+router.patch(
+  "/api/nodes/:id/backup-destination",
+  requireOwner,
+  asyncRoute(async (req, res) => {
+    const node = await updateNodeBackupDestination(routeParam(req, "id"), backupDestinationInput.parse(req.body ?? {}));
+    await recordAuditLog({ actor: actor(req), action: "node.backup_destination.save", entityType: "deployment_node", entityId: node.id });
+    res.json(node);
   })
 );
 

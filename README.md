@@ -91,6 +91,19 @@ Worker installs write `.env.worker` with `YANTO_MASTER_URL`, `WORKER_JOIN_TOKEN`
 
 If `WORKER_JOIN_TOKEN` is not set, Yanto generates and stores one the first time you copy the worker install command from Settings.
 
+### Multi-computer backups
+
+The **Backups** screen can schedule hourly PostgreSQL dumps on the master or any connected worker and copy each dump to multiple nodes with rsync over SSH.
+
+1. Enroll every computer as a Yanto node and wait for its PostgreSQL targets to appear.
+2. In **Nodes → Backup destinations**, enter the SSH host, port, user, absolute destination directory, and private-key path used to reach that computer.
+3. Ensure the destination host runs SSH, has `rsync` installed, and grants the configured user write access to the destination directory. The private key must exist at the configured path on each source node that sends backups there.
+4. In **Backups → Automatic policies**, select a source database and one or more destination nodes. Policies run hourly and retain 24 hourly plus 30 daily generations by default.
+
+For a homeserver behind CGNAT, assign the VPS as its FRP server, create a TCP tunnel from the homeserver's `127.0.0.1:22` to a VPS forwarding port, then use the VPS hostname and forwarded port as that homeserver's backup destination. Yanto records this FRP SSH endpoint as the automatic fallback when the tunnel is saved.
+
+Replica failures are tracked independently. Fix the destination and use **Retry**; Yanto reuses the existing dump instead of creating another one.
+
 ## Deploy Webhook
 
 Each project shows:
@@ -202,6 +215,8 @@ Troubleshooting:
 ## FRP Port Forwarding
 
 The FRP screen manages TCP and UDP services from a manually run FRPC client, including home servers behind CGNAT. Set the VPS public IP or an unproxied DNS hostname in the FRP screen, create forwarding rules, then copy the client script or `frpc.toml` to the client server.
+
+Registered nodes can now use an FRP role independent from their Yanto role: `disabled`, `client`, `server`, or `both`. Create an FRP server for a node, assign client nodes to it, and attach each tunnel to its client/server pair. Workers validate their node-specific configuration and reconcile managed FRPC/FRPS containers automatically; the manual client flow remains available for machines that are not enrolled as workers.
 
 See [FRP_GUIDE.md](FRP_GUIDE.md) for setup, daily operations, and troubleshooting.
 

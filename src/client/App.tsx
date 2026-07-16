@@ -466,9 +466,14 @@ export function App() {
     }
 
     if (targetView === "backups") {
-      const [backupRows, postgresRows] = await Promise.all([api.backups(), api.postgresBackupTargets()]);
+      const [backupRows, postgresRows, nodeRows] = await Promise.all([
+        api.backups(),
+        api.postgresBackupTargets(),
+        user?.role === "owner" ? api.nodes() : Promise.resolve(null)
+      ]);
       setBackups(backupRows);
       setPostgresTargets(postgresRows);
+      if (nodeRows) setNodes(nodeRows);
       return;
     }
 
@@ -1216,12 +1221,12 @@ export function App() {
     }
   }
 
-  async function dumpPostgresTarget(containerId?: string) {
-    const busyKey = containerId ? `backup:${containerId}` : "backup:yanto";
+  async function dumpPostgresTarget(containerId?: string, sourceNodeId?: string) {
+    const busyKey = containerId ? `backup:${sourceNodeId ?? "local"}:${containerId}` : "backup:yanto";
     setBusy(busyKey);
     setToast({ message: "Creating Postgres backup...", kind: "loading" });
     try {
-      await api.createBackup(containerId);
+      await api.createBackup(containerId, sourceNodeId);
       await refreshBackups();
       setToast({ message: "Postgres backup created." });
     } catch (error) {
@@ -1238,10 +1243,10 @@ export function App() {
       label: "Restore",
       danger: true,
       action: async () => {
-        setBusy(`restore:${target.containerId}`);
+        setBusy(`restore:${target.nodeId ?? "local"}:${target.containerId}`);
         setToast({ message: "Restoring Postgres dump...", kind: "loading" });
         try {
-          await api.restorePostgresTarget(target.containerId, file);
+          await api.restorePostgresTarget(target.containerId, file, target.nodeId ?? undefined);
           await refreshBackups();
           setToast({ message: "Postgres dump restored." });
         } finally {
@@ -1889,6 +1894,8 @@ export function App() {
           <BackupsView
             isOwner={user.role === "owner"}
             postgresTargets={postgresTargets}
+            nodes={nodes}
+            localNodeId={user.localNodeId}
             visibleBackups={visibleBackups}
             backups={backups}
             busy={busy}
@@ -1901,6 +1908,7 @@ export function App() {
             setConfirm={setConfirm}
             refreshBackups={refreshBackups}
             setBackupPage={setBackupPage}
+            toast={(message, kind) => setToast({ message, kind })}
           />
         ) : null}
 

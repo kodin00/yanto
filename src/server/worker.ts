@@ -7,11 +7,17 @@ import type { DeploymentRow } from "./db/schema.js";
 import { runProjectDeployment, type DeploymentMetadata, type DeploymentProject } from "./services/deployment-runner.js";
 import { runCommand } from "./services/commands.js";
 import { requestWorkerJson, waitForWorkerPoll } from "./services/worker-runtime.js";
+import { executeWorkerBackupJob, postgresTargetInventoryLabel, type WorkerBackupRuntimeJob } from "./services/backups.js";
+import { reconcileWorkerFrp, type WorkerFrpDesiredConfig } from "./services/worker-frp.js";
 
-type WorkerJob = {
+type WorkerJob = ({
+  kind: "deployment";
   deployment: DeploymentRow;
   project: DeploymentProject;
-} | null;
+} | {
+  kind: "backup";
+  backupJob: WorkerBackupRuntimeJob;
+}) | null;
 
 function masterUrl(pathname: string) {
   if (!config.masterUrl) {
@@ -71,6 +77,15 @@ async function writeStoredToken(token: string) {
   await fs.writeFile(config.workerTokenPath, `${token}\n`, { mode: 0o600 });
 }
 
+let backupInventoryCache: { value: string; expiresAt: number } | undefined;
+
+async function backupInventory() {
+  if (backupInventoryCache && backupInventoryCache.expiresAt > Date.now()) return backupInventoryCache.value;
+  const value = await postgresTargetInventoryLabel().catch(() => "[]");
+  backupInventoryCache = { value, expiresAt: Date.now() + 60_000 };
+  return value;
+}
+
 async function workerIdentity(signal: AbortSignal) {
   return {
     name: config.workerName || os.hostname(),
@@ -78,7 +93,9 @@ async function workerIdentity(signal: AbortSignal) {
     labels: {
       hostname: os.hostname(),
       platform: os.platform(),
-      arch: os.arch()
+      arch: os.arch(),
+      "frp.requestedRole": config.workerFrpRole,
+      "backup.postgresTargets": await backupInventory()
     }
   };
 }
@@ -139,7 +156,7 @@ async function finish(
   }, token);
 }
 
-async function runJob(token: string, job: NonNullable<WorkerJob>, signal: AbortSignal) {
+async function runDeploymentJob(token: string, job: Extract<NonNullable<WorkerJob>, { kind: "deployment" }>, signal: AbortSignal) {
   try {
     await appendLog(token, job.deployment.id, `Worker ${config.workerName || os.hostname()} accepted deployment.\n`);
     await runProjectDeployment(job.project, job.deployment, {
@@ -168,6 +185,16 @@ async function runJob(token: string, job: NonNullable<WorkerJob>, signal: AbortS
   }
 }
 
+async function runBackupJob(token: string, job: Extract<NonNullable<WorkerJob>, { kind: "backup" }>, signal: AbortSignal) {
+  const result = await executeWorkerBackupJob(job.backupJob, signal);
+  await request<{ ok: true }>(`/api/workers/backups/${job.backupJob.backup.id}/complete`, {
+    method: "POST",
+    body: JSON.stringify(result),
+    signal
+  }, token);
+  logger.info("worker backup completed", { backupId: job.backupJob.backup.id, status: result.status });
+}
+
 async function controlLoop(token: string, signal: AbortSignal) {
   let consecutiveErrors = 0;
   const maxBackoffMs = 60_000;
@@ -192,7 +219,8 @@ async function deploymentLoop(token: string, signal: AbortSignal) {
   while (!signal.aborted) {
     try {
       const job = await nextJob(token, signal);
-      if (job) await runJob(token, job, signal);
+      if (job?.kind === "deployment") await runDeploymentJob(token, job, signal);
+      if (job?.kind === "backup") await runBackupJob(token, job, signal);
       consecutiveErrors = 0;
     } catch (error) {
       if (signal.aborted) break;
@@ -200,6 +228,36 @@ async function deploymentLoop(token: string, signal: AbortSignal) {
       logger.error("worker deployment loop failed", { error: error instanceof Error ? error.message : String(error), consecutiveErrors });
     }
     const delay = consecutiveErrors ? Math.min(config.workerPollIntervalMs * 2 ** (consecutiveErrors - 1), 60_000) : config.workerPollIntervalMs;
+    if (!(await waitForWorkerPoll(delay, signal))) break;
+  }
+}
+
+async function frpLoop(token: string, signal: AbortSignal) {
+  let consecutiveErrors = 0;
+  while (!signal.aborted) {
+    try {
+      const desired = await request<WorkerFrpDesiredConfig>("/api/workers/frp/config", { signal }, token);
+      const result = await reconcileWorkerFrp(desired);
+      await request("/api/workers/frp/status", {
+        method: "POST",
+        body: JSON.stringify({ revision: desired.revision, status: result.status }),
+        signal
+      }, token);
+      consecutiveErrors = 0;
+    } catch (error) {
+      if (signal.aborted) break;
+      consecutiveErrors++;
+      logger.error("worker FRP reconciliation failed", { error: error instanceof Error ? error.message : String(error), consecutiveErrors });
+      const desired = await request<WorkerFrpDesiredConfig>("/api/workers/frp/config", { signal }, token).catch(() => null);
+      if (desired) {
+        await request("/api/workers/frp/status", {
+          method: "POST",
+          body: JSON.stringify({ revision: desired.revision, status: "error", error: error instanceof Error ? error.message : String(error) }),
+          signal
+        }, token).catch(() => undefined);
+      }
+    }
+    const delay = consecutiveErrors ? Math.min(config.workerPollIntervalMs * 2 ** (consecutiveErrors - 1), 60_000) : 15_000;
     if (!(await waitForWorkerPoll(delay, signal))) break;
   }
 }
@@ -222,7 +280,8 @@ async function main() {
     logger.info("worker started", { masterUrl: config.masterUrl, name: config.workerName || os.hostname() });
     await Promise.all([
       controlLoop(token, stopController.signal),
-      deploymentLoop(token, stopController.signal)
+      deploymentLoop(token, stopController.signal),
+      frpLoop(token, stopController.signal)
     ]);
     logger.info("worker stopped");
   } catch (error) {

@@ -1098,6 +1098,234 @@ a.button {
   min-width: 0;
 }
 
+.backup-policy-panel {
+  grid-column: 1 / -1;
+}
+
+.backup-policy-form {
+  display: grid;
+  grid-template-columns: minmax(180px, .7fr) minmax(280px, 1.6fr);
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--field);
+}
+
+.backup-policy-number-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(110px, 1fr));
+  gap: 12px;
+}
+
+.backup-destination-picker {
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.backup-destination-picker legend {
+  padding: 0 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.backup-destination-picker label {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  padding: 6px 0;
+}
+
+.backup-destination-picker label span,
+.backup-destination-picker label small {
+  display: block;
+}
+
+.backup-destination-picker label small {
+  margin-top: 2px;
+  color: var(--muted);
+}
+
+.backup-policy-form-footer {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.backup-policy-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.backup-policy-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.backup-policy-title,
+.backup-policy-card span,
+.replica-badge {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.backup-policy-card p {
+  margin: 6px 0;
+}
+
+.backup-policy-card > div:first-child > span {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 3px;
+}
+
+.replica-badges {
+  display: grid;
+  gap: 5px;
+  min-width: 150px;
+}
+
+.compact-native-select {
+  min-width: 112px;
+  max-width: 170px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  color: inherit;
+}
+
+.node-frp-error {
+  display: block;
+  max-width: 170px;
+  margin-top: 5px;
+  overflow: hidden;
+  color: var(--danger);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-destination-section {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.node-destination-grid,
+.frp-node-grid,
+.frp-server-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+.node-destination-card,
+.frp-node-card,
+.frp-server-grid > article {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--field);
+}
+
+.node-destination-card header,
+.frp-node-card header,
+.frp-server-grid > article > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.node-destination-card header span,
+.frp-node-card header span,
+.frp-server-grid > article > span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.node-destination-fields {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) 90px minmax(130px, .7fr);
+  gap: 10px;
+}
+
+.node-destination-fields .field:nth-child(4),
+.node-destination-fields .field:nth-child(5) {
+  grid-column: span 2;
+}
+
+.node-destination-footer {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.frp-node-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.frp-server-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: var(--field);
+}
+
+.frp-node-card .actions {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+@media (max-width: 820px) {
+  .backup-policy-form,
+  .backup-policy-number-grid,
+  .node-destination-fields,
+  .frp-node-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .frp-server-form {
+    grid-template-columns: 1fr;
+  }
+
+  .backup-policy-form-footer,
+  .backup-policy-card,
+  .node-destination-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .node-destination-fields .field:nth-child(4),
+  .node-destination-fields .field:nth-child(5) {
+    grid-column: auto;
+  }
+}
+
 .settings-grid {
   grid-template-columns: minmax(360px, 0.95fr) minmax(420px, 1fr);
   align-items: start;

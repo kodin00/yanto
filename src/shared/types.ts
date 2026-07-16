@@ -265,6 +265,8 @@ export type DeploymentNode = {
   labels: Record<string, string>;
   projectCount?: number;
   runningDeploymentCount?: number;
+  frpRole?: FrpRole;
+  frpStatus?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -288,20 +290,27 @@ export type ContainerInfo = {
 export type Backup = {
   id: string;
   projectId: string | null;
+  sourceNodeId?: string | null;
+  sourceNodeName?: string | null;
+  policyId?: string | null;
   kind: string;
   status: string;
   filename: string;
   filePath: string;
   fileSizeBytes: number | null;
+  checksum?: string | null;
   error: string | null;
   note: string | null;
   createdAt: string;
   finishedAt: string | null;
   downloadedAt: string | null;
   downloadCount: number;
+  replicas?: BackupReplica[];
 };
 
 export type PostgresBackupTarget = {
+  nodeId?: string;
+  nodeName?: string;
   containerId: string;
   containerName: string;
   image: string;
@@ -313,6 +322,40 @@ export type PostgresBackupTarget = {
   projectName: string | null;
   databaseName: string;
   databaseUser: string;
+};
+
+export type BackupReplicaStatus = "pending" | "copying" | "success" | "failed";
+
+export type BackupReplica = {
+  id: string;
+  backupId: string;
+  destinationNodeId: string;
+  destinationNodeName?: string | null;
+  status: BackupReplicaStatus;
+  filePath: string | null;
+  checksum: string | null;
+  error: string | null;
+  attempts: number;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+};
+
+export type BackupPolicy = {
+  id: string;
+  name: string;
+  sourceNodeId: string;
+  targetContainerId: string | null;
+  enabled: boolean;
+  schedule: "hourly";
+  hourlyAtMinute: number;
+  hourlyRetention: number;
+  dailyRetention: number;
+  destinationNodeIds: string[];
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type R2PublicSettings = {
@@ -356,6 +399,7 @@ export type MultiNodePublicSettings = {
 
 export type FrpProtocol = "tcp" | "udp";
 export type FrpTunnelStatus = "disabled" | "error" | "syncing" | "online" | "offline";
+export type FrpRole = "disabled" | "client" | "server" | "both";
 
 export type FrpSettings = {
   publicHost: string;
@@ -369,6 +413,10 @@ export type FrpTunnel = {
   id: string;
   nodeId: string | null;
   nodeName: string | null;
+  clientNodeId?: string | null;
+  clientNodeName?: string | null;
+  serverId?: string | null;
+  serverName?: string | null;
   name: string;
   protocol: FrpProtocol;
   localHost: string;
@@ -382,6 +430,36 @@ export type FrpTunnel = {
   trafficOutBytes: number;
   currentConnections: number;
   createdAt: string;
+  updatedAt: string;
+};
+
+export type FrpServer = {
+  id: string;
+  nodeId: string;
+  nodeName: string | null;
+  name: string;
+  publicHost: string;
+  bindPort: number;
+  portStart: number;
+  portEnd: number;
+  configured: boolean;
+  status: string;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FrpNodeAssignment = {
+  nodeId: string;
+  nodeName: string | null;
+  role: FrpRole;
+  serverId: string | null;
+  desiredRevision: number;
+  appliedRevision: number;
+  status: string;
+  lastError: string | null;
+  frpcToml?: string | null;
+  frpsToml?: string | null;
   updatedAt: string;
 };
 
@@ -409,6 +487,8 @@ export type FrpOverview = {
   settings: FrpSettings;
   server: FrpServerStatus;
   tunnels: FrpTunnel[];
+  servers?: FrpServer[];
+  assignments?: FrpNodeAssignment[];
 };
 
 export type CloudflareTunnel = {

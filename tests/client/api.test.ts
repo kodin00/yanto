@@ -557,6 +557,42 @@ describe("api client", () => {
       await api.controlFrpServer("restart");
       expect(fetchMock).toHaveBeenCalledWith("/api/frp/server/restart", expect.objectContaining({ method: "POST" }));
     });
+
+    it("creates an hourly multi-node backup policy", async () => {
+      const fetchMock = mockFetch({ id: "bpol_1" });
+      const payload = {
+        name: "Homeserver Postgres",
+        sourceNodeId: "node_home",
+        targetContainerId: "postgres_1",
+        enabled: true,
+        hourlyAtMinute: 15,
+        hourlyRetention: 24,
+        dailyRetention: 30,
+        destinationNodeIds: ["node_vps"]
+      };
+      await api.createBackupPolicy(payload);
+      expect(fetchMock).toHaveBeenCalledWith("/api/backups/policies", expect.objectContaining({ method: "POST", body: JSON.stringify(payload) }));
+    });
+
+    it("retries one failed backup replica without recreating the dump", async () => {
+      const fetchMock = mockFetch({ id: "brep_1", status: "copying" });
+      await api.retryBackupReplica("brep_1");
+      expect(fetchMock).toHaveBeenCalledWith("/api/backups/replicas/brep_1/retry", expect.objectContaining({ method: "POST" }));
+    });
+
+    it("saves independent FRP role and server assignment for a node", async () => {
+      const fetchMock = mockFetch({ nodeId: "node_home", role: "client" });
+      const payload = { role: "client" as const, serverId: "frps_vps" };
+      await api.updateFrpNodeAssignment("node_home", payload);
+      expect(fetchMock).toHaveBeenCalledWith("/api/frp/node-assignments/node_home", expect.objectContaining({ method: "PUT", body: JSON.stringify(payload) }));
+    });
+
+    it("saves rsync destination details for a node", async () => {
+      const fetchMock = mockFetch({ id: "node_home" });
+      const payload = { sshHost: "vps.example.com", sshPort: 2222, sshUser: "backup", directory: "/srv/backups", privateKeyPath: "/run/secrets/backup_key" };
+      await api.updateNodeBackupDestination("node_home", payload);
+      expect(fetchMock).toHaveBeenCalledWith("/api/nodes/node_home/backup-destination", expect.objectContaining({ method: "PATCH", body: JSON.stringify(payload) }));
+    });
   });
 
   describe("projectEnv normalization", () => {

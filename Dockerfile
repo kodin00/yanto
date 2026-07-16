@@ -11,7 +11,7 @@ ENV NODE_ENV=production
 ARG TARGETARCH
 ARG FRP_VERSION=0.69.0
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git openssh-client ca-certificates curl docker.io postgresql-client python3 python3-pip ripgrep \
+  && apt-get install -y --no-install-recommends git openssh-client ca-certificates curl docker.io postgresql-client python3 python3-pip ripgrep rsync \
   && mkdir -p /usr/local/lib/docker/cli-plugins \
   && case "$TARGETARCH" in amd64) compose_arch="x86_64" ;; arm64) compose_arch="aarch64" ;; *) echo "Unsupported architecture: $TARGETARCH" && exit 1 ;; esac \
   && curl -fsSL "https://github.com/docker/compose/releases/download/v2.39.4/docker-compose-linux-${compose_arch}" -o /usr/local/lib/docker/cli-plugins/docker-compose \

@@ -29,6 +29,7 @@ export const config = {
   workerJoinToken: process.env.WORKER_JOIN_TOKEN ?? "",
   workerTokenSecret: process.env.WORKER_TOKEN_SECRET ?? process.env.JWT_SECRET ?? requiredSecretFallback,
   workerName: process.env.YANTO_WORKER_NAME ?? "",
+  workerFrpRole: process.env.YANTO_FRP_ROLE ?? "disabled",
   workerToken: process.env.YANTO_WORKER_TOKEN ?? "",
   workerTokenPath: process.env.YANTO_WORKER_TOKEN_PATH ?? "/data/worker-token",
   masterUrl: process.env.YANTO_MASTER_URL ?? "",

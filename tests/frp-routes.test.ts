@@ -3,11 +3,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   controlFrpServer: vi.fn(),
+  createFrpServer: vi.fn(),
   createFrpTunnel: vi.fn(),
+  deleteFrpServer: vi.fn(),
   deleteFrpTunnel: vi.fn(),
   frpClientSetup: vi.fn(),
+  frpNodeClientSetup: vi.fn(),
   frpOverview: vi.fn(),
+  listFrpNodeAssignments: vi.fn(),
+  listFrpServers: vi.fn(),
+  saveFrpNodeAssignment: vi.fn(),
   saveFrpSettings: vi.fn(),
+  updateFrpServer: vi.fn(),
   updateFrpTunnel: vi.fn()
 }));
 
@@ -62,6 +69,40 @@ describe("FRP routes", () => {
     expect(mocks.createFrpTunnel).toHaveBeenCalledWith(payload);
   });
 
+  it("assigns a tunnel to one client and server pair", async () => {
+    const tunnel = { id: "frp_1", protocol: "tcp", remotePort: 25565, clientNodeId: "node_home", serverId: "frps_vps" };
+    mocks.createFrpTunnel.mockResolvedValue(tunnel);
+    const payload = { name: "Minecraft", protocol: "tcp", localHost: "127.0.0.1", localPort: 25565, remotePort: 25565, enabled: true, clientNodeId: "node_home", serverId: "frps_vps" };
+    const response = await call("/api/frp/tunnels", {
+      method: "POST",
+      headers: { authorization: "ok", "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    expect(response).toEqual({ status: 201, body: tunnel });
+    expect(mocks.createFrpTunnel).toHaveBeenCalledWith(payload);
+  });
+
+  it("creates servers and saves node assignments", async () => {
+    const server = { id: "frps_vps", nodeId: "node_vps", publicHost: "vps.example.com" };
+    mocks.createFrpServer.mockResolvedValue(server);
+    const serverBody = { nodeId: "node_vps", name: "VPS", publicHost: "vps.example.com", bindPort: 7000, portStart: 25560, portEnd: 25600 };
+    expect(await call("/api/frp/servers", {
+      method: "POST",
+      headers: { authorization: "ok", "content-type": "application/json" },
+      body: JSON.stringify(serverBody)
+    })).toEqual({ status: 201, body: server });
+    expect(mocks.createFrpServer).toHaveBeenCalledWith(serverBody);
+
+    const assignment = { nodeId: "node_home", role: "client", serverId: "frps_vps", desiredRevision: 1 };
+    mocks.saveFrpNodeAssignment.mockResolvedValue(assignment);
+    expect(await call("/api/frp/node-assignments/node_home", {
+      method: "PUT",
+      headers: { authorization: "ok", "content-type": "application/json" },
+      body: JSON.stringify({ role: "client", serverId: "frps_vps" })
+    })).toEqual({ status: 200, body: assignment });
+    expect(mocks.saveFrpNodeAssignment).toHaveBeenCalledWith("node_home", { role: "client", serverId: "frps_vps" });
+  });
+
   it("rejects unsupported protocols before calling the service", async () => {
     const response = await call("/api/frp/tunnels", {
       method: "POST",
@@ -84,5 +125,12 @@ describe("FRP routes", () => {
     const response = await call("/api/frp/client-setup", { headers: { authorization: "ok" } });
     expect(response).toEqual({ status: 200, body: { frpcToml: "serverAddr = \"x.x.x.x\"\n", installScript: "#!/usr/bin/env bash\n" } });
     expect(mocks.frpClientSetup).toHaveBeenCalled();
+  });
+
+  it("reveals a node-specific FRPC setup", async () => {
+    mocks.frpNodeClientSetup.mockResolvedValue({ frpcToml: 'clientID = "yanto-node-home"\n', tunnelCount: 1, tokenConfigured: true });
+    const response = await call("/api/frp/nodes/node_home/client-setup", { headers: { authorization: "ok" } });
+    expect(response).toEqual({ status: 200, body: { frpcToml: 'clientID = "yanto-node-home"\n', tunnelCount: 1, tokenConfigured: true } });
+    expect(mocks.frpNodeClientSetup).toHaveBeenCalledWith("node_home");
   });
 });

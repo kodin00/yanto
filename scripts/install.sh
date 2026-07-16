@@ -8,7 +8,7 @@ INSTALL_DIR="${YANTO_INSTALL_DIR:-/opt/yanto}"
 ROLE="${1:-}"
 
 usage() {
-  echo "Usage: install.sh master|worker [--master URL] [--join-token TOKEN] [--name NAME] [--dir PATH]"
+  echo "Usage: install.sh master|worker [--master URL] [--join-token TOKEN] [--name NAME] [--frp-role disabled|client|server|both] [--dir PATH]"
 }
 
 need_root() {
@@ -70,6 +70,7 @@ write_worker_env() {
   local master_url="$1"
   local join_token="$2"
   local worker_name="$3"
+  local frp_role="$4"
   if [ -z "$master_url" ] || [ -z "$join_token" ]; then
     echo "Worker install requires --master URL and --join-token TOKEN."
     exit 1
@@ -81,6 +82,7 @@ YANTO_MASTER_URL=$master_url
 WORKER_JOIN_TOKEN=$join_token
 YANTO_WORKER_TOKEN=
 YANTO_WORKER_NAME=$worker_name
+YANTO_FRP_ROLE=$frp_role
 HOST_PROJECTS_ROOT=/opt/yanto-projects
 SSH_SOURCE_DIR=/root/.ssh
 COMMAND_TIMEOUT_MS=3600000
@@ -117,6 +119,7 @@ shift || true
 MASTER_URL=""
 JOIN_TOKEN=""
 WORKER_NAME="$(hostname)"
+FRP_ROLE="disabled"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --master)
@@ -129,6 +132,11 @@ while [ "$#" -gt 0 ]; do
       ;;
     --name)
       WORKER_NAME="${2:-}"
+      shift 2
+      ;;
+    --frp-role)
+      FRP_ROLE="${2:-}"
+      case "$FRP_ROLE" in disabled|client|server|both) ;; *) echo "Invalid --frp-role." >&2; exit 1 ;; esac
       shift 2
       ;;
     --dir)
@@ -151,7 +159,7 @@ case "$ROLE" in
     run_master
     ;;
   worker)
-    write_worker_env "$MASTER_URL" "$JOIN_TOKEN" "$WORKER_NAME"
+    write_worker_env "$MASTER_URL" "$JOIN_TOKEN" "$WORKER_NAME" "$FRP_ROLE"
     run_worker
     ;;
   *)

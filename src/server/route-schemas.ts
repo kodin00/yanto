@@ -38,8 +38,22 @@ export const envVariablesInput = z.object({
 });
 
 export const backupInput = z.object({
-  containerId: z.string().min(1).optional()
+  containerId: z.string().min(1).optional(),
+  sourceNodeId: z.string().min(1).optional()
 });
+
+export const backupPolicyInput = z.object({
+  name: z.string().trim().min(1).max(120),
+  sourceNodeId: z.string().min(1),
+  targetContainerId: z.string().min(1).nullable().optional(),
+  enabled: z.boolean().optional().default(true),
+  hourlyAtMinute: z.number().int().min(0).max(59).optional().default(0),
+  hourlyRetention: z.number().int().min(1).max(744).optional().default(24),
+  dailyRetention: z.number().int().min(1).max(3650).optional().default(30),
+  destinationNodeIds: z.array(z.string().min(1)).max(64).optional().default([])
+});
+
+export const backupPolicyUpdateInput = backupPolicyInput.partial().refine((value) => Object.keys(value).length > 0, "At least one field is required.");
 
 export const r2SettingsInput = z.object({
   enabled: z.boolean().optional().default(false),
@@ -62,6 +76,14 @@ export const setupWizardInput = z.object({
 
 export const multiNodeSettingsInput = z.object({
   enabled: z.boolean().optional().default(false)
+});
+
+export const backupDestinationInput = z.object({
+  sshHost: z.string().trim().max(255).optional().default(""),
+  sshPort: z.number().int().min(1).max(65535).optional().default(22),
+  sshUser: z.string().trim().max(100).optional().default(""),
+  directory: z.string().trim().max(1000).optional().default(""),
+  privateKeyPath: z.string().trim().max(1000).optional().default("")
 });
 
 export const cloudflareRouteInput = z.object({
@@ -114,7 +136,7 @@ export const workerRegisterInput = z.object({
   dockerVersion: z.string().trim().max(200).optional().nullable(),
   labels: z.record(
     z.string().max(100),
-    z.union([z.string().max(500), z.number(), z.boolean(), z.null()])
+    z.union([z.string().max(64 * 1024), z.number(), z.boolean(), z.null()])
   ).refine((value) => Object.keys(value).length <= 64, "Worker labels are limited to 64 entries").optional()
 });
 
@@ -123,7 +145,7 @@ export const workerHeartbeatInput = z.object({
   dockerVersion: z.string().trim().max(200).optional().nullable(),
   labels: z.record(
     z.string().max(100),
-    z.union([z.string().max(500), z.number(), z.boolean(), z.null()])
+    z.union([z.string().max(64 * 1024), z.number(), z.boolean(), z.null()])
   ).refine((value) => Object.keys(value).length <= 64, "Worker labels are limited to 64 entries").optional()
 });
 
@@ -139,6 +161,22 @@ export const workerDeploymentUpdateInput = z.object({
   targetRef: z.string().max(1_000).nullable().optional()
 });
 
+export const workerBackupCompletionInput = z.object({
+  status: z.enum(["success", "failed"]),
+  filePath: z.string().max(4000).optional(),
+  fileSizeBytes: z.number().int().nonnegative().optional(),
+  checksum: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
+  error: z.string().max(4000).optional(),
+  replicas: z.array(z.object({
+    destinationNodeId: z.string().min(1),
+    status: z.enum(["success", "failed"]),
+    filePath: z.string().max(4000).optional(),
+    checksum: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
+    error: z.string().max(4000).optional(),
+    attempts: z.number().int().min(1).max(10).optional()
+  })).max(64).optional()
+});
+
 const frpHost = z.string().trim().min(1).max(255).refine(
   (value) => !/[\s/:?#]/.test(value) || /^[0-9a-fA-F:]+$/.test(value),
   "Expected an IP address or hostname without a scheme, path, or port"
@@ -151,6 +189,8 @@ export const frpSettingsInput = z.object({
 export const frpTunnelInput = z.object({
   name: z.string().trim().min(1).max(100),
   nodeId: z.string().min(1).nullable().optional(),
+  clientNodeId: z.string().min(1).nullable().optional(),
+  serverId: z.string().min(1).nullable().optional(),
   protocol: z.enum(["tcp", "udp"]),
   localHost: frpHost,
   localPort: z.number().int().min(1).max(65535),
@@ -159,6 +199,27 @@ export const frpTunnelInput = z.object({
 });
 
 export const frpTunnelUpdateInput = frpTunnelInput.partial().refine((value) => Object.keys(value).length > 0, "At least one field is required.");
+
+export const frpServerInput = z.object({
+  nodeId: z.string().min(1),
+  name: z.string().trim().min(1).max(100),
+  publicHost: frpHost,
+  bindPort: z.number().int().min(1).max(65535).optional().default(7000),
+  portStart: z.number().int().min(1).max(65535).optional().default(25560),
+  portEnd: z.number().int().min(1).max(65535).optional().default(25600),
+  authToken: z.string().min(16).max(1000).optional()
+}).refine((value) => value.portStart <= value.portEnd, "FRP port start must be less than or equal to port end.");
+
+export const frpNodeAssignmentInput = z.object({
+  role: z.enum(["disabled", "client", "server", "both"]),
+  serverId: z.string().min(1).nullable().optional()
+});
+
+export const frpNodeStatusInput = z.object({
+  revision: z.number().int().min(0),
+  status: z.enum(["applying", "online", "error", "disabled"]),
+  error: z.string().max(4000).nullable().optional()
+});
 
 export const mcpAccessLevelInput = z.enum(["read", "write", "admin"]);
 

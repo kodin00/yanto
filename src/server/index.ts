@@ -32,6 +32,7 @@ import agentTasksRouter from "./routes/agent-tasks.js";
 import { archiveCompletedAgentTasks, drainActiveAgentRuns, recoverInterruptedAgentRuns } from "./services/agent-tasks.js";
 import { warmCodexAccountStatus } from "./services/codex-auth.js";
 import { logSetupCodeIfNeeded } from "./services/accounts.js";
+import { recoverInterruptedBackups, runDueBackupPolicies } from "./services/backup-policies.js";
 
 const app = express();
 
@@ -152,6 +153,7 @@ async function main() {
   await logSetupCodeIfNeeded();
   await ensureLocalMasterNode();
   await recoverInterruptedDeployments();
+  await recoverInterruptedBackups();
   await recoverInterruptedAgentRuns();
   await archiveCompletedAgentTasks();
   const taskArchiveTimer = setInterval(() => {
@@ -160,6 +162,15 @@ async function main() {
     });
   }, 60 * 60 * 1_000);
   taskArchiveTimer.unref();
+  const backupScheduleTimer = setInterval(() => {
+    void runDueBackupPolicies().catch((error) => {
+      logger.error("automatic backup scheduler failed", { error: error instanceof Error ? error.message : String(error) });
+    });
+  }, 60_000);
+  backupScheduleTimer.unref();
+  void runDueBackupPolicies().catch((error) => {
+    logger.error("initial automatic backup scheduler run failed", { error: error instanceof Error ? error.message : String(error) });
+  });
   const server = app.listen(config.port, () => {
     logger.info("server started", { port: config.port });
     if (config.nodeRole === "master") {
@@ -184,6 +195,7 @@ async function main() {
   const shutdown = (signal: string) => shutdownPromise ??= (async () => {
     logger.info("shutdown starting", { signal });
     clearInterval(taskArchiveTimer);
+    clearInterval(backupScheduleTimer);
     const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));
     const drained = await drainActiveAgentRuns(config.agentShutdownTimeoutMs);
     if (!drained.drained) {

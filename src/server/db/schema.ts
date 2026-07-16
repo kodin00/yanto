@@ -235,16 +235,48 @@ export const deployments = pgTable(
   ]
 );
 
+export const backupPolicies = pgTable(
+  "backup_policies",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    sourceNodeId: text("source_node_id").notNull().references(() => deploymentNodes.id, { onDelete: "cascade" }),
+    targetContainerId: text("target_container_id"),
+    enabled: boolean("enabled").notNull().default(true),
+    hourlyAtMinute: integer("hourly_at_minute").notNull().default(0),
+    hourlyRetention: integer("hourly_retention").notNull().default(24),
+    dailyRetention: integer("daily_retention").notNull().default(30),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [index("backup_policies_source_node_idx").on(table.sourceNodeId), index("backup_policies_next_run_idx").on(table.enabled, table.nextRunAt)]
+);
+
+export const backupPolicyDestinations = pgTable(
+  "backup_policy_destinations",
+  {
+    policyId: text("policy_id").notNull().references(() => backupPolicies.id, { onDelete: "cascade" }),
+    destinationNodeId: text("destination_node_id").notNull().references(() => deploymentNodes.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [primaryKey({ columns: [table.policyId, table.destinationNodeId] }), index("backup_policy_destinations_node_idx").on(table.destinationNodeId)]
+);
+
 export const backups = pgTable(
   "backups",
   {
     id: text("id").primaryKey(),
     projectId: text("project_id").references(() => projects.id, { onDelete: "set null" }),
+    sourceNodeId: text("source_node_id").references(() => deploymentNodes.id, { onDelete: "set null" }).default("node_master_local"),
+    policyId: text("policy_id").references(() => backupPolicies.id, { onDelete: "set null" }),
     kind: text("kind").notNull(),
     status: text("status").notNull(),
     filename: text("filename").notNull(),
     filePath: text("file_path").notNull(),
     fileSizeBytes: bigint("file_size_bytes", { mode: "number" }),
+    checksum: text("checksum"),
     error: text("error"),
     note: text("note"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -253,6 +285,24 @@ export const backups = pgTable(
     downloadCount: integer("download_count").notNull().default(0)
   },
   (table) => [index("backups_created_at_idx").on(table.createdAt), index("backups_status_idx").on(table.status)]
+);
+
+export const backupReplicas = pgTable(
+  "backup_replicas",
+  {
+    id: text("id").primaryKey(),
+    backupId: text("backup_id").notNull().references(() => backups.id, { onDelete: "cascade" }),
+    destinationNodeId: text("destination_node_id").notNull().references(() => deploymentNodes.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("pending"),
+    filePath: text("file_path"),
+    checksum: text("checksum"),
+    error: text("error"),
+    attempts: integer("attempts").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true })
+  },
+  (table) => [uniqueIndex("backup_replicas_backup_node_idx").on(table.backupId, table.destinationNodeId), index("backup_replicas_status_idx").on(table.status)]
 );
 
 export const auditLogs = pgTable(
@@ -371,11 +421,47 @@ export const cloudflareRoutes = pgTable(
   ]
 );
 
+export const frpServers = pgTable(
+  "frp_servers",
+  {
+    id: text("id").primaryKey(),
+    nodeId: text("node_id").notNull().references(() => deploymentNodes.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    publicHost: text("public_host").notNull(),
+    bindPort: integer("bind_port").notNull().default(7000),
+    portStart: integer("port_start").notNull().default(25560),
+    portEnd: integer("port_end").notNull().default(25600),
+    authToken: text("auth_token").notNull(),
+    status: text("status").notNull().default("offline"),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [uniqueIndex("frp_servers_node_idx").on(table.nodeId)]
+);
+
+export const frpNodeAssignments = pgTable(
+  "frp_node_assignments",
+  {
+    nodeId: text("node_id").primaryKey().references(() => deploymentNodes.id, { onDelete: "cascade" }),
+    role: text("role").notNull().default("disabled"),
+    serverId: text("server_id").references(() => frpServers.id, { onDelete: "set null" }),
+    desiredRevision: integer("desired_revision").notNull().default(1),
+    appliedRevision: integer("applied_revision").notNull().default(0),
+    status: text("status").notNull().default("pending"),
+    lastError: text("last_error"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [index("frp_node_assignments_server_idx").on(table.serverId)]
+);
+
 export const frpTunnels = pgTable(
   "frp_tunnels",
   {
     id: text("id").primaryKey(),
     nodeId: text("node_id").references(() => deploymentNodes.id, { onDelete: "cascade" }),
+    clientNodeId: text("client_node_id").references(() => deploymentNodes.id, { onDelete: "cascade" }),
+    serverId: text("server_id").references(() => frpServers.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     protocol: text("protocol").notNull(),
     localHost: text("local_host").notNull(),
@@ -390,7 +476,9 @@ export const frpTunnels = pgTable(
   },
   (table) => [
     index("frp_tunnels_node_id_idx").on(table.nodeId),
-    uniqueIndex("frp_tunnels_protocol_remote_port_idx").on(table.protocol, table.remotePort)
+    index("frp_tunnels_client_node_idx").on(table.clientNodeId),
+    index("frp_tunnels_server_idx").on(table.serverId),
+    uniqueIndex("frp_tunnels_server_protocol_remote_port_idx").on(table.serverId, table.protocol, table.remotePort)
   ]
 );
 
@@ -411,6 +499,8 @@ export type DeploymentRow = typeof deployments.$inferSelect;
 export type NewDeploymentRow = typeof deployments.$inferInsert;
 export type BackupRow = typeof backups.$inferSelect;
 export type NewBackupRow = typeof backups.$inferInsert;
+export type BackupPolicyRow = typeof backupPolicies.$inferSelect;
+export type BackupReplicaRow = typeof backupReplicas.$inferSelect;
 export type AuditLogRow = typeof auditLogs.$inferSelect;
 export type NewAuditLogRow = typeof auditLogs.$inferInsert;
 export type AppSettingRow = typeof appSettings.$inferSelect;
@@ -424,3 +514,5 @@ export type CloudflareRouteRow = typeof cloudflareRoutes.$inferSelect;
 export type NewCloudflareRouteRow = typeof cloudflareRoutes.$inferInsert;
 export type FrpTunnelRow = typeof frpTunnels.$inferSelect;
 export type NewFrpTunnelRow = typeof frpTunnels.$inferInsert;
+export type FrpServerRow = typeof frpServers.$inferSelect;
+export type FrpNodeAssignmentRow = typeof frpNodeAssignments.$inferSelect;

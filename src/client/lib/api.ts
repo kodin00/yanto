@@ -4,6 +4,80 @@ export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
 export type PostgresTarget = PostgresBackupTarget;
 
+export type BackupReplicaRecord = {
+  id: string;
+  backupId: string;
+  destinationNodeId: string;
+  destinationNodeName?: string | null;
+  status: "pending" | "copying" | "success" | "failed";
+  filePath?: string | null;
+  checksum?: string | null;
+  error?: string | null;
+  attempts?: number;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt?: string | null;
+};
+
+export type BackupPolicyRecord = {
+  id: string;
+  name: string;
+  sourceNodeId: string;
+  targetContainerId: string | null;
+  enabled: boolean;
+  hourlyAtMinute: number;
+  hourlyRetention: number;
+  dailyRetention: number;
+  destinationNodeIds: string[];
+  lastRunAt?: string | null;
+  nextRunAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type BackupPolicyPayload = Pick<BackupPolicyRecord, "name" | "sourceNodeId" | "targetContainerId" | "enabled" | "hourlyAtMinute" | "hourlyRetention" | "dailyRetention" | "destinationNodeIds">;
+
+export type FrpRole = "disabled" | "client" | "server" | "both";
+export type FrpServerRecord = {
+  id: string;
+  nodeId: string;
+  nodeName?: string | null;
+  name?: string;
+  publicHost: string;
+  bindPort: number;
+  portStart: number;
+  portEnd: number;
+  configured?: boolean;
+  status?: string;
+  lastError?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+export type FrpServerPayload = {
+  nodeId: string;
+  name: string;
+  publicHost: string;
+  bindPort: number;
+  portStart: number;
+  portEnd: number;
+  authToken?: string;
+};
+export type FrpNodeAssignmentRecord = {
+  nodeId: string;
+  nodeName?: string | null;
+  role: FrpRole;
+  serverId: string | null;
+  status?: string;
+  lastError?: string | null;
+  frpcToml?: string | null;
+  frpsToml?: string | null;
+  updatedAt?: string | null;
+};
+export type MultiNodeFrpOverview = Omit<FrpOverview, "servers" | "assignments"> & {
+  servers?: FrpServerRecord[];
+  assignments?: FrpNodeAssignmentRecord[];
+};
+
 export type ProjectEnvVariable = {
   key: string;
   value?: string | null;
@@ -58,6 +132,8 @@ export type CloudflareDnsRecordPayload = {
 export type FrpTunnelPayload = {
   name: string;
   nodeId?: string | null;
+  clientNodeId?: string | null;
+  serverId?: string | null;
   protocol: "tcp" | "udp";
   localHost: string;
   localPort: number;
@@ -226,6 +302,8 @@ export const api = {
   deleteUser: (id: string) => request<void>(`/api/users/${id}`, { method: "DELETE" }),
   projects: () => request<Project[]>("/api/projects"),
   nodes: () => request<DeploymentNode[]>("/api/nodes"),
+  updateNodeBackupDestination: (id: string, payload: { sshHost: string; sshPort: number; sshUser: string; directory: string; privateKeyPath: string }) =>
+    request<DeploymentNode>(`/api/nodes/${id}/backup-destination`, { method: "PATCH", body: JSON.stringify(payload) }),
   workerJoinToken: () => request<{ token: string; command: string }>("/api/nodes/join-token", { method: "POST" }),
   createProject: (
     payload: Pick<Project, "name" | "branch" | "folderName" | "composeFile" | "autoStart" | "manualDeployEnabled" | "githubWebhookEnabled" | "targetNodeId" | "agentImage"> & {
@@ -323,15 +401,24 @@ export const api = {
   deploymentLogStream: (id: string) => `/api/deployments/${id}/logs/stream`,
   backups: () => request<BackupRecord[]>("/api/backups"),
   postgresBackupTargets: () => request<PostgresTarget[]>("/api/backups/postgres-targets"),
-  createBackup: (containerId?: string) =>
+  backupPolicies: () => request<BackupPolicyRecord[]>("/api/backups/policies"),
+  createBackupPolicy: (payload: BackupPolicyPayload) =>
+    request<BackupPolicyRecord>("/api/backups/policies", { method: "POST", body: JSON.stringify(payload) }),
+  updateBackupPolicy: (id: string, payload: Partial<BackupPolicyPayload>) =>
+    request<BackupPolicyRecord>(`/api/backups/policies/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteBackupPolicy: (id: string) => request<void>(`/api/backups/policies/${id}`, { method: "DELETE" }),
+  retryBackupReplica: (id: string) =>
+    request<BackupReplicaRecord>(`/api/backups/replicas/${id}/retry`, { method: "POST" }),
+  createBackup: (containerId?: string, sourceNodeId?: string) =>
     request<BackupRecord>("/api/backups", {
       method: "POST",
-      body: JSON.stringify(containerId ? { containerId } : {})
+      body: JSON.stringify({ ...(containerId ? { containerId } : {}), ...(sourceNodeId ? { sourceNodeId } : {}) })
     }),
-  restorePostgresTarget: async (containerId: string, file: File) => {
+  restorePostgresTarget: async (containerId: string, file: File, sourceNodeId?: string) => {
     invalidateReadRequests();
     const csrfToken = getCsrfToken();
-    const response = await fetch(`/api/backups/postgres-targets/${containerId}/restore`, {
+    const nodeQuery = sourceNodeId ? `?nodeId=${encodeURIComponent(sourceNodeId)}` : "";
+    const response = await fetch(`/api/backups/postgres-targets/${containerId}/restore${nodeQuery}`, {
       method: "POST",
       credentials: "include",
       headers: {
@@ -480,8 +567,13 @@ export const api = {
     request<CloudflareRoute>(`/api/cloudflare/routes/${routeId}/disable`, { method: "PATCH" }),
   deleteCfRoute: (routeId: string) =>
     request<void>(`/api/cloudflare/routes/${routeId}`, { method: "DELETE" }),
-  frpOverview: () => request<FrpOverview>("/api/frp/overview"),
-  frpClientSetup: () => request<FrpClientSetup>("/api/frp/client-setup"),
+  frpOverview: () => request<MultiNodeFrpOverview>("/api/frp/overview"),
+  frpServers: () => request<FrpServerRecord[]>("/api/frp/servers"),
+  createFrpServer: (payload: FrpServerPayload) => request<FrpServerRecord>("/api/frp/servers", { method: "POST", body: JSON.stringify(payload) }),
+  frpNodeAssignments: () => request<FrpNodeAssignmentRecord[]>("/api/frp/node-assignments"),
+  frpClientSetup: (nodeId?: string) => request<FrpClientSetup>(nodeId ? `/api/frp/nodes/${nodeId}/client-setup` : "/api/frp/client-setup"),
+  updateFrpNodeAssignment: (nodeId: string, payload: { role: FrpRole; serverId: string | null }) =>
+    request<FrpNodeAssignmentRecord>(`/api/frp/node-assignments/${nodeId}`, { method: "PUT", body: JSON.stringify(payload) }),
   saveFrpSettings: (publicHost: string) =>
     request<FrpSettings>("/api/frp/settings", { method: "PUT", body: JSON.stringify({ publicHost }) }),
   controlFrpServer: (action: "start" | "stop" | "restart") =>

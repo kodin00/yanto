@@ -2,7 +2,7 @@ import { Router } from "express";
 import type express from "express";
 import rateLimit from "express-rate-limit";
 import { asyncRoute, routeParam } from "../http-utils.js";
-import { workerDeploymentUpdateInput, workerHeartbeatInput, workerLogInput, workerRegisterInput } from "../route-schemas.js";
+import { frpNodeStatusInput, workerBackupCompletionInput, workerDeploymentUpdateInput, workerHeartbeatInput, workerLogInput, workerRegisterInput } from "../route-schemas.js";
 import { recordAuditLog } from "../services/audit.js";
 import { appendDeploymentLog, findDeploymentForNode, finishDeployment, startDeployment, updateDeploymentMetadata } from "../services/deployments.js";
 import { getProject, publicProject } from "../services/projects.js";
@@ -10,6 +10,8 @@ import { githubBranchFromRef, githubPayloadFromRequestBody, githubWebhookPayload
 import { markNodeSeen, nextWorkerDeployment, nodeForWorkerToken, publicWorkerNode, registerWorker } from "../services/nodes.js";
 import { getWorkerJoinToken } from "../services/settings.js";
 import { constantTimeEqual } from "../services/tokens.js";
+import { completeWorkerBackup, nextWorkerBackupJob } from "../services/backup-policies.js";
+import { getFrpDesiredConfig, listFrpServers, reportFrpNodeStatus, saveFrpNodeAssignment } from "../services/frp.js";
 
 type RawBodyRequest = express.Request & { rawBody?: Buffer };
 
@@ -68,6 +70,12 @@ router.post(
       return;
     }
     const result = await registerWorker(body);
+    const requestedFrpRole = body.labels?.["frp.requestedRole"];
+    if (typeof requestedFrpRole === "string" && ["disabled", "client", "server", "both"].includes(requestedFrpRole)) {
+      const serverId = requestedFrpRole === "client" ? (await listFrpServers())[0]?.id ?? null : null;
+      const initialRole = requestedFrpRole === "server" || requestedFrpRole === "both" || (requestedFrpRole === "client" && !serverId) ? "disabled" : requestedFrpRole;
+      await saveFrpNodeAssignment(result.node.id, { role: initialRole as "disabled" | "client", serverId }).catch(() => undefined);
+    }
     await recordAuditLog({ actor: "worker", action: "node.register", entityType: "deployment_node", entityId: result.node.id, metadata: { name: result.node.name } });
     res.status(201).json({ node: publicWorkerNode(result.node), token: result.token });
   })
@@ -86,8 +94,39 @@ router.get(
   "/api/workers/jobs/next",
   requireWorker(async (_req, res, node) => {
     await markNodeSeen(node);
-    const job = await nextWorkerDeployment(node.id);
-    res.json(job ? { ...job, project: publicProject(job.project) } : null);
+    const deploymentJob = await nextWorkerDeployment(node.id);
+    if (deploymentJob) {
+      res.json({ kind: "deployment", ...deploymentJob, project: publicProject(deploymentJob.project) });
+      return;
+    }
+    const backupJob = await nextWorkerBackupJob(node.id);
+    res.json(backupJob ? { kind: "backup", backupJob } : null);
+  })
+);
+
+router.post(
+  "/api/workers/backups/:id/complete",
+  requireWorker(async (req, res, node) => {
+    const backup = await completeWorkerBackup(routeParam(req, "id"), node.id, workerBackupCompletionInput.parse(req.body ?? {}));
+    await markNodeSeen(node);
+    res.json({ ok: true, backup });
+  })
+);
+
+router.get(
+  "/api/workers/frp/config",
+  requireWorker(async (_req, res, node) => {
+    await markNodeSeen(node);
+    res.json(await getFrpDesiredConfig(node.id));
+  })
+);
+
+router.post(
+  "/api/workers/frp/status",
+  requireWorker(async (req, res, node) => {
+    const result = await reportFrpNodeStatus(node.id, frpNodeStatusInput.parse(req.body ?? {}));
+    await markNodeSeen(node);
+    res.json(result);
   })
 );
 

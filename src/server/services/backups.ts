@@ -7,7 +7,8 @@ import { pipeline } from "node:stream/promises";
 import { createGunzip, createGzip } from "node:zlib";
 import { config } from "../config.js";
 import { db } from "../db/index.js";
-import { backups } from "../db/schema.js";
+import { backupReplicas, backups, deploymentNodes, type BackupRow } from "../db/schema.js";
+import { calculateBackupChecksum, rsyncBackupFileWithRetry, type BackupDestinationConfig } from "./backup-replication.js";
 import { listContainers } from "./docker.js";
 import { listProjects } from "./projects.js";
 import { runCommand } from "./commands.js";
@@ -185,23 +186,107 @@ async function inspectContainerEnv(containerId: string) {
   }
 }
 
+export type PostgresBackupTarget = {
+  nodeId: string;
+  nodeName: string;
+  containerId: string;
+  containerName: string;
+  image: string;
+  status: string;
+  state: string;
+  composeProject: string | null;
+  composeService: string | null;
+  projectId: string | null;
+  projectName: string | null;
+  databaseName: string;
+  databaseUser: string;
+};
+
+type ReportedPostgresTarget = Omit<PostgresBackupTarget, "nodeId" | "nodeName">;
+
+function reportedPostgresTargets(node: { id: string; name: string; labels: Record<string, string> }) {
+  const raw = node.labels?.["backup.postgresTargets"];
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((value): PostgresBackupTarget[] => {
+      if (!value || typeof value !== "object") return [];
+      const target = value as Partial<ReportedPostgresTarget>;
+      if (
+        typeof target.containerId !== "string" ||
+        typeof target.containerName !== "string" ||
+        typeof target.image !== "string" ||
+        typeof target.status !== "string" ||
+        typeof target.state !== "string" ||
+        typeof target.databaseName !== "string" ||
+        typeof target.databaseUser !== "string"
+      ) return [];
+      return [{
+        nodeId: node.id,
+        nodeName: node.name,
+        containerId: target.containerId,
+        containerName: target.containerName,
+        image: target.image,
+        status: target.status,
+        state: target.state,
+        composeProject: typeof target.composeProject === "string" ? target.composeProject : null,
+        composeService: typeof target.composeService === "string" ? target.composeService : null,
+        projectId: typeof target.projectId === "string" ? target.projectId : null,
+        projectName: typeof target.projectName === "string" ? target.projectName : null,
+        databaseName: target.databaseName,
+        databaseUser: target.databaseUser
+      }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function enrichBackups(rows: BackupRow[]) {
+  if (!rows.length) return [];
+  const backupIds = rows.map((backup) => backup.id);
+  const replicas = await db.select().from(backupReplicas).where(inArray(backupReplicas.backupId, backupIds));
+  const nodeIds = [...new Set([
+    ...rows.flatMap((backup) => backup.sourceNodeId ? [backup.sourceNodeId] : []),
+    ...replicas.map((replica) => replica.destinationNodeId)
+  ])];
+  const nodes = nodeIds.length
+    ? await db.select({ id: deploymentNodes.id, name: deploymentNodes.name }).from(deploymentNodes)
+      .where(inArray(deploymentNodes.id, nodeIds))
+    : [];
+  const nodeNames = new Map(nodes.map((node) => [node.id, node.name]));
+  return rows.map((backup) => ({
+    ...backup,
+    sourceNodeName: backup.sourceNodeId ? nodeNames.get(backup.sourceNodeId) ?? null : null,
+    replicas: replicas.filter((replica) => replica.backupId === backup.id).map((replica) => ({
+      ...replica,
+      destinationNodeName: nodeNames.get(replica.destinationNodeId) ?? null
+    }))
+  }));
+}
+
 export async function listBackups(limit = 50) {
-  return db.select().from(backups).orderBy(desc(backups.createdAt)).limit(limit);
+  const rows = await db.select().from(backups).orderBy(desc(backups.createdAt)).limit(limit);
+  return enrichBackups(rows);
 }
 
 export async function listBackupsForProjects(projectIds: string[], limit = 50) {
   if (projectIds.length === 0) return [];
-  return db.select().from(backups).where(inArray(backups.projectId, projectIds))
+  const rows = await db.select().from(backups).where(inArray(backups.projectId, projectIds))
     .orderBy(desc(backups.createdAt)).limit(limit);
+  return enrichBackups(rows);
 }
 
 export async function getBackup(id: string) {
   const [backup] = await db.select().from(backups).where(eq(backups.id, id)).limit(1);
-  return backup;
+  if (!backup) return undefined;
+  const [enriched] = await enrichBackups([backup]);
+  return enriched;
 }
 
-export async function listPostgresBackupTargets() {
-  const [containers, projectRows] = await Promise.all([listContainers(), listProjects()]);
+async function discoverLocalPostgresBackupTargets(projectRows: Awaited<ReturnType<typeof listProjects>> = []): Promise<PostgresBackupTarget[]> {
+  const containers = await listContainers();
   const projectsByFolder = new Map(projectRows.map((project) => [project.folderName, project]));
   const candidates = containers.filter((container) => container.isPostgresCandidate);
 
@@ -212,6 +297,8 @@ export async function listPostgresBackupTargets() {
       const databaseName = env.get("POSTGRES_DB") || env.get("PGDATABASE") || databaseUser;
       const project = container.composeProject ? projectsByFolder.get(container.composeProject) : undefined;
       return {
+        nodeId: config.localNodeId,
+        nodeName: "Master",
         containerId: container.id,
         containerName: container.name,
         image: container.image,
@@ -228,9 +315,151 @@ export async function listPostgresBackupTargets() {
   );
 }
 
-export async function createPostgresBackup(containerId?: string) {
+export async function listLocalPostgresBackupTargets(): Promise<PostgresBackupTarget[]> {
+  return discoverLocalPostgresBackupTargets(await listProjects());
+}
+
+export async function listRuntimePostgresBackupTargets(): Promise<PostgresBackupTarget[]> {
+  return discoverLocalPostgresBackupTargets();
+}
+
+export async function listPostgresBackupTargets(): Promise<PostgresBackupTarget[]> {
+  const [localTargets, nodes, projectRows] = await Promise.all([
+    listLocalPostgresBackupTargets(),
+    db.select({ id: deploymentNodes.id, name: deploymentNodes.name, labels: deploymentNodes.labels }).from(deploymentNodes),
+    listProjects()
+  ]);
+  const localNode = nodes.find((node) => node.id === config.localNodeId);
+  const namedLocalTargets = localNode
+    ? localTargets.map((target) => ({ ...target, nodeName: localNode.name }))
+    : localTargets;
+  const remoteTargets = nodes.filter((node) => node.id !== config.localNodeId).flatMap(reportedPostgresTargets)
+    .map((target) => {
+      const project = projectRows.find((candidate) =>
+        candidate.targetNodeId === target.nodeId && candidate.folderName === target.composeProject
+      );
+      return project ? { ...target, projectId: project.id, projectName: project.name } : target;
+    });
+  return [
+    ...namedLocalTargets,
+    ...remoteTargets
+  ];
+}
+
+export async function postgresTargetInventoryLabel() {
+  const targets = await listRuntimePostgresBackupTargets();
+  return JSON.stringify(targets.map((target) => ({
+    containerId: target.containerId,
+    containerName: target.containerName,
+    image: target.image,
+    status: target.status,
+    state: target.state,
+    composeProject: target.composeProject,
+    composeService: target.composeService,
+    projectId: target.projectId,
+    projectName: target.projectName,
+    databaseName: target.databaseName,
+    databaseUser: target.databaseUser
+  })));
+}
+
+export async function createPostgresBackupArtifact(input: {
+  containerId?: string;
+  backupId?: string;
+  filename?: string;
+}) {
+  const target = input.containerId
+    ? (await listRuntimePostgresBackupTargets()).find((item) => item.containerId === input.containerId)
+    : undefined;
+  if (input.containerId && !target) throw new Error("Container is not a recognized local Postgres backup target.");
+  if (target && target.state !== "running") throw new Error(`${target.containerName} must be running before it can be dumped.`);
+
+  const owner = target?.projectName ?? target?.composeProject ?? target?.containerName ?? "yanto";
+  const generatedFilename = `${safeFilenamePart(owner) || "postgres"}-postgres-${backupTimestamp()}.sql.gz`;
+  const filename = path.basename(input.filename || generatedFilename);
+  const filePath = path.join(config.backupsDir, filename);
+  if (path.dirname(filePath) !== config.backupsDir) throw new Error("Backup filename is invalid.");
+  if (target) await runContainerPgDumpGzip(target.containerId, filePath);
+  else await runPgDumpGzip(filePath);
+  const [stat, checksum] = await Promise.all([fs.stat(filePath), calculateBackupChecksum(filePath)]);
+  return { target, filename, filePath, fileSizeBytes: stat.size, checksum };
+}
+
+export type WorkerBackupRuntimeJob = {
+  backup: { id: string; filename: string };
+  targetContainerId: string | null;
+  destinations: Array<
+    | { nodeId: string; local: true }
+    | (BackupDestinationConfig & { local?: false })
+  >;
+};
+
+export async function executeWorkerBackupJob(job: WorkerBackupRuntimeJob, signal?: AbortSignal) {
+  try {
+    signal?.throwIfAborted();
+    const artifact = await createPostgresBackupArtifact({
+      backupId: job.backup.id,
+      containerId: job.targetContainerId ?? undefined,
+      filename: job.backup.filename
+    });
+    const replicas = await Promise.all(job.destinations.map(async (destination) => {
+      if ("local" in destination && destination.local) {
+        return {
+          destinationNodeId: destination.nodeId,
+          status: "success" as const,
+          filePath: artifact.filePath,
+          checksum: artifact.checksum,
+          attempts: 1
+        };
+      }
+      try {
+        const result = await rsyncBackupFileWithRetry({
+          sourcePath: artifact.filePath,
+          backupId: job.backup.id,
+          destination,
+          expectedChecksum: artifact.checksum,
+          maxAttempts: 3,
+          signal
+        });
+        return {
+          destinationNodeId: destination.nodeId,
+          status: "success" as const,
+          filePath: result.filePath,
+          checksum: result.checksum,
+          attempts: result.attempts
+        };
+      } catch (error) {
+        return {
+          destinationNodeId: destination.nodeId,
+          status: "failed" as const,
+          error: error instanceof Error ? error.message : String(error),
+          attempts: 3
+        };
+      }
+    }));
+    return {
+      status: "success" as const,
+      filePath: artifact.filePath,
+      fileSizeBytes: artifact.fileSizeBytes,
+      checksum: artifact.checksum,
+      replicas
+    };
+  } catch (error) {
+    return {
+      status: "failed" as const,
+      error: error instanceof Error ? error.message : String(error),
+      replicas: []
+    };
+  }
+}
+
+export async function createPostgresBackup(containerId?: string, options: { sourceNodeId?: string; policyId?: string } = {}) {
   const id = createId("bak");
-  const target = containerId ? (await listPostgresBackupTargets()).find((item) => item.containerId === containerId) : undefined;
+  const sourceNodeId = options.sourceNodeId ?? config.localNodeId;
+  if (sourceNodeId !== config.localNodeId) {
+    throw new Error("Remote Postgres backups must be queued for the source worker.");
+  }
+  const target = containerId ? (await listLocalPostgresBackupTargets()).find((item) => item.containerId === containerId) : undefined;
 
   if (containerId && !target) {
     throw new Error("Container is not a recognized Postgres backup target.");
@@ -252,6 +481,8 @@ export async function createPostgresBackup(containerId?: string) {
     .values({
       id,
       projectId: target?.projectId ?? null,
+      sourceNodeId,
+      policyId: options.policyId ?? null,
       kind: target ? "postgres-container" : "postgres",
       status: "running",
       filename,
@@ -264,15 +495,10 @@ export async function createPostgresBackup(containerId?: string) {
     .returning();
 
   try {
-    if (target) {
-      await runContainerPgDumpGzip(target.containerId, filePath);
-    } else {
-      await runPgDumpGzip(filePath);
-    }
-    const stat = await fs.stat(filePath);
+    const artifact = await createPostgresBackupArtifact({ containerId, backupId: id, filename });
     const [finished] = await db
       .update(backups)
-      .set({ status: "success", fileSizeBytes: stat.size, finishedAt: new Date(), error: null })
+      .set({ status: "success", fileSizeBytes: artifact.fileSizeBytes, checksum: artifact.checksum, finishedAt: new Date(), error: null })
       .where(eq(backups.id, id))
       .returning();
     return finished;
@@ -289,7 +515,7 @@ export async function createPostgresBackup(containerId?: string) {
 }
 
 export async function restorePostgresBackupTarget(containerId: string, dumpPath: string, originalFilename: string) {
-  const target = (await listPostgresBackupTargets()).find((item) => item.containerId === containerId);
+  const target = (await listLocalPostgresBackupTargets()).find((item) => item.containerId === containerId);
   if (!target) {
     throw new Error("Container is not a recognized Postgres backup target.");
   }
@@ -321,7 +547,9 @@ export async function deleteBackup(id: string) {
   if (backup.status === "running") {
     throw new Error("Cannot remove a backup while it is still running.");
   }
-  await fs.rm(backup.filePath, { force: true });
+  if (!backup.sourceNodeId || backup.sourceNodeId === config.localNodeId) {
+    await fs.rm(backup.filePath, { force: true });
+  }
   await db.delete(backups).where(eq(backups.id, id));
   return backup;
 }

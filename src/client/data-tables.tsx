@@ -26,13 +26,15 @@ export function PostgresTargetTable({
   targets,
   busy,
   loading,
+  localNodeId,
   onDump,
   onRestore
 }: {
   targets: PostgresTarget[];
   busy: string | null;
   loading?: boolean;
-  onDump: (containerId: string) => Promise<void>;
+  localNodeId: string;
+  onDump: (containerId: string, sourceNodeId?: string) => Promise<void>;
   onRestore: (target: PostgresTarget, file: File) => Promise<void>;
 }) {
   if (loading && !targets.length) {
@@ -57,6 +59,7 @@ export function PostgresTargetTable({
       <table>
         <thead>
           <tr>
+            <th>Node</th>
             <th>Project</th>
             <th>Container</th>
             <th>Database</th>
@@ -67,8 +70,16 @@ export function PostgresTargetTable({
         <tbody>
           {targets.map((target) => {
             const running = target.state === "running";
+            const remote = Boolean(target.nodeId && target.nodeId !== localNodeId);
+            const targetBusyKey = `${target.nodeId ?? "local"}:${target.containerId}`;
             return (
-              <tr key={target.containerId}>
+              <tr key={`${target.nodeId ?? "local"}:${target.containerId}`}>
+                <td>
+                  <div className="stacked-cell">
+                    <strong>{target.nodeName ?? "Local master"}</strong>
+                    <span>{target.nodeId ? "Remote target" : "Local target"}</span>
+                  </div>
+                </td>
                 <td>
                   <div className="stacked-cell">
                     <strong>{target.projectName ?? target.composeProject ?? "Standalone"}</strong>
@@ -88,16 +99,16 @@ export function PostgresTargetTable({
                   <StatusBadge status={running ? "postgres" : target.state} />
                 </td>
                 <td className="table-actions">
-                  <Button disabled={!running} loading={busy === `backup:${target.containerId}`} onClick={() => void onDump(target.containerId)} icon={<Archive size={15} />}>
-                    {busy === `backup:${target.containerId}` ? "Dumping" : "Dump"}
+                  <Button disabled={!running || remote} title={remote ? "Use an automatic backup policy for remote targets." : undefined} loading={busy === `backup:${target.nodeId ?? "local"}:${target.containerId}`} onClick={() => void onDump(target.containerId, target.nodeId ?? undefined)} icon={<Archive size={15} />}>
+                    {busy === `backup:${target.nodeId ?? "local"}:${target.containerId}` ? "Dumping" : "Dump"}
                   </Button>
-                  <label className={`button secondary file-button ${!running || busy === `restore:${target.containerId}` ? "disabled" : ""}`}>
+                  <label title={remote ? "Download or copy the dump to the remote node before restoring." : undefined} className={`button secondary file-button ${!running || remote || busy === `restore:${targetBusyKey}` ? "disabled" : ""}`}>
                     <Upload size={15} />
-                    <span>{busy === `restore:${target.containerId}` ? "Restoring" : "Restore"}</span>
+                    <span>{busy === `restore:${targetBusyKey}` ? "Restoring" : "Restore"}</span>
                     <input
                       type="file"
                       accept=".sql,.gz,.dump,.backup,application/sql,application/gzip,application/octet-stream"
-                      disabled={!running || busy === `restore:${target.containerId}`}
+                      disabled={!running || remote || busy === `restore:${targetBusyKey}`}
                       onChange={(event) => {
                         const file = event.target.files?.[0];
                         event.currentTarget.value = "";
@@ -107,6 +118,7 @@ export function PostgresTargetTable({
                       }}
                     />
                   </label>
+                  {remote ? <span className="remote-target-note">Policy only</span> : null}
                 </td>
               </tr>
             );
@@ -123,7 +135,8 @@ export function BackupTable({
   loading,
   r2Ready,
   onDelete,
-  onUploadR2
+  onUploadR2,
+  onRetryReplica
 }: {
   backups: BackupRecord[];
   busy: string | null;
@@ -131,6 +144,7 @@ export function BackupTable({
   r2Ready: boolean;
   onDelete: (backup: BackupRecord) => void;
   onUploadR2: (backup: BackupRecord) => Promise<void>;
+  onRetryReplica?: (replicaId: string) => Promise<void>;
 }) {
   if (loading && !backups.length) {
     return (
@@ -157,6 +171,7 @@ export function BackupTable({
             <th>Backup</th>
             <th>Source</th>
             <th>Status</th>
+            <th>Replicas</th>
             <th>Size</th>
             <th>Created</th>
             <th>Duration</th>
@@ -172,9 +187,30 @@ export function BackupTable({
                   {backup.error ? <span className="backup-error-note" title={backup.error}>{truncateInline(backup.error, 56)}</span> : null}
                 </div>
               </td>
-              <td>{backup.note ?? backup.kind}</td>
+              <td>
+                <div className="stacked-cell">
+                  <strong>{backup.sourceNodeName ?? "Local master"}</strong>
+                  <span>{backup.note ?? backup.kind}</span>
+                </div>
+              </td>
               <td>
                 <StatusBadge status={backup.status} />
+              </td>
+              <td>
+                {backup.replicas?.length ? (
+                  <div className="replica-badges">
+                    {backup.replicas.map((replica) => (
+                      <span className="replica-badge" key={replica.id} title={replica.error ?? undefined}>
+                        <StatusBadge status={replica.status} label={replica.destinationNodeName ?? replica.destinationNodeId} />
+                        {replica.status === "failed" && onRetryReplica ? (
+                          <IconButton label={`Retry copy to ${replica.destinationNodeName ?? replica.destinationNodeId}`} disabled={busy === `replica:${replica.id}`} onClick={() => void onRetryReplica(replica.id)}>
+                            <RotateCw size={13} />
+                          </IconButton>
+                        ) : null}
+                      </span>
+                    ))}
+                  </div>
+                ) : <span className="muted">Local only</span>}
               </td>
               <td className="tabular-cell">{backup.fileSizeBytes ? bytes(backup.fileSizeBytes) : "-"}</td>
               <td title={dateTime(backup.createdAt)}>{dateTime(backup.createdAt)}</td>

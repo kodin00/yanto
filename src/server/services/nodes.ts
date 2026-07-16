@@ -77,6 +77,21 @@ export async function getNode(id: string) {
   return node;
 }
 
+export async function updateNodeBackupDestination(id: string, input: { sshHost: string; sshPort: number; sshUser: string; directory: string; privateKeyPath: string }) {
+  const node = await getNode(id);
+  if (!node) throw new Error("Deployment node not found.");
+  const labels = {
+    ...node.labels,
+    "backup.sshHost": input.sshHost.trim(),
+    "backup.sshPort": String(input.sshPort),
+    "backup.sshUser": input.sshUser.trim(),
+    "backup.directory": input.directory.trim(),
+    "backup.privateKeyPath": input.privateKeyPath.trim()
+  };
+  const [updated] = await db.update(deploymentNodes).set({ labels, updatedAt: new Date() }).where(eq(deploymentNodes.id, id)).returning();
+  return updated;
+}
+
 export async function assertDeployableNode(id: string) {
   const node = await getNode(id);
   if (!node) {
@@ -121,7 +136,7 @@ export async function markNodeSeen(node: DeploymentNodeRow, input: NodeInput = {
       status: "online",
       lastSeenAt: now,
       dockerVersion: input.dockerVersion?.trim() || node.dockerVersion,
-      labels: input.labels ? normalizeLabels(input.labels) : node.labels,
+      labels: input.labels ? { ...node.labels, ...normalizeLabels(input.labels) } : node.labels,
       updatedAt: now
     })
     .where(eq(deploymentNodes.id, node.id))
