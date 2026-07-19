@@ -183,15 +183,16 @@ function normalizeProjectEnv(payload: unknown): ProjectEnvVariable[] {
 
 export const api = {
   setupStatus: () => request<{ needsSetup: boolean }>("/api/setup/status"),
-  createOwner: (username: string, password: string, passwordConfirmation: string, setupCode: string) =>
+  turnstileConfig: () => request<{ enabled: boolean; siteKey: string }>("/api/auth/turnstile"),
+  createOwner: (username: string, password: string, passwordConfirmation: string, setupCode: string, turnstileToken?: string) =>
     request<SessionUser>("/api/setup/owner", {
       method: "POST",
-      body: JSON.stringify({ username, password, passwordConfirmation, setupCode })
+      body: JSON.stringify({ username, password, passwordConfirmation, setupCode, turnstileToken })
     }),
-  login: (username: string, password: string) =>
+  login: (username: string, password: string, turnstileToken?: string) =>
     request<SessionUser>("/api/auth/login", {
       method: "POST",
-      body: JSON.stringify({ username, password })
+      body: JSON.stringify({ username, password, turnstileToken })
     }),
   logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
   me: () => request<SessionUser>("/api/auth/me"),
@@ -200,10 +201,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ token })
     }),
-  completeAccountSetup: (token: string, password: string, passwordConfirmation: string) =>
+  completeAccountSetup: (token: string, password: string, passwordConfirmation: string, turnstileToken?: string) =>
     request<SessionUser>("/api/auth/account/setup", {
       method: "POST",
-      body: JSON.stringify({ token, password, passwordConfirmation })
+      body: JSON.stringify({ token, password, passwordConfirmation, turnstileToken })
     }),
   users: () => request<ManagedUser[]>("/api/users"),
   createUser: (username: string, projectAccess: UserProjectAccess[]) =>
@@ -359,6 +360,11 @@ export const api = {
   stopContainer: (id: string) => request<{ ok: true }>(`/api/containers/${id}/stop`, { method: "POST" }),
   startContainer: (id: string) => request<{ ok: true }>(`/api/containers/${id}/start`, { method: "POST" }),
   restartContainer: (id: string) => request<{ ok: true }>(`/api/containers/${id}/restart`, { method: "POST" }),
+  execContainer: (id: string, command: string) =>
+    request<{ ok: true; output: string; exitCode: number; truncated?: boolean; timedOut?: boolean }>(`/api/containers/${id}/exec`, {
+      method: "POST",
+      body: JSON.stringify({ command })
+    }),
   systemUsage: () => request<SystemUsage>("/api/system/usage"),
   systemLogs: () => request<string>("/api/system/logs"),
   cleanupPreview: () => request<{ logs: string }>("/api/system/cleanup/preview"),

@@ -36,6 +36,8 @@ export const config = {
   port: integerEnv("PORT", 8_080, 1, 65_535),
   databaseUrl: process.env.DATABASE_URL ?? "postgres://yanto:yanto@localhost:5432/yanto",
   jwtSecret: process.env.JWT_SECRET ?? requiredSecretFallback,
+  turnstileSiteKey: process.env.TURNSTILE_SITE_KEY?.trim() ?? "",
+  turnstileSecretKey: process.env.TURNSTILE_SECRET_KEY ?? "",
   mcpTokenSecret: configuredSecret(process.env.MCP_TOKEN_SECRET, process.env.WORKER_TOKEN_SECRET, process.env.JWT_SECRET),
   mcpAllowedHosts: process.env.MCP_ALLOWED_HOSTS ?? "",
   mcpAllowedOrigins: process.env.MCP_ALLOWED_ORIGINS ?? "",
@@ -102,6 +104,9 @@ export function warnOnUnsafeDefaults() {
   }
   if (config.nodeRole === "master" && config.mcpTokenSecret === requiredSecretFallback) {
     console.warn("MCP_TOKEN_SECRET/WORKER_TOKEN_SECRET/JWT_SECRET is using the default value. Set a stable strong secret before creating MCP tokens.");
+  }
+  if (config.nodeRole === "master" && Boolean(config.turnstileSiteKey) !== Boolean(config.turnstileSecretKey)) {
+    console.warn("Turnstile is disabled because TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY must both be set.");
   }
   if (config.appBaseUrl.startsWith("https://") && !config.cookieSecure) {
     console.warn("COOKIE_SECURE is disabled even though APP_BASE_URL uses HTTPS. Session cookies may cross the network without the Secure attribute.");

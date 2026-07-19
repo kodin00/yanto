@@ -48,10 +48,11 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
+      scriptSrc: ["'self'", "https://challenges.cloudflare.com"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:"],
-      connectSrc: ["'self'"]
+      connectSrc: ["'self'"],
+      frameSrc: ["https://challenges.cloudflare.com"]
     }
   }
 }));

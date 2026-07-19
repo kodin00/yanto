@@ -11,6 +11,8 @@ services:
       PORT: 8080
       DATABASE_URL: postgres://yanto:${POSTGRES_PASSWORD:-yanto}@postgres:5432/yanto
       JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-secret}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
       MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-localhost:8080,127.0.0.1:8080}
       MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
       YANTO_SETUP_CODE: ${YANTO_SETUP_CODE:-}

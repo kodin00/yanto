@@ -1,4 +1,4 @@
-import { Archive, DatabaseZap, Download, Inbox, Play, RotateCw, ScrollText, Square, Trash2, Upload } from "lucide-react";
+import { Archive, DatabaseZap, Download, Inbox, Play, RotateCw, ScrollText, Square, Terminal, Trash2, Upload } from "lucide-react";
 import type { ContainerInfo, Deployment } from "../shared/types";
 import { bytes, dateTime, deploymentChanges, durationBetween, durationSince, isProtectedYantoContainer, usedMemoryMb } from "./app-utils";
 import { Button, IconButton, LoadingInline, StatusBadge } from "./components/ui";
@@ -259,6 +259,7 @@ export function ContainerGroups({
   containers,
   loading,
   onLogs,
+  onTerminal,
   onConfirm,
   onReload,
   canControl = () => true
@@ -266,6 +267,7 @@ export function ContainerGroups({
   containers: ContainerInfo[];
   loading?: boolean;
   onLogs: (container: ContainerInfo) => void;
+  onTerminal: (container: ContainerInfo) => void;
   onConfirm: (confirm: LoadingConfirmState) => void;
   onReload: () => Promise<void>;
   canControl?: (container: ContainerInfo) => boolean;
@@ -328,6 +330,11 @@ export function ContainerGroups({
                         <IconButton label="View logs" variant="secondary" onClick={() => void onLogs(container)}>
                           <ScrollText size={15} />
                         </IconButton>
+                        {runtimeAllowed && running ? (
+                          <IconButton label="Run command" variant="secondary" onClick={() => onTerminal(container)}>
+                            <Terminal size={15} />
+                          </IconButton>
+                        ) : null}
                         {runtimeAllowed ? <IconButton
                           label="Restart container"
                           variant="secondary"

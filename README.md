@@ -114,6 +114,7 @@ Important environment variables:
 
 - `DATABASE_URL`
 - `JWT_SECRET`
+- `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`, optional; when both are set, Turnstile protects sign-in, initial owner setup, and password-setup links
 - `MCP_TOKEN_SECRET`, optional; defaults to `WORKER_TOKEN_SECRET`/`JWT_SECRET`; set a stable long random value before creating MCP tokens
 - `MCP_ALLOWED_HOSTS`, comma-separated hosts allowed to call `/mcp`
 - `MCP_ALLOWED_ORIGINS`, comma-separated browser origins allowed to call `/mcp`

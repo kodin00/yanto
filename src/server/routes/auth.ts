@@ -1,6 +1,7 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
+import { config } from "../config.js";
 import { clearSessionCookie, requireAuth, setSessionCookie } from "../auth.js";
 import { HttpError, asyncRoute, actor } from "../http-utils.js";
 import {
@@ -12,6 +13,7 @@ import {
   toSessionUser
 } from "../services/accounts.js";
 import { recordAuditLog } from "../services/audit.js";
+import { turnstileEnabled, verifyTurnstileToken } from "../services/turnstile.js";
 
 const router = Router();
 
@@ -34,6 +36,7 @@ const accountSetupLimiter = rateLimit({
 });
 
 const password = z.string().min(1, "Password cannot be empty.");
+const turnstileToken = z.string().min(1).max(2_048).optional();
 
 function assertPasswordsMatch(passwordValue: string, confirmation: string) {
   if (passwordValue !== confirmation) throw new HttpError(400, "Passwords do not match.");
@@ -43,14 +46,20 @@ router.get("/api/setup/status", asyncRoute(async (_req, res) => {
   res.json(await setupStatus());
 }));
 
+router.get("/api/auth/turnstile", (_req, res) => {
+  res.json({ enabled: turnstileEnabled(), siteKey: turnstileEnabled() ? config.turnstileSiteKey : "" });
+});
+
 router.post("/api/setup/owner", accountSetupLimiter, asyncRoute(async (req, res) => {
   const body = z.object({
     username: z.string().trim().min(1).max(200),
     password,
     passwordConfirmation: password,
-    setupCode: z.string().min(1).max(1_000)
+    setupCode: z.string().min(1).max(1_000),
+    turnstileToken
   }).parse(req.body);
   assertPasswordsMatch(body.password, body.passwordConfirmation);
+  await verifyTurnstileToken(req, body.turnstileToken, "owner_setup");
   const principal = await createInitialOwner(body);
   setSessionCookie(res, principal);
   await recordAuditLog({ actor: principal.username, action: "auth.setup.owner", entityType: "user", entityId: principal.id });
@@ -63,8 +72,10 @@ router.post(
   asyncRoute(async (req, res) => {
     const body = z.object({
       username: z.string().max(200),
-      password
+      password,
+      turnstileToken
     }).parse(req.body);
+    await verifyTurnstileToken(req, body.turnstileToken, "login");
     const principal = await authenticateUser(body.username, body.password);
     if (!principal) {
       await recordAuditLog({ actor: body.username || "unknown", action: "auth.login.failed", entityType: "auth", metadata: { username: body.username } });
@@ -83,8 +94,9 @@ router.post("/api/auth/account/setup/preview", accountSetupLimiter, asyncRoute(a
 }));
 
 router.post("/api/auth/account/setup", accountSetupLimiter, asyncRoute(async (req, res) => {
-  const body = z.object({ token: z.string().min(1).max(2_000), password, passwordConfirmation: password }).parse(req.body);
+  const body = z.object({ token: z.string().min(1).max(2_000), password, passwordConfirmation: password, turnstileToken }).parse(req.body);
   assertPasswordsMatch(body.password, body.passwordConfirmation);
+  await verifyTurnstileToken(req, body.turnstileToken, "account_setup");
   const principal = await completeAccountSetup(body.token, body.password);
   setSessionCookie(res, principal);
   await recordAuditLog({ actor: principal.username, action: "auth.account_setup.complete", entityType: "user", entityId: principal.id });

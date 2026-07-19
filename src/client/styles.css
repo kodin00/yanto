@@ -459,6 +459,22 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.turnstile-widget {
+  display: grid;
+  gap: 6px;
+  min-height: 65px;
+}
+
+.turnstile-widget > div {
+  min-height: 65px;
+}
+
+.turnstile-widget p {
+  margin: 0;
+  color: var(--red-dark);
+  font-size: 10px;
+}
+
 .account-link-error .button {
   justify-content: center;
   text-decoration: none;
@@ -2906,6 +2922,41 @@ th {
   gap: 10px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.terminal-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.terminal-prompt {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.terminal-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  color: var(--terminal-ink);
+  background: var(--terminal-bg);
+  border: 1px solid var(--terminal-border);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.terminal-input:focus {
+  outline: none;
+  border-color: var(--green);
+}
+
+.terminal-input:disabled {
+  opacity: 0.6;
 }
 
 .toast {

@@ -165,8 +165,19 @@ async function assertContainerCanBeControlled(containerId: string) {
   }
   const name = result.output.trim().replace(/^\//, "");
   if (/^yanto-(app|postgres)-\d+$/.test(name)) {
-    throw new Error("Yanto app containers are protected from stop and restart actions.");
+    throw new Error("Yanto app containers are protected from stop, restart, and exec actions.");
   }
+}
+
+export async function execInContainer(containerId: string, command: string) {
+  await assertContainerCanBeControlled(containerId);
+  const result = await runCommand("docker", ["exec", containerId, "sh", "-lc", command]);
+  return {
+    output: result.output,
+    exitCode: result.exitCode,
+    truncated: result.truncated,
+    timedOut: result.timedOut
+  };
 }
 
 export async function stopContainer(containerId: string) {

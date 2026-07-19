@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { spawn } from "node:child_process";
+import { z } from "zod";
 import { requireAuth } from "../auth.js";
 import { listAccessibleContainers, projectForContainer, startStreamAuthorizationGuard } from "../authorization.js";
 import { asyncRoute, actor, routeParam, sendStreamEvent, startEventStream } from "../http-utils.js";
 import { recordAuditLog } from "../services/audit.js";
-import { containerLogs, restartContainer, startContainer, stopContainer, validateContainerId } from "../services/docker.js";
+import { containerLogs, execInContainer, restartContainer, startContainer, stopContainer, validateContainerId } from "../services/docker.js";
 
 const router = Router();
 
@@ -122,6 +123,26 @@ router.post(
     await startContainer(id);
     await recordAuditLog({ actor: actor(req), action: "container.start", entityType: "container", entityId: id, projectId: project?.id });
     res.json({ ok: true });
+  })
+);
+
+router.post(
+  "/api/containers/:id/exec",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const id = routeParam(req, "id");
+    const body = z.object({ command: z.string().trim().min(1).max(10_000) }).parse(req.body ?? {});
+    const project = await projectForContainer(req, id, "runtime");
+    const result = await execInContainer(id, body.command);
+    await recordAuditLog({
+      actor: actor(req),
+      action: "container.exec",
+      entityType: "container",
+      entityId: id,
+      projectId: project?.id,
+      metadata: { command: body.command, exitCode: result.exitCode }
+    });
+    res.json({ ok: true, ...result });
   })
 );
 

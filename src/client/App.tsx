@@ -53,6 +53,7 @@ import {
   totalPages
 } from "./app-utils";
 import { Button, ConfirmDialog, CustomSelect, IconButton, LoadingInline, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast, ToggleField } from "./components/ui";
+import { ContainerTerminal } from "./components/ContainerTerminal";
 import { EnvEditor, type ProjectEnvState } from "./components/EnvEditor";
 import { YantoBootLoader } from "./components/YantoBootLoader";
 import { api, setApiUnauthorizedHandler, type AuditLogEntry, type BackupRecord, type CloudflareDnsRecordPayload, type CloudflareRoutePayload, type PostgresTarget } from "./lib/api";
@@ -71,6 +72,12 @@ type ConfirmState = { title: string; body: string; label: string; danger?: boole
 type CreatedProjectSecret = { projectName: string; deployUrl: string; webhookUrl: string; deployToken: string };
 type ThemeMode = "light" | "dark";
 type SetupStep = "intro" | "ssh" | "cloudflare" | "r2";
+type TurnstileConfig = { enabled: boolean; siteKey: string };
+type TurnstileApi = {
+  render: (container: HTMLElement, options: Record<string, unknown>) => string;
+  reset: (widgetId: string) => void;
+  remove: (widgetId: string) => void;
+};
 
 const themeStorageKey = "yanto-theme";
 const appVersion = packageJson.version;
@@ -168,6 +175,73 @@ function getAccountToken(): string {
   return params.get("token") ?? "";
 }
 
+let turnstileScript: Promise<TurnstileApi> | null = null;
+
+function loadTurnstile() {
+  if (turnstileScript) return turnstileScript;
+  turnstileScript = new Promise<TurnstileApi>((resolve, reject) => {
+    const ready = () => {
+      const api = (window as typeof window & { turnstile?: TurnstileApi }).turnstile;
+      if (api) resolve(api);
+      else reject(new Error("Turnstile did not load."));
+    };
+    const existing = document.querySelector<HTMLScriptElement>('script[data-yanto-turnstile]');
+    if (existing) {
+      existing.addEventListener("load", ready, { once: true });
+      existing.addEventListener("error", () => reject(new Error("Turnstile failed to load.")), { once: true });
+      if ((window as typeof window & { turnstile?: TurnstileApi }).turnstile) ready();
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+    script.async = true;
+    script.defer = true;
+    script.dataset.yantoTurnstile = "true";
+    script.addEventListener("load", ready, { once: true });
+    script.addEventListener("error", () => reject(new Error("Turnstile failed to load.")), { once: true });
+    document.head.append(script);
+  });
+  return turnstileScript;
+}
+
+function TurnstileWidget({ config, action, onToken, resetKey }: { config: TurnstileConfig; action: string; onToken: (token: string) => void; resetKey: number }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const widgetRef = useRef<{ api: TurnstileApi; id: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    onToken("");
+    void loadTurnstile().then((api) => {
+      if (cancelled || !containerRef.current) return;
+      const id = api.render(containerRef.current, {
+        sitekey: config.siteKey,
+        action,
+        theme: "auto",
+        callback: (token: string) => { setError(null); onToken(token); },
+        "expired-callback": () => { onToken(""); setError("Security check expired. Please complete it again."); },
+        "error-callback": () => { onToken(""); setError("Security check could not be completed. Please try again."); return true; }
+      });
+      widgetRef.current = { api, id };
+    }).catch(() => {
+      if (!cancelled) setError("Security check could not load. Please refresh and try again.");
+    });
+    return () => {
+      cancelled = true;
+      const widget = widgetRef.current;
+      if (widget) widget.api.remove(widget.id);
+      widgetRef.current = null;
+    };
+  }, [action, config.siteKey, onToken]);
+
+  useEffect(() => {
+    const widget = widgetRef.current;
+    if (widget && resetKey > 0) widget.api.reset(widget.id);
+  }, [resetKey]);
+
+  return <div className="turnstile-widget"><div ref={containerRef} />{error ? <p role="alert">{error}</p> : null}</div>;
+}
+
 function parseCfServiceTarget(serviceTarget: string): Pick<CfRouteForm, "protocol" | "localTarget"> {
   const match = serviceTarget.trim().match(/^(https?):\/\/(.+)$/);
   if (!match) return { protocol: "http", localTarget: serviceTarget.trim() };
@@ -246,6 +320,9 @@ export function App() {
   const [accountToken] = useState(getAccountToken);
   const [ownerSetup, setOwnerSetup] = useState({ username: "", password: "", passwordConfirmation: "", setupCode: "" });
   const [accountPassword, setAccountPassword] = useState({ password: "", passwordConfirmation: "" });
+  const [turnstile, setTurnstile] = useState<TurnstileConfig>({ enabled: false, siteKey: "" });
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0);
   const [accountSetupIdentity, setAccountSetupIdentity] = useState<{ username: string } | null>(null);
   const [accountLinkError, setAccountLinkError] = useState<string | null>(null);
   const [view, setView] = useState<View>("dashboard");
@@ -296,6 +373,7 @@ export function App() {
   const [cfRouteForm, setCfRouteForm] = useState<CfRouteForm>(buildCfRouteForm());
   const [rollbackModal, setRollbackModal] = useState<RollbackModalState | null>(null);
   const [logModal, setLogModal] = useState<LogModalState | null>(null);
+  const [terminalContainer, setTerminalContainer] = useState<ContainerInfo | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [createdProjectSecret, setCreatedProjectSecret] = useState<CreatedProjectSecret | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -562,10 +640,11 @@ export function App() {
 
   useEffect(() => {
     let active = true;
-    void api.setupStatus()
-      .then(async (status) => {
+    void Promise.all([api.setupStatus(), api.turnstileConfig().catch(() => ({ enabled: false, siteKey: "" }))])
+      .then(async ([status, turnstileConfig]) => {
         if (!active) return;
         setNeedsSetup(status.needsSetup);
+        setTurnstile(turnstileConfig);
         if (accountToken) {
           const identity = await api.accountSetupDetails(accountToken);
           if (active) setAccountSetupIdentity(identity);
@@ -776,10 +855,12 @@ export function App() {
     setBusy("login");
     setToast({ message: "Signing in...", kind: "loading" });
     try {
-      const result = await api.login(login.username, login.password);
+      const result = await api.login(login.username, login.password, turnstileToken);
       setUser(result);
       setToast({ message: "Signed in." });
     } catch (error) {
+      setTurnstileToken("");
+      setTurnstileResetKey((current) => current + 1);
       setToast({ message: error instanceof Error ? error.message : "Unable to sign in.", kind: "error" });
     } finally {
       setBusy(null);
@@ -795,11 +876,13 @@ export function App() {
     setBusy("owner-setup");
     setToast({ message: "Creating owner account...", kind: "loading" });
     try {
-      const result = await api.createOwner(ownerSetup.username, ownerSetup.password, ownerSetup.passwordConfirmation, ownerSetup.setupCode);
+      const result = await api.createOwner(ownerSetup.username, ownerSetup.password, ownerSetup.passwordConfirmation, ownerSetup.setupCode, turnstileToken);
       setNeedsSetup(false);
       setUser(result);
       setToast({ message: "Owner account created." });
     } catch (error) {
+      setTurnstileToken("");
+      setTurnstileResetKey((current) => current + 1);
       setToast({ message: error instanceof Error ? error.message : "Unable to create the owner account.", kind: "error" });
     } finally {
       setBusy(null);
@@ -815,10 +898,12 @@ export function App() {
     setBusy("account-setup");
     setToast({ message: "Saving password...", kind: "loading" });
     try {
-      const result = await api.completeAccountSetup(accountToken, accountPassword.password, accountPassword.passwordConfirmation);
+      const result = await api.completeAccountSetup(accountToken, accountPassword.password, accountPassword.passwordConfirmation, turnstileToken);
       setUser(result);
       setToast({ message: "Password saved. Signed in." });
     } catch (error) {
+      setTurnstileToken("");
+      setTurnstileResetKey((current) => current + 1);
       setToast({ message: error instanceof Error ? error.message : "Unable to set the account password.", kind: "error" });
     } finally {
       setBusy(null);
@@ -1045,6 +1130,10 @@ export function App() {
       live: true,
       status: container.state
     });
+  }
+
+  function openContainerTerminal(container: ContainerInfo) {
+    setTerminalContainer(container);
   }
 
   function openProject(project?: Project) {
@@ -1676,7 +1765,8 @@ export function App() {
           <div className="account-setup-identity"><span>Username</span><strong>{accountSetupIdentity?.username}</strong></div>
           <TextField label="New password" type="password" value={accountPassword.password} onChange={(password) => setAccountPassword((current) => ({ ...current, password }))} autoComplete="new-password" required />
           <TextField label="Confirm password" type="password" value={accountPassword.passwordConfirmation} onChange={(passwordConfirmation) => setAccountPassword((current) => ({ ...current, passwordConfirmation }))} autoComplete="new-password" required />
-          <Button type="submit" disabled={busy === "account-setup" || !accountSetupIdentity || !accountPassword.password || !accountPassword.passwordConfirmation} icon={busy === "account-setup" ? <RefreshCw size={16} className="spin" /> : <KeyRound size={16} />}>
+          {turnstile.enabled ? <TurnstileWidget config={turnstile} action="account_setup" onToken={setTurnstileToken} resetKey={turnstileResetKey} /> : null}
+          <Button type="submit" disabled={busy === "account-setup" || !accountSetupIdentity || !accountPassword.password || !accountPassword.passwordConfirmation || (turnstile.enabled && !turnstileToken)} icon={busy === "account-setup" ? <RefreshCw size={16} className="spin" /> : <KeyRound size={16} />}>
             Save password
           </Button>
         </form>
@@ -1695,7 +1785,8 @@ export function App() {
           <TextField label="Password" type="password" value={ownerSetup.password} onChange={(password) => setOwnerSetup((current) => ({ ...current, password }))} autoComplete="new-password" required />
           <TextField label="Confirm password" type="password" value={ownerSetup.passwordConfirmation} onChange={(passwordConfirmation) => setOwnerSetup((current) => ({ ...current, passwordConfirmation }))} autoComplete="new-password" required />
           <TextField label="Setup code" type="password" value={ownerSetup.setupCode} onChange={(setupCode) => setOwnerSetup((current) => ({ ...current, setupCode }))} autoComplete="off" required />
-          <Button type="submit" disabled={busy === "owner-setup" || !ownerSetup.username.trim() || !ownerSetup.password || !ownerSetup.passwordConfirmation || !ownerSetup.setupCode.trim()} icon={busy === "owner-setup" ? <RefreshCw size={16} className="spin" /> : <ShieldCheck size={16} />}>
+          {turnstile.enabled ? <TurnstileWidget config={turnstile} action="owner_setup" onToken={setTurnstileToken} resetKey={turnstileResetKey} /> : null}
+          <Button type="submit" disabled={busy === "owner-setup" || !ownerSetup.username.trim() || !ownerSetup.password || !ownerSetup.passwordConfirmation || !ownerSetup.setupCode.trim() || (turnstile.enabled && !turnstileToken)} icon={busy === "owner-setup" ? <RefreshCw size={16} className="spin" /> : <ShieldCheck size={16} />}>
             Create owner
           </Button>
         </form>
@@ -1712,7 +1803,8 @@ export function App() {
           <p>Sign in to manage projects, containers, deployments, and host cleanup.</p>
           <TextField label="Username" value={login.username} onChange={(username) => setLogin((current) => ({ ...current, username }))} required />
           <TextField label="Password" type="password" value={login.password} onChange={(password) => setLogin((current) => ({ ...current, password }))} required />
-          <Button type="submit" disabled={busy === "login"} icon={busy === "login" ? <RefreshCw size={16} className="spin" /> : <KeyRound size={16} />}>
+          {turnstile.enabled ? <TurnstileWidget config={turnstile} action="login" onToken={setTurnstileToken} resetKey={turnstileResetKey} /> : null}
+          <Button type="submit" disabled={busy === "login" || (turnstile.enabled && !turnstileToken)} icon={busy === "login" ? <RefreshCw size={16} className="spin" /> : <KeyRound size={16} />}>
             Sign in
           </Button>
         </form>
@@ -1951,6 +2043,7 @@ export function App() {
             containers={containers}
             loading={viewLoading.containers}
             openContainerLogs={openContainerLogs}
+            openContainerTerminal={openContainerTerminal}
             setConfirm={setConfirm}
             refreshContainers={refreshContainers}
             canControl={canControlContainer}
@@ -2498,6 +2591,10 @@ export function App() {
           ) : null}
           <LogViewer logs={logModal.logs} />
         </Modal>
+      ) : null}
+
+      {terminalContainer ? (
+        <ContainerTerminal container={terminalContainer} onClose={() => setTerminalContainer(null)} />
       ) : null}
 
       {createdProjectSecret ? (
