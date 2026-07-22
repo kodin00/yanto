@@ -2,7 +2,9 @@ import { z } from "zod";
 
 export const projectInput = z.object({
   name: z.string().min(1),
+  source: z.string().max(500).optional(),
   gitUrl: z.string().optional(),
+  dockerImage: z.string().max(500).optional(),
   branch: z.string().optional().default("master"),
   folderName: z.string().optional().default(""),
   composeFile: z.string().min(1).optional(),

@@ -2,14 +2,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { DeploymentRow, ProjectRow } from "../db/schema.js";
 import { runCommand } from "./commands.js";
-import { assertComposePortsAvailable, autoStartOverrideFile, buildAutoStartOverride } from "./compose.js";
+import { assertComposePortsAvailable, autoStartOverrideFile, buildAutoStartOverride, buildDockerImageCompose } from "./compose.js";
 import { pathExists } from "./paths.js";
 import { writeProjectEnv, writeProjectEnvVariables } from "./project-env.js";
 import { gitSshEnv, resolveGitPrivateKeyPath } from "./ssh.js";
 
 export type DeploymentProject = Pick<
   ProjectRow,
-  "id" | "name" | "localPath" | "gitUrl" | "branch" | "composeFile" | "composeContent" | "envFile" | "autoStart" | "folderName"
+  "id" | "name" | "localPath" | "gitUrl" | "dockerImage" | "branch" | "composeFile" | "composeContent" | "envFile" | "autoStart" | "folderName"
 >;
 
 export type DeploymentMetadata = {
@@ -220,11 +220,20 @@ export async function runProjectDeployment(project: DeploymentProject, deploymen
 
   const composeFile = await detectComposeFile(project);
   callbacks.signal?.throwIfAborted();
+  if (project.dockerImage) {
+    await callbacks.appendLog(`Pulling Docker image ${project.dockerImage}.\n`);
+    await runLogged(callbacks, "docker", ["pull", project.dockerImage], project.localPath);
+  }
   if (project.composeContent?.trim()) {
     const composePath = path.join(project.localPath, composeFile);
     await fs.mkdir(path.dirname(composePath), { recursive: true });
     await fs.writeFile(composePath, project.composeContent, "utf8");
     await callbacks.appendLog(`Wrote compose file ${composeFile} from saved editor content.\n`);
+  } else if (project.dockerImage) {
+    const composePath = path.join(project.localPath, composeFile);
+    await fs.mkdir(path.dirname(composePath), { recursive: true });
+    await fs.writeFile(composePath, buildDockerImageCompose(project.dockerImage), "utf8");
+    await callbacks.appendLog(`Wrote compose file ${composeFile} for the Docker image.\n`);
   }
   try {
     await fs.access(path.join(project.localPath, composeFile));

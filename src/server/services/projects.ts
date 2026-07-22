@@ -12,6 +12,7 @@ import { assertComposePortsAvailable } from "./compose.js";
 import { HttpError } from "../http-utils.js";
 import { cleanupTaskWorktree, pruneTaskWorktrees } from "./agent-worktrees.js";
 import { agentProjectLifecycleKey, withAgentLifecycleLock } from "./agent-lifecycle.js";
+import { dockerImageFromInput } from "../../shared/docker-images.js";
 
 export function publicProject<T extends { deployToken: string; sshPrivateKeyPath?: string | null }>(project: T): Omit<T, "deployToken" | "sshPrivateKeyPath"> {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructured to exclude from output
@@ -21,7 +22,9 @@ export function publicProject<T extends { deployToken: string; sshPrivateKeyPath
 
 export type CreateProjectInput = {
   name: string;
+  source?: string;
   gitUrl?: string;
+  dockerImage?: string;
   branch?: string;
   folderName: string;
   composeFile?: string;
@@ -33,6 +36,25 @@ export type CreateProjectInput = {
   targetNodeId?: string;
   agentImage?: string;
 };
+
+function projectSource(input: Pick<CreateProjectInput, "source" | "gitUrl" | "dockerImage">) {
+  if (input.source !== undefined) {
+    const source = input.source.trim();
+    if (!source) return { gitUrl: null, dockerImage: "" };
+    const image = dockerImageFromInput(source);
+    if (image) return { gitUrl: null, dockerImage: image };
+    if (/^docker\b/i.test(source)) throw new HttpError(400, "Use a Docker pull command such as: docker pull ghcr.io/owner/image:tag");
+    return { gitUrl: source, dockerImage: "" };
+  }
+
+  if (input.dockerImage !== undefined) {
+    const image = dockerImageFromInput(input.dockerImage);
+    if (image === null) throw new HttpError(400, "Invalid Docker image reference.");
+    return { gitUrl: image ? null : input.gitUrl?.trim() || null, dockerImage: image };
+  }
+
+  return { gitUrl: input.gitUrl?.trim() || null, dockerImage: "" };
+}
 
 export async function listProjects() {
   return db.select().from(projects).orderBy(desc(projects.createdAt));
@@ -70,7 +92,7 @@ export async function createProject(input: CreateProjectInput) {
   const [folderConflict] = await db.select({ id: projects.id }).from(projects).where(eq(projects.folderName, folderName)).limit(1);
   if (folderConflict) throw new HttpError(409, "That project folder is already in use.");
   const localPath = projectPath(folderName);
-  const gitUrl = input.gitUrl?.trim() || null;
+  const { gitUrl, dockerImage } = projectSource(input);
   const composeFile = normalizeComposeFile(input.composeFile ?? "docker-compose.yml");
   const composeContent = input.composeContent?.trim() || null;
 
@@ -89,6 +111,7 @@ export async function createProject(input: CreateProjectInput) {
       id,
       name: input.name.trim(),
       gitUrl,
+      dockerImage,
       branch: input.branch?.trim() || "master",
       folderName,
       localPath,
@@ -97,7 +120,7 @@ export async function createProject(input: CreateProjectInput) {
       envFile: normalizeEnvFile(input.envFile ?? ".env"),
       autoStart: input.autoStart ?? false,
       manualDeployEnabled: input.manualDeployEnabled ?? true,
-      githubWebhookEnabled: input.githubWebhookEnabled ?? true,
+      githubWebhookEnabled: input.githubWebhookEnabled ?? !dockerImage,
       targetNodeId: targetNode.id,
       deployToken: createDeployToken(),
       sshPrivateKeyPath: null,
@@ -121,9 +144,10 @@ export async function updateProject(id: string, input: Partial<CreateProjectInpu
     updatedAt: new Date()
   };
   if (input.name !== undefined) patch.name = input.name.trim();
-  if (input.gitUrl !== undefined) {
-    const gitUrl = input.gitUrl.trim() || null;
-    patch.gitUrl = gitUrl;
+  if (input.source !== undefined || input.gitUrl !== undefined || input.dockerImage !== undefined) {
+    const source = projectSource(input);
+    patch.gitUrl = source.gitUrl;
+    patch.dockerImage = source.dockerImage;
   }
   if (input.branch !== undefined) patch.branch = input.branch.trim() || "master";
   if (input.composeFile !== undefined) patch.composeFile = normalizeComposeFile(input.composeFile);

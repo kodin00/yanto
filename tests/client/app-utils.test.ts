@@ -15,6 +15,7 @@ import {
   normalizeEnvRows,
   pageItems,
   pageSize,
+  projectNameFromSource,
   slugifyFolderName,
   totalPages,
   usedMemoryMb
@@ -165,6 +166,20 @@ describe("githubRepoNameFromUrl", () => {
     expect(githubRepoNameFromUrl("")).toBe("");
     expect(githubRepoNameFromUrl("https://gitlab.com/kodin00/envchecker.git")).toBe("");
     expect(githubRepoNameFromUrl("not a url")).toBe("");
+  });
+});
+
+describe("projectNameFromSource", () => {
+  it("extracts a project name from a Docker pull command", () => {
+    expect(projectNameFromSource("docker pull ghcr.io/hedypamungkas/koboi-agent:0.18.7")).toBe("koboi-agent");
+  });
+
+  it("accepts a bare Docker image reference", () => {
+    expect(projectNameFromSource("ghcr.io/hedypamungkas/koboi-agent:0.18.7")).toBe("koboi-agent");
+  });
+
+  it("rejects commands with extra shell input", () => {
+    expect(projectNameFromSource("docker pull nginx:latest && touch /tmp/untrusted")).toBe("");
   });
 });
 

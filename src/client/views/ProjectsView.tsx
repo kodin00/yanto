@@ -115,7 +115,7 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
               <div className="project-card-main">
                 <div className="project-card-title">
                   <h3>{project.name}</h3>
-                  <p>{project.gitUrl || "Compose file project"}</p>
+                  <p>{project.dockerImage ? `docker pull ${project.dockerImage}` : project.gitUrl || "Compose file project"}</p>
                 </div>
                 <div className="project-card-statuses">
                   <StatusBadge status={deploymentStatus.status} label={deploymentStatus.label} />
@@ -152,13 +152,13 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
                   <Button variant="ghost" onClick={() => void copyText(endpoint(project, settings.appBaseUrl))} icon={<Copy size={14} />}>
                     Deploy URL
                   </Button>
-                  <Button variant="ghost" onClick={() => void copyText(githubWebhookEndpoint(project, settings.appBaseUrl))} icon={<Copy size={14} />}>
+                  {project.githubWebhookEnabled ? <Button variant="ghost" onClick={() => void copyText(githubWebhookEndpoint(project, settings.appBaseUrl))} icon={<Copy size={14} />}>
                     Webhook
-                  </Button>
+                  </Button> : null}
                   {canUseSecrets ? <Button variant="ghost" loading={busy === `token:${project.id}`} onClick={() => void copyDeployToken(project)} icon={<KeyRound size={14} />}>Secret</Button> : null}
                 </div>
                 <div className="actions" onClick={(event) => event.stopPropagation()}>
-                  {canDeploy ? <Button variant="secondary" onClick={() => openRollback(project)} icon={<Undo2 size={15} />}>Rollback</Button> : null}
+                  {canDeploy && project.gitUrl ? <Button variant="secondary" onClick={() => openRollback(project)} icon={<Undo2 size={15} />}>Rollback</Button> : null}
                   {canDeploy ? <Button disabled={!project.manualDeployEnabled} loading={busy === `deploy:${project.id}`} onClick={() => void deploy(project)} icon={<Play size={15} />}>{busy === `deploy:${project.id}` ? "Deploying" : "Deploy"}</Button> : null}
                   {canUseRuntime ? <Button
                     variant="secondary"

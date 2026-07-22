@@ -1,5 +1,6 @@
 import type { CloudflareTunnelAssignment, ContainerInfo, Deployment, Project } from "../shared/types";
 import type { ProjectEnvVariable } from "./lib/api";
+import { dockerImageFromInput, dockerImageName } from "../shared/docker-images";
 
 export const pageSize = 10;
 
@@ -82,6 +83,11 @@ export function githubRepoNameFromUrl(input: string) {
   } catch {
     return "";
   }
+}
+
+export function projectNameFromSource(input: string) {
+  const image = dockerImageFromInput(input);
+  return image ? dockerImageName(image) : githubRepoNameFromUrl(input);
 }
 
 export function slugifyFolderName(input: string) {

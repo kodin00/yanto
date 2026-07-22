@@ -230,7 +230,9 @@ export const api = {
   workerJoinToken: () => request<{ token: string; command: string }>("/api/nodes/join-token", { method: "POST" }),
   createProject: (
     payload: Pick<Project, "name" | "branch" | "folderName" | "composeFile" | "autoStart" | "manualDeployEnabled" | "githubWebhookEnabled" | "targetNodeId" | "agentImage"> & {
+      source?: string;
       gitUrl?: string | null;
+      dockerImage?: string;
       composeContent?: string | null;
     }
   ) =>
@@ -242,7 +244,9 @@ export const api = {
     id: string,
     payload: Partial<
       Pick<Project, "name" | "branch" | "folderName" | "composeFile" | "autoStart" | "manualDeployEnabled" | "githubWebhookEnabled" | "targetNodeId" | "agentImage"> & {
+        source?: string;
         gitUrl?: string | null;
+        dockerImage?: string;
         composeContent?: string | null;
       }
     >

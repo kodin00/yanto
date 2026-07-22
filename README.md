@@ -102,11 +102,13 @@ curl -X POST "$APP_BASE_URL/deploy?id=<project-id>" \
 
 The webhook and manual deploy button both run the same flow:
 
-1. Clone the repo into `/projects/<folder>` if the folder does not exist.
-2. Leave an existing folder untouched.
-3. Fetch, checkout, and fast-forward pull the configured branch when the folder is a Git repo.
-4. Run `docker compose -f <compose-file> up -d --build`.
-5. Store status and build logs.
+1. Accept either a Git URL or a Docker image source such as `docker pull ghcr.io/owner/image:tag` during project registration.
+2. For image projects, pull the exact image reference and generate a minimal one-service Compose file. Use the Compose editor to add ports, volumes, or other runtime settings.
+3. Clone Git projects into `/projects/<folder>` if the folder does not exist.
+4. Leave an existing folder untouched.
+5. Fetch, checkout, and fast-forward pull the configured branch when the folder is a Git repo.
+6. Run `docker compose -f <compose-file> up -d --build`.
+7. Store status and build logs.
 
 ## Configuration
 

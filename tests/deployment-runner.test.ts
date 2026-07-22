@@ -26,6 +26,7 @@ function project(overrides: Partial<ProjectRow> = {}): ProjectRow {
     id: "prj_test",
     name: "Test project",
     gitUrl: null,
+    dockerImage: "",
     branch: "master",
     folderName: "test-project",
     localPath: tempDir,
@@ -39,6 +40,7 @@ function project(overrides: Partial<ProjectRow> = {}): ProjectRow {
     deployToken: "token",
     sshPrivateKeyPath: null,
     sshPublicKey: null,
+    agentImage: "",
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides
@@ -109,6 +111,20 @@ describe("project deployment runner", () => {
     await expect(runProjectDeployment(project(), deployment(), { appendLog: vi.fn() })).rejects.toThrow(
       `Compose file docker-compose.yml was not found at ${path.join(tempDir, "docker-compose.yml")}`
     );
+  });
+
+  it("pulls a registered Docker image and generates its compose file", async () => {
+    const image = "ghcr.io/hedypamungkas/koboi-agent:0.18.7";
+    const logs: string[] = [];
+
+    await runProjectDeployment(project({ dockerImage: image }), deployment(), {
+      appendLog: async (chunk) => { logs.push(chunk); }
+    });
+
+    expect(commandMocks.runCommand).toHaveBeenCalledWith("docker", ["pull", image], expect.objectContaining({ cwd: tempDir }));
+    expect(commandMocks.runCommand).toHaveBeenCalledWith("docker", ["compose", "-f", "docker-compose.yml", "up", "-d", "--build", "--remove-orphans"], expect.any(Object));
+    await expect(fs.readFile(path.join(tempDir, "docker-compose.yml"), "utf8")).resolves.toContain(`image: ${image}`);
+    expect(logs.join("")).toContain(`Pulling Docker image ${image}.`);
   });
 
   it("writes pending env after source checkout and before compose", async () => {

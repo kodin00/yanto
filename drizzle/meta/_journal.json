@@ -64,6 +64,13 @@
       "when": 1783671511005,
       "tag": "0008_project_scoped_users",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784710800000,
+      "tag": "0009_docker_image_projects",
+      "breakpoints": true
     }
   ]
 }

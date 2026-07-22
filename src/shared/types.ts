@@ -48,6 +48,7 @@ export type Project = {
   id: string;
   name: string;
   gitUrl: string | null;
+  dockerImage: string;
   branch: string;
   folderName: string;
   localPath: string;

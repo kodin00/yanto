@@ -47,6 +47,7 @@ export async function migrate() {
       id text PRIMARY KEY,
       name text NOT NULL,
       git_url text,
+      docker_image text NOT NULL DEFAULT '',
       branch text NOT NULL,
       folder_name text NOT NULL,
       local_path text NOT NULL,
@@ -66,6 +67,7 @@ export async function migrate() {
   `);
 
   await pool.query(`ALTER TABLE projects ALTER COLUMN git_url DROP NOT NULL;`);
+  await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS docker_image text NOT NULL DEFAULT '';`);
   await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS compose_content text;`);
   await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS env_file text NOT NULL DEFAULT '.env';`);
   await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS auto_start boolean NOT NULL DEFAULT false;`);

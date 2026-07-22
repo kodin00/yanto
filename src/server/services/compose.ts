@@ -49,6 +49,10 @@ export function buildAutoStartOverride(composeContent: string) {
   });
 }
 
+export function buildDockerImageCompose(image: string) {
+  return YAML.stringify({ services: { app: { image } } });
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -227,6 +231,9 @@ export async function readProjectCompose(project: ProjectRow) {
   const composeFile = normalizeComposeFile(project.composeFile);
   const target = path.join(project.localPath, composeFile);
   if (!(await pathExists(target))) {
+    if (project.dockerImage) {
+      return { composeFile, content: buildDockerImageCompose(project.dockerImage), exists: true };
+    }
     return { composeFile, content: "", exists: false };
   }
 

@@ -45,13 +45,14 @@ import type { AppView, CloudflareClient, CloudflareDnsRecord, CloudflarePublicSe
 import {
   cloudflareServiceUrl,
   endpoint,
-  githubRepoNameFromUrl,
   githubWebhookEndpoint,
   normalizeEnvRows,
   pageItems,
+  projectNameFromSource,
   slugifyFolderName,
   totalPages
 } from "./app-utils";
+import { dockerImageFromInput, dockerPullCommand } from "../shared/docker-images";
 import { Button, ConfirmDialog, CustomSelect, IconButton, LoadingInline, LogViewer, Modal, StatusBadge, TextAreaField, TextField, Toast, ToggleField } from "./components/ui";
 import { ContainerTerminal } from "./components/ContainerTerminal";
 import { EnvEditor, type ProjectEnvState } from "./components/EnvEditor";
@@ -69,7 +70,7 @@ type CfRouteForm = { hostname: string; protocol: CfRouteProtocol; localTarget: s
 type ProjectComposeState = { open: boolean; loading: boolean; available: boolean; source: "saved" | "file" | "empty" | null; message: string };
 type RollbackModalState = { project: Project; targetRef: string; preview: RollbackPreview | null; previewError: string | null; previewLoading: boolean };
 type ConfirmState = { title: string; body: string; label: string; danger?: boolean; loadingMessage?: string; successMessage?: string; action: () => Promise<void> };
-type CreatedProjectSecret = { projectName: string; deployUrl: string; webhookUrl: string; deployToken: string };
+type CreatedProjectSecret = { projectName: string; deployUrl: string; webhookUrl: string | null; deployToken: string };
 type ThemeMode = "light" | "dark";
 type SetupStep = "intro" | "ssh" | "cloudflare" | "r2";
 type TurnstileConfig = { enabled: boolean; siteKey: string };
@@ -84,7 +85,7 @@ const appVersion = packageJson.version;
 
 const emptyProject = {
   name: "",
-  gitUrl: "",
+  source: "",
   branch: "master",
   folderName: "",
   composeFile: "docker-compose.yml",
@@ -996,7 +997,7 @@ export function App() {
         setCreatedProjectSecret({
           projectName: savedProject.name,
           deployUrl: endpoint(savedProject, settings.appBaseUrl),
-          webhookUrl: githubWebhookEndpoint(savedProject, settings.appBaseUrl),
+          webhookUrl: savedProject.githubWebhookEnabled ? githubWebhookEndpoint(savedProject, settings.appBaseUrl) : null,
           deployToken: savedProject.deployToken
         });
       }
@@ -1019,7 +1020,7 @@ export function App() {
           setCreatedProjectSecret({
             projectName: savedProject.name,
             deployUrl: endpoint(savedProject, settings.appBaseUrl),
-            webhookUrl: githubWebhookEndpoint(savedProject, settings.appBaseUrl),
+            webhookUrl: savedProject.githubWebhookEnabled ? githubWebhookEndpoint(savedProject, settings.appBaseUrl) : null,
             deployToken: savedProject.deployToken
           });
         }
@@ -1036,15 +1037,17 @@ export function App() {
     }
   }
 
-  function updateProjectGitUrl(gitUrl: string) {
+  function updateProjectSource(source: string) {
     setProjectForm((current) => {
-      const previousRepoName = githubRepoNameFromUrl(current.gitUrl);
-      const nextRepoName = githubRepoNameFromUrl(gitUrl);
+      const nextImage = dockerImageFromInput(source);
+      const previousRepoName = projectNameFromSource(current.source);
+      const nextRepoName = projectNameFromSource(source);
       const shouldAutofillName = Boolean(nextRepoName) && (!current.name.trim() || (Boolean(previousRepoName) && current.name === previousRepoName));
       return {
         ...current,
-        gitUrl,
-        name: shouldAutofillName ? nextRepoName : current.name
+        source,
+        name: shouldAutofillName ? nextRepoName : current.name,
+        githubWebhookEnabled: nextImage ? false : current.githubWebhookEnabled
       };
     });
   }
@@ -1143,7 +1146,7 @@ export function App() {
     if (project) {
       setProjectForm({
         name: project.name,
-        gitUrl: project.gitUrl ?? "",
+        source: project.dockerImage ? dockerPullCommand(project.dockerImage) : project.gitUrl ?? "",
         branch: project.branch,
         folderName: project.folderName,
         composeFile: project.composeFile,
@@ -2280,9 +2283,9 @@ export function App() {
               <section className="project-edit-section">
                 <div className="section-kicker">Project</div>
                 <TextField label="Name" value={projectForm.name} onChange={(name) => setProjectForm((current) => ({ ...current, name }))} required />
-                <TextField label="Git SSH URL" value={projectForm.gitUrl} onChange={updateProjectGitUrl} placeholder="Optional: git@github.com:user/repo.git" />
+                <TextField label="Source" value={projectForm.source} onChange={updateProjectSource} placeholder="Git URL or docker pull ghcr.io/owner/image:tag" />
                 <div className="project-edit-pair">
-                  <TextField label="Branch" value={projectForm.branch} onChange={(branch) => setProjectForm((current) => ({ ...current, branch }))} required />
+                  {!dockerImageFromInput(projectForm.source) ? <TextField label="Branch" value={projectForm.branch} onChange={(branch) => setProjectForm((current) => ({ ...current, branch }))} required /> : null}
                   <TextField label="Compose file" value={projectForm.composeFile} onChange={(composeFile) => setProjectForm((current) => ({ ...current, composeFile }))} placeholder="docker-compose.yml" required />
                 </div>
                 <TextField label="Folder name" value={projectForm.folderName} onChange={(folderName) => setProjectForm((current) => ({ ...current, folderName }))} placeholder={slugifyFolderName(projectForm.name) || "Auto from project name"} disabled={user.role !== "owner"} />
@@ -2301,12 +2304,12 @@ export function App() {
                   onChange={(manualDeployEnabled) => setProjectForm((current) => ({ ...current, manualDeployEnabled }))}
                   description="Allow deployments from the authenticated deploy action and token endpoint."
                 />
-                <ToggleField
+                {!dockerImageFromInput(projectForm.source) ? <ToggleField
                   label="GitHub webhook deployments"
                   value={projectForm.githubWebhookEnabled}
                   onChange={(githubWebhookEnabled) => setProjectForm((current) => ({ ...current, githubWebhookEnabled }))}
                   description="Allow signed GitHub push webhooks to deploy this project."
-                />
+                /> : null}
               </section>
 
               <div className="project-edit-side">
@@ -2604,10 +2607,10 @@ export function App() {
               <span>Deploy URL</span>
               <input value={createdProjectSecret.deployUrl} readOnly onFocus={(event) => event.currentTarget.select()} />
             </label>
-            <label className="field">
+            {createdProjectSecret.webhookUrl ? <label className="field">
               <span>GitHub webhook URL</span>
               <input value={createdProjectSecret.webhookUrl} readOnly onFocus={(event) => event.currentTarget.select()} />
-            </label>
+            </label> : null}
             <label className="field">
               <span>Deploy token</span>
               <input value={createdProjectSecret.deployToken} readOnly onFocus={(event) => event.currentTarget.select()} />
@@ -2616,9 +2619,9 @@ export function App() {
               <Button variant="secondary" onClick={() => void copyText(createdProjectSecret.deployUrl)} icon={<Copy size={15} />}>
                 Deploy URL
               </Button>
-              <Button variant="secondary" onClick={() => void copyText(createdProjectSecret.webhookUrl)} icon={<Copy size={15} />}>
+              {createdProjectSecret.webhookUrl ? <Button variant="secondary" onClick={() => void copyText(createdProjectSecret.webhookUrl!)} icon={<Copy size={15} />}>
                 Webhook URL
-              </Button>
+              </Button> : null}
               <Button onClick={() => void copyText(createdProjectSecret.deployToken)} icon={<Copy size={15} />}>
                 Token
               </Button>

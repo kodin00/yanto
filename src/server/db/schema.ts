@@ -45,6 +45,7 @@ export const projects = pgTable(
     id: text("id").primaryKey(),
     name: text("name").notNull(),
     gitUrl: text("git_url"),
+    dockerImage: text("docker_image").notNull().default(""),
     branch: text("branch").notNull(),
     folderName: text("folder_name").notNull(),
     localPath: text("local_path").notNull(),
