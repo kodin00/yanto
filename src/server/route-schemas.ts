@@ -62,6 +62,17 @@ export const setupWizardInput = z.object({
   action: z.enum(["completed", "dismissed"])
 });
 
+export const runtimeSettingsInput = z.object({
+  appBaseUrl: z.string().trim().url().refine((value) => value.startsWith("http://") || value.startsWith("https://"), "Base URL must use http or https"),
+  cookieSecure: z.boolean(),
+  turnstileSiteKey: z.string().trim().max(500).optional().default(""),
+  turnstileSecretKey: z.string().max(1_000).optional().default(""),
+  clearTurnstileSecretKey: z.boolean().optional().default(false),
+  commandTimeoutMs: z.number().int().min(1_000).max(24 * 60 * 60 * 1_000),
+  commandOutputMaxBytes: z.number().int().min(16_384).max(100 * 1024 * 1024),
+  deploymentLogMaxChars: z.number().int().min(10_000).max(10_000_000)
+});
+
 export const multiNodeSettingsInput = z.object({
   enabled: z.boolean().optional().default(false)
 });

@@ -4,6 +4,7 @@ import type { ProjectPermission } from "../shared/types.js";
 import type { AuthPrincipal } from "./account-types.js";
 import { config } from "./config.js";
 import { loadPrincipalByUserId } from "./services/accounts.js";
+import { getRuntimeSettings } from "./services/settings.js";
 
 const cookieName = "yanto_session";
 const sessionIssuer = "yanto";
@@ -40,7 +41,7 @@ export function setSessionCookie(res: Response, principal: AuthPrincipal) {
     httpOnly: true,
     path: "/",
     sameSite: "lax",
-    secure: config.cookieSecure,
+    secure: getRuntimeSettings().cookieSecure,
     maxAge: 7 * 24 * 60 * 60 * 1000
   });
 }
@@ -50,7 +51,7 @@ export function clearSessionCookie(res: Response) {
     httpOnly: true,
     path: "/",
     sameSite: "lax",
-    secure: config.cookieSecure
+    secure: getRuntimeSettings().cookieSecure
   });
 }
 

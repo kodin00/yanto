@@ -14,6 +14,7 @@ import {
 } from "../services/accounts.js";
 import { recordAuditLog } from "../services/audit.js";
 import { turnstileEnabled, verifyTurnstileToken } from "../services/turnstile.js";
+import { getRuntimeSettings } from "../services/settings.js";
 
 const router = Router();
 
@@ -43,11 +44,11 @@ function assertPasswordsMatch(passwordValue: string, confirmation: string) {
 }
 
 router.get("/api/setup/status", asyncRoute(async (_req, res) => {
-  res.json(await setupStatus());
+  res.json({ ...(await setupStatus()), setupCodeRequired: Boolean(config.initialSetupCode) });
 }));
 
 router.get("/api/auth/turnstile", (_req, res) => {
-  res.json({ enabled: turnstileEnabled(), siteKey: turnstileEnabled() ? config.turnstileSiteKey : "" });
+  res.json({ enabled: turnstileEnabled(), siteKey: turnstileEnabled() ? getRuntimeSettings().turnstileSiteKey : "" });
 });
 
 router.post("/api/setup/owner", accountSetupLimiter, asyncRoute(async (req, res) => {
@@ -55,7 +56,7 @@ router.post("/api/setup/owner", accountSetupLimiter, asyncRoute(async (req, res)
     username: z.string().trim().min(1).max(200),
     password,
     passwordConfirmation: password,
-    setupCode: z.string().min(1).max(1_000),
+    setupCode: z.string().max(1_000).optional().default(""),
     turnstileToken
   }).parse(req.body);
   assertPasswordsMatch(body.password, body.passwordConfirmation);

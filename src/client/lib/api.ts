@@ -1,4 +1,4 @@
-import type { AgentGitPreview, AgentRun, AgentTask, AgentTaskDetail, AgentTaskWorktree, AiModel, AiProvider, AiProviderProtocol, AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, CodexAccountStatus, ContainerInfo, Deployment, DeploymentNode, FrpClientSetup, FrpOverview, FrpSettings, FrpTunnel, ManagedUser, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, PaginatedResponse, PostgresBackupTarget, Project, ProjectBranch, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SessionUser, SetupWizardStatus, SystemUsage, UserProjectAccess } from "../../shared/types";
+import type { AgentGitPreview, AgentRun, AgentTask, AgentTaskDetail, AgentTaskWorktree, AiModel, AiProvider, AiProviderProtocol, AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, CodexAccountStatus, ContainerInfo, Deployment, DeploymentNode, FrpClientSetup, FrpOverview, FrpSettings, FrpTunnel, ManagedUser, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, PaginatedResponse, PostgresBackupTarget, Project, ProjectBranch, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, RuntimePublicSettings, SessionUser, SetupWizardStatus, SystemUsage, UserProjectAccess } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -36,6 +36,11 @@ export type CloudflareSettingsPayload = {
 
 export type MultiNodeSettingsPayload = {
   enabled: boolean;
+};
+
+export type RuntimeSettingsPayload = Omit<RuntimePublicSettings, "hasTurnstileSecretKey"> & {
+  turnstileSecretKey?: string;
+  clearTurnstileSecretKey?: boolean;
 };
 
 export type CloudflareRoutePayload = {
@@ -182,7 +187,7 @@ function normalizeProjectEnv(payload: unknown): ProjectEnvVariable[] {
 }
 
 export const api = {
-  setupStatus: () => request<{ needsSetup: boolean }>("/api/setup/status"),
+  setupStatus: () => request<{ needsSetup: boolean; setupCodeRequired: boolean }>("/api/setup/status"),
   turnstileConfig: () => request<{ enabled: boolean; siteKey: string }>("/api/auth/turnstile"),
   createOwner: (username: string, password: string, passwordConfirmation: string, setupCode: string, turnstileToken?: string) =>
     request<SessionUser>("/api/setup/owner", {
@@ -406,6 +411,7 @@ export const api = {
       hostProjectsRoot: string;
       sshKeysDir: string;
       appBaseUrl: string;
+      runtime: RuntimePublicSettings;
       projectCount: number;
       r2: R2PublicSettings;
       cf: CloudflarePublicSettings;
@@ -413,6 +419,11 @@ export const api = {
       multiNode: MultiNodePublicSettings;
       sshKey: SshKeyStatus;
     }>("/api/settings"),
+  saveRuntimeSettings: (payload: RuntimeSettingsPayload) =>
+    request<{ ok: true; runtime: RuntimePublicSettings }>("/api/settings/runtime", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
   saveSetupWizard: (action: "completed" | "dismissed") =>
     request<{ ok: true; setupWizard: SetupWizardStatus }>("/api/settings/setup-wizard", {
       method: "POST",

@@ -1,6 +1,6 @@
 services:
   worker:
-    build: .
+    image: ghcr.io/kodin00/yanto:${YANTO_VERSION:-latest}
     restart: unless-stopped
     environment:
       NODE_ENV: production

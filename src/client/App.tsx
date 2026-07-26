@@ -41,7 +41,8 @@ const NodesView = lazy(() => import("./views/NodesView").then(m => ({ default: m
 const ProjectsView = lazy(() => import("./views/ProjectsView").then(m => ({ default: m.ProjectsView })));
 const SettingsView = lazy(() => import("./views/SettingsView").then(m => ({ default: m.SettingsView })));
 const TasksView = lazy(() => import("./views/TasksView").then(m => ({ default: m.TasksView })));
-import type { AppView, CloudflareClient, CloudflareDnsRecord, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, ContainerInfo, Deployment, DeploymentNode, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SessionUser, SetupWizardStatus, SystemUsage } from "../shared/types";
+import type { AppView, CloudflareClient, CloudflareDnsRecord, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, ContainerInfo, Deployment, DeploymentNode, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, Project, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, RuntimePublicSettings, SessionUser, SetupWizardStatus, SystemUsage } from "../shared/types";
+import type { RuntimeFormState } from "./views/types";
 import {
   cloudflareServiceUrl,
   endpoint,
@@ -73,7 +74,7 @@ type RollbackModalState = { project: Project; targetRef: string; preview: Rollba
 type ConfirmState = { title: string; body: string; label: string; danger?: boolean; loadingMessage?: string; successMessage?: string; action: () => Promise<void> };
 type CreatedProjectSecret = { projectName: string; deployUrl: string; webhookUrl: string | null; deployToken: string };
 type ThemeMode = "light" | "dark";
-type SetupStep = "intro" | "ssh" | "cloudflare" | "r2";
+type SetupStep = "intro" | "general" | "ssh" | "cloudflare" | "r2";
 type TurnstileConfig = { enabled: boolean; siteKey: string };
 type TurnstileApi = {
   render: (container: HTMLElement, options: Record<string, unknown>) => string;
@@ -134,7 +135,17 @@ const emptyMultiNodeSettings: MultiNodePublicSettings = {
   releaseStage: "beta"
 };
 
-const setupSteps: SetupStep[] = ["intro", "ssh", "cloudflare", "r2"];
+const emptyRuntimeSettings: RuntimePublicSettings = {
+  appBaseUrl: "http://localhost:8080",
+  cookieSecure: false,
+  turnstileSiteKey: "",
+  hasTurnstileSecretKey: false,
+  commandTimeoutMs: 3_600_000,
+  commandOutputMaxBytes: 2_097_152,
+  deploymentLogMaxChars: 500_000
+};
+
+const setupSteps: SetupStep[] = ["intro", "general", "ssh", "cloudflare", "r2"];
 const VIEW_REUSE_MS = 15_000;
 const AUTO_REFRESH_INTERVAL_MS = 60_000;
 const autoRefreshViews = new Set<View>(["dashboard", "projects", "deployments", "containers", "nodes", "backups"]);
@@ -319,6 +330,7 @@ export function App() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [login, setLogin] = useState({ username: "", password: "" });
   const [needsSetup, setNeedsSetup] = useState(false);
+  const [setupCodeRequired, setSetupCodeRequired] = useState(false);
   const [accountToken] = useState(getAccountToken);
   const [ownerSetup, setOwnerSetup] = useState({ username: "", password: "", passwordConfirmation: "", setupCode: "" });
   const [accountPassword, setAccountPassword] = useState({ password: "", passwordConfirmation: "" });
@@ -344,7 +356,7 @@ export function App() {
   const viewLoadRequestsRef = useRef(new Map<View, Promise<void>>());
   const [routeDiagnostics, setRouteDiagnostics] = useState<CloudflareRouteDiagnostic[]>([]);
   const [usage, setUsage] = useState<SystemUsage | null>(null);
-  const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: "", sshKey: emptySshKeySettings, r2: emptyR2Settings, cf: emptyCfSettings, setupWizard: emptySetupWizardStatus, multiNode: emptyMultiNodeSettings });
+  const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: emptyRuntimeSettings.appBaseUrl, runtime: emptyRuntimeSettings, sshKey: emptySshKeySettings, r2: emptyR2Settings, cf: emptyCfSettings, setupWizard: emptySetupWizardStatus, multiNode: emptyMultiNodeSettings });
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [mcpTokens, setMcpTokens] = useState<McpAccessToken[]>([]);
   const [mcpTokenForm, setMcpTokenForm] = useState<{ name: string; accessLevel: McpAccessLevel }>({ name: "", accessLevel: "read" });
@@ -353,6 +365,14 @@ export function App() {
   const [r2FormDirty, setR2FormDirty] = useState(false);
   const [cfForm, setCfForm] = useState({ accountId: "", zoneId: "", apiToken: "" });
   const [cfFormDirty, setCfFormDirty] = useState(false);
+  const [runtimeForm, setRuntimeForm] = useState<RuntimeFormState>({
+    ...emptyRuntimeSettings,
+    turnstileSecretKey: "",
+    clearTurnstileSecretKey: false,
+    commandTimeoutMs: String(emptyRuntimeSettings.commandTimeoutMs),
+    commandOutputMaxBytes: String(emptyRuntimeSettings.commandOutputMaxBytes),
+    deploymentLogMaxChars: String(emptyRuntimeSettings.deploymentLogMaxChars)
+  });
   const [cfRoutes, setCfRoutes] = useState<CloudflareRoute[]>([]);
   const [systemLogs, setSystemLogs] = useState("");
   const [cleanupLogs, setCleanupLogs] = useState("");
@@ -644,6 +664,7 @@ export function App() {
       .then(async ([status, turnstileConfig]) => {
         if (!active) return;
         setNeedsSetup(status.needsSetup);
+        setSetupCodeRequired(status.setupCodeRequired);
         setTurnstile(turnstileConfig);
         if (accountToken) {
           const identity = await api.accountSetupDetails(accountToken);
@@ -703,6 +724,17 @@ export function App() {
       apiToken: ""
     });
   }, [cfFormDirty, settings.cf]);
+
+  useEffect(() => {
+    setRuntimeForm({
+      ...settings.runtime,
+      turnstileSecretKey: "",
+      clearTurnstileSecretKey: false,
+      commandTimeoutMs: String(settings.runtime.commandTimeoutMs),
+      commandOutputMaxBytes: String(settings.runtime.commandOutputMaxBytes),
+      deploymentLogMaxChars: String(settings.runtime.deploymentLogMaxChars)
+    });
+  }, [settings.runtime]);
 
   useEffect(() => {
     if (!user || user.role !== "owner" || !settingsLoaded || setupAutoPrompted) return;
@@ -910,6 +942,10 @@ export function App() {
   function updateCfForm(patch: Partial<typeof cfForm>) {
     setCfFormDirty(true);
     setCfForm((current) => ({ ...current, ...patch }));
+  }
+
+  function updateRuntimeForm(patch: Partial<RuntimeFormState>) {
+    setRuntimeForm((current) => ({ ...current, ...patch }));
   }
 
   function updateSavedProjectLocally(savedProject: Project | ProjectWithDeployToken) {
@@ -1384,6 +1420,31 @@ export function App() {
     }
   }
 
+  async function saveRuntimeSettings(event: FormEvent) {
+    event.preventDefault();
+    setBusy("runtime-settings");
+    setToast({ message: "Saving application settings...", kind: "loading" });
+    try {
+      const result = await api.saveRuntimeSettings({
+        appBaseUrl: runtimeForm.appBaseUrl,
+        cookieSecure: runtimeForm.cookieSecure,
+        turnstileSiteKey: runtimeForm.turnstileSiteKey,
+        turnstileSecretKey: runtimeForm.turnstileSecretKey,
+        clearTurnstileSecretKey: runtimeForm.clearTurnstileSecretKey,
+        commandTimeoutMs: Number(runtimeForm.commandTimeoutMs),
+        commandOutputMaxBytes: Number(runtimeForm.commandOutputMaxBytes),
+        deploymentLogMaxChars: Number(runtimeForm.deploymentLogMaxChars)
+      });
+      setSettings((current) => ({ ...current, appBaseUrl: result.runtime.appBaseUrl, runtime: result.runtime }));
+      setTurnstile({ enabled: Boolean(result.runtime.turnstileSiteKey && result.runtime.hasTurnstileSecretKey), siteKey: result.runtime.turnstileSiteKey });
+      setToast({ message: "Application settings saved." });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Unable to save application settings.", kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function saveMultiNodeSettings(enabled: boolean) {
     setBusy("multi-node-settings");
     setToast({ message: "Saving multi-node setting...", kind: "loading" });
@@ -1770,13 +1831,13 @@ export function App() {
       <main className="login-shell">
         <form className="login-panel" onSubmit={submitOwnerSetup}>
           <h1>Create the owner</h1>
-          <p>Use the one-time setup code printed by the installer or in the server startup logs.</p>
+          <p>{setupCodeRequired ? "This installation is protected by the setup code configured by the operator." : "Create the first owner to claim this fresh Yanto installation."}</p>
           <TextField label="Username" value={ownerSetup.username} onChange={(username) => setOwnerSetup((current) => ({ ...current, username }))} autoComplete="username" required />
           <TextField label="Password" type="password" value={ownerSetup.password} onChange={(password) => setOwnerSetup((current) => ({ ...current, password }))} autoComplete="new-password" required />
           <TextField label="Confirm password" type="password" value={ownerSetup.passwordConfirmation} onChange={(passwordConfirmation) => setOwnerSetup((current) => ({ ...current, passwordConfirmation }))} autoComplete="new-password" required />
-          <TextField label="Setup code" type="password" value={ownerSetup.setupCode} onChange={(setupCode) => setOwnerSetup((current) => ({ ...current, setupCode }))} autoComplete="off" required />
+          {setupCodeRequired ? <TextField label="Setup code" type="password" value={ownerSetup.setupCode} onChange={(setupCode) => setOwnerSetup((current) => ({ ...current, setupCode }))} autoComplete="off" required /> : null}
           {turnstile.enabled ? <TurnstileWidget config={turnstile} action="owner_setup" onToken={setTurnstileToken} resetKey={turnstileResetKey} /> : null}
-          <Button type="submit" disabled={busy === "owner-setup" || !ownerSetup.username.trim() || !ownerSetup.password || !ownerSetup.passwordConfirmation || !ownerSetup.setupCode.trim() || (turnstile.enabled && !turnstileToken)} icon={busy === "owner-setup" ? <RefreshCw size={16} className="spin" /> : <ShieldCheck size={16} />}>
+          <Button type="submit" disabled={busy === "owner-setup" || !ownerSetup.username.trim() || !ownerSetup.password || !ownerSetup.passwordConfirmation || (setupCodeRequired && !ownerSetup.setupCode.trim()) || (turnstile.enabled && !turnstileToken)} icon={busy === "owner-setup" ? <RefreshCw size={16} className="spin" /> : <ShieldCheck size={16} />}>
             Create owner
           </Button>
         </form>
@@ -2055,6 +2116,7 @@ export function App() {
             createdMcpToken={createdMcpToken}
             r2Form={r2Form}
             cfForm={cfForm}
+            runtimeForm={runtimeForm}
             busy={busy}
             sshPrivateKey={sshPrivateKey}
             systemLogs={systemLogs}
@@ -2063,9 +2125,11 @@ export function App() {
             cleanupPreviewed={cleanupPreviewed}
             updateR2Form={updateR2Form}
             updateCfForm={updateCfForm}
+            updateRuntimeForm={updateRuntimeForm}
             updateMcpTokenForm={(patch) => setMcpTokenForm((current) => ({ ...current, ...patch }))}
             saveR2Settings={saveR2Settings}
             saveCfSettings={saveCfSettings}
+            saveRuntimeSettings={saveRuntimeSettings}
             createMcpToken={createMcpToken}
             revokeMcpToken={revokeMcpToken}
             dismissCreatedMcpToken={() => setCreatedMcpToken(null)}
@@ -2109,6 +2173,11 @@ export function App() {
                 </div>
                 <div className="setup-checklist">
                   <div>
+                    <Globe2 size={16} />
+                    <span>Public URL & security</span>
+                    <StatusBadge status={settings.runtime.appBaseUrl ? "ready" : "optional"} />
+                  </div>
+                  <div>
                     <KeyRound size={16} />
                     <span>Git SSH key</span>
                     <StatusBadge status={sshReady ? "ready" : "optional"} />
@@ -2125,6 +2194,25 @@ export function App() {
                   </div>
                 </div>
               </div>
+            ) : null}
+
+            {setupStep === "general" ? (
+              <form className="setup-step form-grid compact-form" onSubmit={saveRuntimeSettings} autoComplete="off">
+                <div className="setup-status-row">
+                  <span>Application settings</span>
+                  <StatusBadge status="ready" />
+                </div>
+                <TextField label="Public base URL" value={runtimeForm.appBaseUrl} onChange={(appBaseUrl) => updateRuntimeForm({ appBaseUrl })} placeholder="http://localhost:8080" required />
+                <ToggleField label="Secure cookies" value={runtimeForm.cookieSecure} onChange={(cookieSecure) => updateRuntimeForm({ cookieSecure })} description="Enable this after the app is served over HTTPS." />
+                <div className="settings-form-pair">
+                  <TextField label="Turnstile site key" value={runtimeForm.turnstileSiteKey} onChange={(turnstileSiteKey) => updateRuntimeForm({ turnstileSiteKey })} autoComplete="off" />
+                  <TextField label="Turnstile secret key" type="password" value={runtimeForm.turnstileSecretKey} onChange={(turnstileSecretKey) => updateRuntimeForm({ turnstileSecretKey, clearTurnstileSecretKey: false })} placeholder={runtimeForm.hasTurnstileSecretKey ? "Saved; leave blank to keep" : "Optional"} autoComplete="new-password" />
+                </div>
+                <p className="muted">Turnstile stays disabled until both keys are saved. Command and log limits can be adjusted later in Settings.</p>
+                <div className="actions">
+                  <Button type="submit" disabled={busy === "runtime-settings"} icon={<Settings size={16} />}>Save application settings</Button>
+                </div>
+              </form>
             ) : null}
 
             {setupStep === "ssh" ? (

@@ -4,7 +4,7 @@ dev:
 	npm run dev
 
 docker:
-	docker compose -f compose.yml up --build
+	docker compose -f compose.yml -f compose.build.yml up --build
 
 build:
 	npm run build

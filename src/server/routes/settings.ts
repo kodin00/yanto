@@ -5,10 +5,10 @@ import { config } from "../config.js";
 import { db } from "../db/index.js";
 import { projects } from "../db/schema.js";
 import { asyncRoute, actor } from "../http-utils.js";
-import { cloudflareSettingsInput, multiNodeSettingsInput, r2SettingsInput, setupWizardInput } from "../route-schemas.js";
+import { cloudflareSettingsInput, multiNodeSettingsInput, r2SettingsInput, runtimeSettingsInput, setupWizardInput } from "../route-schemas.js";
 import { recordAuditLog } from "../services/audit.js";
 import { publicCloudflareSettings, saveCloudflareSettings, validateCloudflareSettings } from "../services/cloudflare.js";
-import { publicMultiNodeSettings, publicR2Settings, publicSetupWizardSettings, saveMultiNodeSettings, saveR2Settings, saveSetupWizardSettings } from "../services/settings.js";
+import { publicMultiNodeSettings, publicR2Settings, publicRuntimeSettings, publicSetupWizardSettings, saveMultiNodeSettings, saveR2Settings, saveRuntimeSettings, saveSetupWizardSettings } from "../services/settings.js";
 import { generateManagedSshPrivateKey, managedSshKeyStatus, saveManagedSshPrivateKey } from "../services/ssh.js";
 
 const router = Router();
@@ -29,7 +29,8 @@ router.get(
       projectsRoot: config.projectsRoot,
       hostProjectsRoot: config.hostProjectsRoot,
       sshKeysDir: config.sshKeysDir,
-      appBaseUrl: config.appBaseUrl,
+      appBaseUrl: publicRuntimeSettings().appBaseUrl,
+      runtime: publicRuntimeSettings(),
       projectCount: count.length,
       sshKey,
       r2,
@@ -37,6 +38,17 @@ router.get(
       setupWizard,
       multiNode
     });
+  })
+);
+
+router.post(
+  "/api/settings/runtime",
+  requireOwner,
+  asyncRoute(async (req, res) => {
+    const body = runtimeSettingsInput.parse(req.body ?? {});
+    const runtime = await saveRuntimeSettings(body);
+    await recordAuditLog({ actor: actor(req), action: "settings.runtime.save", entityType: "settings", metadata: { appBaseUrl: runtime.appBaseUrl, cookieSecure: runtime.cookieSecure, turnstileEnabled: Boolean(runtime.turnstileSiteKey && runtime.hasTurnstileSecretKey), commandTimeoutMs: runtime.commandTimeoutMs, commandOutputMaxBytes: runtime.commandOutputMaxBytes, deploymentLogMaxChars: runtime.deploymentLogMaxChars } });
+    res.json({ ok: true, runtime });
   })
 );
 

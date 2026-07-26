@@ -32,11 +32,12 @@ describe("worker install/runtime files", () => {
     expect(installer).toContain("master|worker");
     expect(installer).toContain("compose.worker.yml");
     expect(installer).toContain("--join-token");
-    expect(installer).toContain("JWT_SECRET=change-this-to-a-long-random-secret");
-    expect(installer).toContain("YANTO_SETUP_CODE=$(random_secret)");
-    expect(installer).toContain("one-time setup code");
+    expect(installer).toContain("docker compose -f compose.yml pull");
+    expect(installer).not.toContain("JWT_SECRET=change-this-to-a-long-random-secret");
+    expect(installer).not.toContain("YANTO_SETUP_CODE=$(random_secret)");
+    expect(installer).toContain("create the first owner");
     expect(installer).not.toContain("ADMIN_PASSWORD=change-this-admin-password");
-    expect(installer).toContain("POSTGRES_PASSWORD=$(random_secret)");
-    expect(installer).toContain("chmod 600 .env");
+    expect(installer).not.toContain("POSTGRES_PASSWORD=$(random_secret)");
+    expect(installer).toContain("chmod 600 .env.worker");
   });
 });

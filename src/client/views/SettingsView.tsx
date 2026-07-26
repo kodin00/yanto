@@ -5,7 +5,7 @@ import { Button, CustomSelect, LogViewer, StatusBadge, TextAreaField, TextField,
 import { UserAccessPanel } from "../components/UserAccessPanel";
 import { api } from "../lib/api";
 import type { McpAccessLevel, McpAccessToken, Project, SessionUser } from "../../shared/types";
-import type { CfFormState, ConfirmState, CreatedMcpTokenState, McpTokenFormState, R2FormState, SettingsState } from "./types";
+import type { CfFormState, ConfirmState, CreatedMcpTokenState, McpTokenFormState, R2FormState, RuntimeFormState, SettingsState } from "./types";
 
 type Props = {
   session: SessionUser;
@@ -16,6 +16,7 @@ type Props = {
   createdMcpToken: CreatedMcpTokenState;
   r2Form: R2FormState;
   cfForm: CfFormState;
+  runtimeForm: RuntimeFormState;
   busy: string | null;
   sshPrivateKey: string;
   systemLogs: string;
@@ -24,9 +25,11 @@ type Props = {
   cleanupPreviewed: boolean;
   updateR2Form: (patch: Partial<R2FormState>) => void;
   updateCfForm: (patch: Partial<CfFormState>) => void;
+  updateRuntimeForm: (patch: Partial<RuntimeFormState>) => void;
   updateMcpTokenForm: (patch: Partial<McpTokenFormState>) => void;
   saveR2Settings: (event: FormEvent) => void;
   saveCfSettings: (event: FormEvent) => void;
+  saveRuntimeSettings: (event: FormEvent) => void;
   createMcpToken: (event: FormEvent) => void;
   revokeMcpToken: (token: McpAccessToken) => void;
   dismissCreatedMcpToken: () => void;
@@ -58,6 +61,7 @@ export const SettingsView = memo(function SettingsView(props: Props) {
     createdMcpToken,
     r2Form,
     cfForm,
+    runtimeForm,
     busy,
     sshPrivateKey,
     systemLogs,
@@ -66,9 +70,11 @@ export const SettingsView = memo(function SettingsView(props: Props) {
     cleanupPreviewed,
     updateR2Form,
     updateCfForm,
+    updateRuntimeForm,
     updateMcpTokenForm,
     saveR2Settings,
     saveCfSettings,
+    saveRuntimeSettings,
     createMcpToken,
     revokeMcpToken,
     dismissCreatedMcpToken,
@@ -167,6 +173,37 @@ export const SettingsView = memo(function SettingsView(props: Props) {
               <dd>{settings.appBaseUrl}</dd>
             </div>
           </dl>
+          <form className="form-grid compact-form runtime-settings-form" onSubmit={saveRuntimeSettings} autoComplete="off">
+            <TextField label="Public base URL" value={runtimeForm.appBaseUrl} onChange={(appBaseUrl) => updateRuntimeForm({ appBaseUrl })} placeholder="http://localhost:8080" required />
+            <ToggleField
+              label="Secure cookies"
+              value={runtimeForm.cookieSecure}
+              onChange={(cookieSecure) => updateRuntimeForm({ cookieSecure })}
+              description="Enable when the public base URL uses HTTPS."
+            />
+            <div className="settings-form-pair">
+              <TextField label="Turnstile site key" value={runtimeForm.turnstileSiteKey} onChange={(turnstileSiteKey) => updateRuntimeForm({ turnstileSiteKey })} autoComplete="off" />
+              <TextField
+                label="Turnstile secret key"
+                type="password"
+                value={runtimeForm.turnstileSecretKey}
+                onChange={(turnstileSecretKey) => updateRuntimeForm({ turnstileSecretKey, clearTurnstileSecretKey: false })}
+                placeholder={runtimeForm.hasTurnstileSecretKey ? "Saved; leave blank to keep" : "Optional"}
+                autoComplete="new-password"
+              />
+            </div>
+            {runtimeForm.hasTurnstileSecretKey ? (
+              <ToggleField label="Remove saved Turnstile secret" value={runtimeForm.clearTurnstileSecretKey} onChange={(clearTurnstileSecretKey) => updateRuntimeForm({ clearTurnstileSecretKey, turnstileSecretKey: clearTurnstileSecretKey ? "" : runtimeForm.turnstileSecretKey })} />
+            ) : null}
+            <div className="settings-form-pair">
+              <TextField label="Command timeout (ms)" value={runtimeForm.commandTimeoutMs} onChange={(commandTimeoutMs) => updateRuntimeForm({ commandTimeoutMs: commandTimeoutMs.replace(/\D/g, "") })} />
+              <TextField label="Command output cap (bytes)" value={runtimeForm.commandOutputMaxBytes} onChange={(commandOutputMaxBytes) => updateRuntimeForm({ commandOutputMaxBytes: commandOutputMaxBytes.replace(/\D/g, "") })} />
+            </div>
+            <TextField label="Deployment log cap (characters)" value={runtimeForm.deploymentLogMaxChars} onChange={(deploymentLogMaxChars) => updateRuntimeForm({ deploymentLogMaxChars: deploymentLogMaxChars.replace(/\D/g, "") })} />
+            <div className="actions">
+              <Button type="submit" disabled={busy === "runtime-settings"} icon={<Settings size={16} />}>Save runtime</Button>
+            </div>
+          </form>
           <ToggleField
             label="Multi-node"
             value={settings.multiNode.enabled}

@@ -1,4 +1,4 @@
-import type { CloudflarePublicSettings, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, R2PublicSettings, SetupWizardStatus } from "../../shared/types";
+import type { CloudflarePublicSettings, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, R2PublicSettings, RuntimePublicSettings, SetupWizardStatus } from "../../shared/types";
 import type { SshKeyStatus } from "../lib/api";
 
 export type View = "dashboard" | "projects" | "tasks" | "deployments" | "containers" | "nodes" | "backups" | "hostnames" | "frp" | "dns" | "audit" | "settings";
@@ -10,11 +10,20 @@ export type SettingsState = {
   hostProjectsRoot: string;
   sshKeysDir: string;
   appBaseUrl: string;
+  runtime: RuntimePublicSettings;
   sshKey: SshKeyStatus;
   r2: R2PublicSettings;
   cf: CloudflarePublicSettings;
   setupWizard: SetupWizardStatus;
   multiNode: MultiNodePublicSettings;
+};
+
+export type RuntimeFormState = Omit<RuntimePublicSettings, "commandTimeoutMs" | "commandOutputMaxBytes" | "deploymentLogMaxChars"> & {
+  turnstileSecretKey: string;
+  clearTurnstileSecretKey: boolean;
+  commandTimeoutMs: string;
+  commandOutputMaxBytes: string;
+  deploymentLogMaxChars: string;
 };
 
 export type R2FormState = {

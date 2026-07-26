@@ -33,5 +33,8 @@ RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/drizzle ./drizzle
 COPY config/frps.toml /etc/frp/frps.toml
+COPY scripts/docker-entrypoint.sh /usr/local/bin/yanto-entrypoint
+RUN chmod 0755 /usr/local/bin/yanto-entrypoint
 EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/yanto-entrypoint"]
 CMD ["sh", "-c", "if [ \"$YANTO_NODE_ROLE\" = \"worker\" ]; then exec node dist/server/server/worker.js; else exec node dist/server/server/index.js; fi"]

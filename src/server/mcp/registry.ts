@@ -77,8 +77,10 @@ import { restartProjectCompose, stopProjectCompose } from "../services/project-r
 import { createProject, deleteProject, getProject, getProjectDeployToken, listProjectsWithContainerCounts, publicProject, updateProject } from "../services/projects.js";
 import {
   ensureWorkerJoinToken,
+  getRuntimeSettings,
   publicMultiNodeSettings,
   publicR2Settings,
+  publicRuntimeSettings,
   publicSetupWizardSettings,
   saveMultiNodeSettings,
   saveR2Settings,
@@ -144,7 +146,8 @@ async function settingsSnapshot() {
     projectsRoot: config.projectsRoot,
     hostProjectsRoot: config.hostProjectsRoot,
     sshKeysDir: config.sshKeysDir,
-    appBaseUrl: config.appBaseUrl,
+    appBaseUrl: publicRuntimeSettings().appBaseUrl,
+    runtime: publicRuntimeSettings(),
     projectCount: count.length,
     sshKey,
     r2,
@@ -209,7 +212,7 @@ export function createYantoMcpServer(ctx: YantoMcpContext) {
   registerTool(server, ctx, "admin", "yanto_worker_join_command_reveal", "Reveal worker join token and install command. Requires confirm: true.", confirmInput, destructive, async (input) => {
     requireConfirm(input.confirm, "Worker join token reveal");
     const token = await ensureWorkerJoinToken();
-    const command = `curl -fsSL https://raw.githubusercontent.com/kodin00/yanto/master/scripts/install.sh | sudo bash -s -- worker --master ${config.appBaseUrl} --join-token ${token}`;
+    const command = `curl -fsSL https://raw.githubusercontent.com/kodin00/yanto/master/scripts/install.sh | sudo bash -s -- worker --master ${getRuntimeSettings().appBaseUrl} --join-token ${token}`;
     await recordAuditLog({ actor: ctx.actor, action: "node.join_token.view", entityType: "deployment_node" });
     return toolResult("Worker join command revealed.", { token, command });
   });

@@ -9,12 +9,11 @@ import { HttpError } from "../http-utils.js";
 import { logger } from "../logger.js";
 import { hashPassword, passwordHashNeedsUpgrade, verifyPassword } from "./passwords.js";
 import { constantTimeEqual, createId, hashToken } from "./tokens.js";
+import { getRuntimeSettings } from "./settings.js";
 
 export const PROJECT_PERMISSIONS = ["deploy", "runtime", "config", "secrets", "backups", "hostnames"] as const satisfies readonly ProjectPermission[];
 const PROJECT_PERMISSION_SET = new Set<string>(PROJECT_PERMISSIONS);
 const ACCOUNT_TOKEN_TTL_MS = 24 * 60 * 60 * 1_000;
-const generatedSetupCode = crypto.randomBytes(18).toString("base64url");
-const setupCode = config.initialSetupCode || generatedSetupCode;
 let setupCodeLogged = false;
 
 const ALL_VIEWS: AppView[] = ["dashboard", "projects", "tasks", "deployments", "containers", "nodes", "backups", "hostnames", "frp", "dns", "audit", "settings"];
@@ -40,7 +39,7 @@ function normalizeUsername(username: string) {
 }
 
 function accountUrl(token: string) {
-  return `${config.appBaseUrl.replace(/\/$/, "")}/account/setup#token=${encodeURIComponent(token)}`;
+  return `${getRuntimeSettings().appBaseUrl.replace(/\/$/, "")}/account/setup#token=${encodeURIComponent(token)}`;
 }
 
 function createAccountSecret() {
@@ -68,7 +67,7 @@ export function toSessionUser(principal: AuthPrincipal): SessionUser {
     status: principal.status,
     projectAccess: principal.projectAccess,
     allowedViews: allowedViews(principal),
-    appBaseUrl: config.appBaseUrl,
+    appBaseUrl: getRuntimeSettings().appBaseUrl,
     localNodeId: config.localNodeId
   };
 }
@@ -109,13 +108,13 @@ export async function setupStatus() {
 }
 
 export async function logSetupCodeIfNeeded() {
-  if (setupCodeLogged || !(await setupStatus()).needsSetup) return;
+  if (setupCodeLogged || !config.initialSetupCode || !(await setupStatus()).needsSetup) return;
   setupCodeLogged = true;
-  logger.warn("initial owner setup is required", { setupCode, setupUrl: `${config.appBaseUrl.replace(/\/$/, "")}/setup` });
+  logger.warn("initial owner setup is protected by YANTO_SETUP_CODE", { setupUrl: `${getRuntimeSettings().appBaseUrl.replace(/\/$/, "")}/setup` });
 }
 
 export async function createInitialOwner(input: { username: string; password: string; setupCode: string }) {
-  if (!constantTimeEqual(input.setupCode, setupCode)) throw new HttpError(403, "Invalid setup code.");
+  if (config.initialSetupCode && !constantTimeEqual(input.setupCode, config.initialSetupCode)) throw new HttpError(403, "Invalid setup code.");
   const username = normalizeUsername(input.username);
   const passwordHash = await hashPassword(input.password);
   const client = await pool.connect();

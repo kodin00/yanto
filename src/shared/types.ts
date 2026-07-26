@@ -357,6 +357,16 @@ export type SetupWizardStatus = {
   updatedAt: string | null;
 };
 
+export type RuntimePublicSettings = {
+  appBaseUrl: string;
+  cookieSecure: boolean;
+  turnstileSiteKey: string;
+  hasTurnstileSecretKey: boolean;
+  commandTimeoutMs: number;
+  commandOutputMaxBytes: number;
+  deploymentLogMaxChars: number;
+};
+
 export type MultiNodePublicSettings = {
   enabled: boolean;
   releaseStage: "beta";

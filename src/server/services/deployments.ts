@@ -10,6 +10,7 @@ import { createId } from "./tokens.js";
 import { deploymentEvents } from "./deployment-events.js";
 import { pathExists } from "./paths.js";
 import { gitSshEnv, resolveGitPrivateKeyPath } from "./ssh.js";
+import { getRuntimeSettings } from "./settings.js";
 
 type ActiveLocalDeployment = {
   deployment: DeploymentRow;
@@ -78,15 +79,16 @@ function parseNumstat(output: string) {
 }
 
 export async function appendDeploymentLog(deploymentId: string, chunk: string) {
+  const deploymentLogMaxChars = getRuntimeSettings().deploymentLogMaxChars;
   const nextLogs = sql`${deployments.logs} || ${chunk}`;
   const truncationNotice = "[... older deployment logs truncated ...]\n";
-  const retainedChars = Math.max(0, config.deploymentLogMaxChars - truncationNotice.length);
+  const retainedChars = Math.max(0, deploymentLogMaxChars - truncationNotice.length);
   const [updated] = await db
     .update(deployments)
     .set({
       logs:
-        config.deploymentLogMaxChars > 0
-          ? sql`CASE WHEN length(${nextLogs}) > ${config.deploymentLogMaxChars} THEN ${truncationNotice} || right(${nextLogs}, ${retainedChars}) ELSE ${nextLogs} END`
+        deploymentLogMaxChars > 0
+          ? sql`CASE WHEN length(${nextLogs}) > ${deploymentLogMaxChars} THEN ${truncationNotice} || right(${nextLogs}, ${retainedChars}) ELSE ${nextLogs} END`
           : nextLogs
     })
     .where(eq(deployments.id, deploymentId))

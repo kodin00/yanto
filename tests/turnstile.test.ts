@@ -8,6 +8,7 @@ const configMock = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/server/config.js", () => ({ config: configMock }));
+vi.mock("../src/server/services/settings.js", () => ({ getRuntimeSettings: () => configMock }));
 
 import { turnstileEnabled, verifyTurnstileToken } from "../src/server/services/turnstile.js";
 

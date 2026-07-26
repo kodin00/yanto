@@ -4,14 +4,17 @@ A small deployment platform for a VPS. It registers Git projects, deploys them w
 
 ## Quick Start
 
+No `.env` file is required. Download the production Compose file and start it:
+
 ```bash
-cp .env.example .env
-npm install
-npm run build
-make docker
+mkdir yanto && cd yanto
+curl -fsSLO https://raw.githubusercontent.com/kodin00/yanto/master/compose.yml
+docker compose up -d
 ```
 
-Open `http://localhost:8080` and create the first owner. Set `YANTO_SETUP_CODE` in `.env`, or read the generated one-time code with `docker compose logs app`.
+Open `http://localhost:8080`, create the first owner, and finish the setup wizard. Yanto generates and persists its signing secrets automatically in the `yanto_config` volume. The first browser to create an owner claims a fresh installation, so keep port 8080 private until that step is complete. Set `YANTO_SETUP_CODE` only when you want an additional operator-provided claim code.
+
+The Compose file pulls `ghcr.io/kodin00/yanto:latest`, starts PostgreSQL and FRP, mounts Docker and the projects directory, and keeps application data in named volumes. Pin a release with `YANTO_VERSION=0.14.0 docker compose up -d`.
 
 ## One-Line Install
 
@@ -27,7 +30,36 @@ Worker node:
 curl -fsSL https://raw.githubusercontent.com/kodin00/yanto/master/scripts/install.sh | sudo bash -s -- worker --master http://MASTER_IP:PORT --join-token TOKEN
 ```
 
-The installer supports Ubuntu/Debian hosts. It installs Git and Docker when missing, clones Yanto into `/opt/yanto`, starts Docker Compose, and prints the one-time code used to create the first owner.
+The installer supports Ubuntu/Debian hosts. It installs Git and Docker when missing, clones Yanto into `/opt/yanto`, pulls the published image, and starts Docker Compose. It does not create an `.env` file.
+
+## Pull and run the image directly
+
+Compose is recommended because Yanto requires PostgreSQL and gains FRP support from the sidecar. To run only the app and PostgreSQL with Docker CLI:
+
+```bash
+docker pull ghcr.io/kodin00/yanto:latest
+docker network create yanto
+docker volume create yanto_postgres
+docker volume create yanto_config
+docker volume create yanto_data
+mkdir -p "$HOME/projects"
+
+docker run -d --name yanto-postgres --network yanto --restart unless-stopped \
+  -e POSTGRES_DB=yanto -e POSTGRES_USER=yanto -e POSTGRES_PASSWORD=yanto \
+  -v yanto_postgres:/var/lib/postgresql/data postgres:17-alpine
+
+docker run -d --name yanto --network yanto --restart unless-stopped \
+  -p 127.0.0.1:8080:8080 \
+  -e NODE_ENV=production \
+  -e DATABASE_URL=postgres://yanto:yanto@yanto-postgres:5432/yanto \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$HOME/projects:/projects" \
+  -v yanto_config:/data/config \
+  -v yanto_data:/data \
+  ghcr.io/kodin00/yanto:latest
+```
+
+Then open `http://localhost:8080` and create the owner. Add a reverse proxy before exposing Yanto publicly.
 
 ## Docker Runtime
 
@@ -112,15 +144,27 @@ The webhook and manual deploy button both run the same flow:
 
 ## Configuration
 
-Important environment variables:
+Fresh installations configure these from the first-run wizard or **Settings → Runtime** and store them in PostgreSQL:
 
-- `DATABASE_URL`
-- `JWT_SECRET`
-- `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`, optional; when both are set, Turnstile protects sign-in, initial owner setup, and password-setup links
+- public base URL
+- secure-cookie mode
+- Cloudflare Turnstile site key and encrypted secret key
+- command timeout and command-output cap
+- retained deployment-log cap
+
+The owner username and password are created on first interaction. `ADMIN_USERNAME` and `ADMIN_PASSWORD` remain only as a compatibility path for old environment-backed installations.
+
+Container topology still uses environment variables because those values must exist before the web app and database start. All have Compose defaults, so they are optional:
+
+- `YANTO_VERSION`, image tag used by Compose; default `latest`
+- `PORT`, host port bound to Yanto; default `8080`
+- `DATABASE_URL`, defaults to the bundled PostgreSQL service
+- `POSTGRES_PASSWORD`, bundled database password; default `yanto` on the private Compose network
+- `JWT_SECRET` and `WORKER_TOKEN_SECRET`, optional overrides; omitted values are randomly generated and persisted in `yanto_config`
 - `MCP_TOKEN_SECRET`, optional; defaults to `WORKER_TOKEN_SECRET`/`JWT_SECRET`; set a stable long random value before creating MCP tokens
 - `MCP_ALLOWED_HOSTS`, comma-separated hosts allowed to call `/mcp`
 - `MCP_ALLOWED_ORIGINS`, comma-separated browser origins allowed to call `/mcp`
-- `YANTO_SETUP_CODE`, required only while claiming a fresh installation; the installer generates it automatically
+- `YANTO_SETUP_CODE`, optional extra protection while claiming a fresh installation
 - `ADMIN_USERNAME` and `ADMIN_PASSWORD`, optional legacy upgrade inputs used once to create the database owner
 - `PROJECTS_ROOT` inside the container, default `/projects`
 - `HOST_PROJECTS_ROOT` for display, default `~/projects`
@@ -129,7 +173,7 @@ Important environment variables:
 - `SSH_SOURCE_DIR` host SSH folder mounted read-only into the app, for example `/home/ubuntu/.ssh`
 - `SSH_PRIVATE_KEY_PATH` private key path inside the app container, default `/root/.ssh/id_ed25519`
 - `SSH_KEYS_DIR`, default `/data/ssh`
-- `APP_BASE_URL`
+- `APP_BASE_URL`, `COOKIE_SECURE`, `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`, `COMMAND_TIMEOUT_MS`, `COMMAND_OUTPUT_MAX_BYTES`, and `DEPLOYMENT_LOG_MAX_CHARS` seed the corresponding database settings on first start; later changes are made in the UI
 - `YANTO_NODE_ROLE`, default `master`
 - `WORKER_JOIN_TOKEN` for worker registration
 - `WORKER_TOKEN_SECRET` for worker token signing/hashing configuration
@@ -255,6 +299,25 @@ npm run typecheck
 npm test
 npm run lint
 ```
+
+Build and run the checked-out source instead of pulling GHCR:
+
+```bash
+docker compose -f compose.yml -f compose.build.yml up --build
+```
+
+## Container releases
+
+Pushing a semantic version tag such as `v0.14.0` publishes a multi-platform image for `linux/amd64` and `linux/arm64` to `ghcr.io/kodin00/yanto`. The workflow refuses tags whose commit is not contained in `master`, generates version/major/minor tags, updates `latest` for stable releases, and publishes a provenance attestation.
+
+```bash
+git switch master
+git pull --ff-only
+git tag v0.14.0
+git push origin v0.14.0
+```
+
+The repository package must be public for unauthenticated `docker pull` and zero-setup Compose installs. If this is the first publication, confirm the package visibility under the repository or organization package settings.
 
 ## GitHub Actions Deploy
 

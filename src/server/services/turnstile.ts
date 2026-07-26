@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import type { Request } from "express";
-import { config } from "../config.js";
 import { HttpError } from "../http-utils.js";
+import { getRuntimeSettings } from "./settings.js";
 
 const verifyUrl = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
@@ -11,7 +11,8 @@ type TurnstileResult = {
 };
 
 export function turnstileEnabled() {
-  return Boolean(config.turnstileSiteKey && config.turnstileSecretKey);
+  const settings = getRuntimeSettings();
+  return Boolean(settings.turnstileSiteKey && settings.turnstileSecretKey);
 }
 
 function visitorIp(req: Request) {
@@ -22,6 +23,7 @@ function visitorIp(req: Request) {
 
 export async function verifyTurnstileToken(req: Request, token: string | undefined, action: string) {
   if (!turnstileEnabled()) return;
+  const settings = getRuntimeSettings();
   if (!token) throw new HttpError(400, "Complete the security check before continuing.");
 
   let response: Response;
@@ -30,7 +32,7 @@ export async function verifyTurnstileToken(req: Request, token: string | undefin
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        secret: config.turnstileSecretKey,
+        secret: settings.turnstileSecretKey,
         response: token,
         remoteip: visitorIp(req),
         idempotency_key: crypto.randomUUID()

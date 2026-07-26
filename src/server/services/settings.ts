@@ -5,6 +5,7 @@ import { config } from "../config.js";
 import { decrypt, encrypt, isEncrypted } from "./crypto.js";
 import { createWorkerJoinToken } from "./tokens.js";
 import { normalizeString } from "./utils.js";
+import type { RuntimePublicSettings } from "../../shared/types.js";
 
 export type R2SettingsInput = {
   enabled?: boolean;
@@ -21,6 +22,7 @@ const r2SettingsKey = "cloudflare.r2";
 const workerJoinTokenKey = "worker.join_token";
 const setupWizardKey = "setup.wizard";
 const multiNodeSettingsKey = "feature.multi_node";
+const runtimeSettingsKey = "runtime.settings";
 const emptyR2Settings: StoredR2Settings = {
   enabled: false,
   accountId: "",
@@ -50,6 +52,25 @@ const emptyMultiNodeSettings: MultiNodeSettings = {
   enabled: false
 };
 
+type StoredRuntimeSettings = RuntimePublicSettings & {
+  turnstileSecretKey: string;
+};
+
+export type RuntimeSettingsInput = Omit<StoredRuntimeSettings, "hasTurnstileSecretKey"> & {
+  clearTurnstileSecretKey?: boolean;
+};
+
+let runtimeSettings: StoredRuntimeSettings = {
+  appBaseUrl: config.appBaseUrl,
+  cookieSecure: config.cookieSecure,
+  turnstileSiteKey: config.turnstileSiteKey,
+  turnstileSecretKey: config.turnstileSecretKey,
+  hasTurnstileSecretKey: Boolean(config.turnstileSecretKey),
+  commandTimeoutMs: config.commandTimeoutMs,
+  commandOutputMaxBytes: config.commandOutputMaxBytes,
+  deploymentLogMaxChars: config.deploymentLogMaxChars
+};
+
 function readStoredSecret(value: unknown) {
   const normalized = normalizeString(value);
   if (!normalized || !isEncrypted(normalized)) return normalized;
@@ -58,6 +79,74 @@ function readStoredSecret(value: unknown) {
   } catch {
     return "";
   }
+}
+
+function parseRuntimeSettings(value: string | undefined): StoredRuntimeSettings {
+  if (!value) return runtimeSettings;
+  try {
+    const parsed = JSON.parse(value) as Partial<StoredRuntimeSettings>;
+    const turnstileSecretKey = Object.prototype.hasOwnProperty.call(parsed, "turnstileSecretKey")
+      ? readStoredSecret(parsed.turnstileSecretKey)
+      : runtimeSettings.turnstileSecretKey;
+    return {
+      appBaseUrl: normalizeString(parsed.appBaseUrl) || runtimeSettings.appBaseUrl,
+      cookieSecure: typeof parsed.cookieSecure === "boolean" ? parsed.cookieSecure : runtimeSettings.cookieSecure,
+      turnstileSiteKey: normalizeString(parsed.turnstileSiteKey),
+      turnstileSecretKey,
+      hasTurnstileSecretKey: Boolean(turnstileSecretKey),
+      commandTimeoutMs: Number.isInteger(parsed.commandTimeoutMs) ? Number(parsed.commandTimeoutMs) : runtimeSettings.commandTimeoutMs,
+      commandOutputMaxBytes: Number.isInteger(parsed.commandOutputMaxBytes) ? Number(parsed.commandOutputMaxBytes) : runtimeSettings.commandOutputMaxBytes,
+      deploymentLogMaxChars: Number.isInteger(parsed.deploymentLogMaxChars) ? Number(parsed.deploymentLogMaxChars) : runtimeSettings.deploymentLogMaxChars
+    };
+  } catch {
+    return runtimeSettings;
+  }
+}
+
+export function getRuntimeSettings() {
+  return runtimeSettings;
+}
+
+export function publicRuntimeSettings(): RuntimePublicSettings {
+  return {
+    appBaseUrl: runtimeSettings.appBaseUrl,
+    cookieSecure: runtimeSettings.cookieSecure,
+    turnstileSiteKey: runtimeSettings.turnstileSiteKey,
+    hasTurnstileSecretKey: Boolean(runtimeSettings.turnstileSecretKey),
+    commandTimeoutMs: runtimeSettings.commandTimeoutMs,
+    commandOutputMaxBytes: runtimeSettings.commandOutputMaxBytes,
+    deploymentLogMaxChars: runtimeSettings.deploymentLogMaxChars
+  };
+}
+
+export async function loadRuntimeSettings() {
+  const [row] = await db.select().from(appSettings).where(eq(appSettings.key, runtimeSettingsKey)).limit(1);
+  runtimeSettings = parseRuntimeSettings(row?.value);
+  return publicRuntimeSettings();
+}
+
+export async function saveRuntimeSettings(input: RuntimeSettingsInput) {
+  const nextSecret = input.clearTurnstileSecretKey ? "" : normalizeString(input.turnstileSecretKey) || runtimeSettings.turnstileSecretKey;
+  const next: StoredRuntimeSettings = {
+    appBaseUrl: input.appBaseUrl.replace(/\/$/, ""),
+    cookieSecure: input.cookieSecure,
+    turnstileSiteKey: normalizeString(input.turnstileSiteKey),
+    turnstileSecretKey: nextSecret,
+    hasTurnstileSecretKey: Boolean(nextSecret),
+    commandTimeoutMs: input.commandTimeoutMs,
+    commandOutputMaxBytes: input.commandOutputMaxBytes,
+    deploymentLogMaxChars: input.deploymentLogMaxChars
+  };
+  const stored = {
+    ...next,
+    turnstileSecretKey: nextSecret ? encrypt(nextSecret) : ""
+  };
+  await db.insert(appSettings).values({ key: runtimeSettingsKey, value: JSON.stringify(stored), updatedAt: new Date() }).onConflictDoUpdate({
+    target: appSettings.key,
+    set: { value: JSON.stringify(stored), updatedAt: new Date() }
+  });
+  runtimeSettings = next;
+  return publicRuntimeSettings();
 }
 
 function parseR2Settings(value: string | undefined): StoredR2Settings {

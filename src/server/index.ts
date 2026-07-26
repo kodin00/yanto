@@ -32,6 +32,7 @@ import agentTasksRouter from "./routes/agent-tasks.js";
 import { archiveCompletedAgentTasks, drainActiveAgentRuns, recoverInterruptedAgentRuns } from "./services/agent-tasks.js";
 import { warmCodexAccountStatus } from "./services/codex-auth.js";
 import { logSetupCodeIfNeeded } from "./services/accounts.js";
+import { getRuntimeSettings, loadRuntimeSettings } from "./services/settings.js";
 
 const app = express();
 
@@ -65,7 +66,7 @@ function csrfCookieOptions() {
     httpOnly: false,
     path: "/",
     sameSite: "lax" as const,
-    secure: config.cookieSecure
+    secure: getRuntimeSettings().cookieSecure
   };
 }
 
@@ -150,6 +151,7 @@ app.get(/.*/, (_req, res) => {
 async function main() {
   warnOnUnsafeDefaults();
   await migrate();
+  await loadRuntimeSettings();
   await logSetupCodeIfNeeded();
   await ensureLocalMasterNode();
   await recoverInterruptedDeployments();

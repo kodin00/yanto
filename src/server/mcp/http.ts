@@ -5,6 +5,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 import { authenticateMcpToken, bearerTokenFromHeader } from "../services/mcp-tokens.js";
+import { getRuntimeSettings } from "../services/settings.js";
 import { createYantoMcpServer } from "./registry.js";
 
 const router = Router();
@@ -27,7 +28,7 @@ function splitCsv(value: string) {
 
 function appBaseOrigin() {
   try {
-    return new URL(config.appBaseUrl).origin;
+    return new URL(getRuntimeSettings().appBaseUrl).origin;
   } catch {
     return "";
   }
@@ -35,7 +36,7 @@ function appBaseOrigin() {
 
 function appBaseHost() {
   try {
-    return new URL(config.appBaseUrl).host;
+    return new URL(getRuntimeSettings().appBaseUrl).host;
   } catch {
     return "";
   }

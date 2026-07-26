@@ -18,7 +18,7 @@ vi.mock("../src/server/db/index.js", () => ({
 }));
 
 import { decrypt, encrypt, isEncrypted } from "../src/server/services/crypto.js";
-import { getStoredR2Settings, publicMultiNodeSettings, saveMultiNodeSettings, saveR2Settings } from "../src/server/services/settings.js";
+import { getStoredR2Settings, loadRuntimeSettings, publicMultiNodeSettings, saveMultiNodeSettings, saveR2Settings, saveRuntimeSettings } from "../src/server/services/settings.js";
 
 describe("multi-node settings", () => {
   beforeEach(() => {
@@ -122,5 +122,61 @@ describe("R2 credential storage", () => {
     expect(decrypt(stored.secretAccessKey)).toBe("secret-key");
     expect(persisted).not.toContain('"accessKeyId":"access-key"');
     expect(persisted).not.toContain('"secretAccessKey":"secret-key"');
+  });
+});
+
+describe("runtime settings", () => {
+  beforeEach(() => {
+    for (const mock of Object.values(dbMocks)) mock.mockReset();
+    dbMocks.select.mockReturnValue({ from: dbMocks.from });
+    dbMocks.from.mockReturnValue({ where: dbMocks.where });
+    dbMocks.where.mockReturnValue({ limit: dbMocks.limit });
+    dbMocks.insert.mockReturnValue({ values: dbMocks.values });
+    dbMocks.values.mockReturnValue({ onConflictDoUpdate: dbMocks.onConflictDoUpdate });
+    dbMocks.onConflictDoUpdate.mockResolvedValue(undefined);
+  });
+
+  it("persists the Turnstile secret encrypted and returns only its presence", async () => {
+    let persisted = "";
+    dbMocks.values.mockImplementation((row: { value: string }) => {
+      persisted = row.value;
+      return { onConflictDoUpdate: dbMocks.onConflictDoUpdate };
+    });
+
+    const result = await saveRuntimeSettings({
+      appBaseUrl: "https://yanto.example.com/",
+      cookieSecure: true,
+      turnstileSiteKey: "site-key",
+      turnstileSecretKey: "turnstile-secret",
+      commandTimeoutMs: 120_000,
+      commandOutputMaxBytes: 65_536,
+      deploymentLogMaxChars: 25_000
+    });
+
+    expect(result).toEqual(expect.objectContaining({ appBaseUrl: "https://yanto.example.com", hasTurnstileSecretKey: true }));
+    expect(result).not.toHaveProperty("turnstileSecretKey");
+    const stored = JSON.parse(persisted) as { turnstileSecretKey: string };
+    expect(isEncrypted(stored.turnstileSecretKey)).toBe(true);
+    expect(decrypt(stored.turnstileSecretKey)).toBe("turnstile-secret");
+  });
+
+  it("loads persisted runtime values and decrypts the secret", async () => {
+    dbMocks.limit.mockResolvedValue([{ value: JSON.stringify({
+      appBaseUrl: "https://saved.example.com",
+      cookieSecure: true,
+      turnstileSiteKey: "saved-site",
+      turnstileSecretKey: encrypt("saved-secret"),
+      commandTimeoutMs: 90_000,
+      commandOutputMaxBytes: 32_768,
+      deploymentLogMaxChars: 20_000
+    }) }]);
+
+    await expect(loadRuntimeSettings()).resolves.toEqual(expect.objectContaining({
+      appBaseUrl: "https://saved.example.com",
+      cookieSecure: true,
+      turnstileSiteKey: "saved-site",
+      hasTurnstileSecretKey: true,
+      commandTimeoutMs: 90_000
+    }));
   });
 });

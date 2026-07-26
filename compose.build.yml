@@ -1,0 +1,8 @@
+services:
+  app:
+    build: .
+    image: yanto:local
+
+  frps:
+    build: .
+    image: yanto:local

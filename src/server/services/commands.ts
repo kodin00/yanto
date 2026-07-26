@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { config } from "../config.js";
+import { getRuntimeSettings } from "./settings.js";
 
 export type CommandResult = {
   exitCode: number;
@@ -21,8 +21,9 @@ export type RunCommandOptions = {
 
 export function runCommand(command: string, args: string[], options: RunCommandOptions = {}) {
   return new Promise<CommandResult>((resolve) => {
-    const timeoutMs = options.timeoutMs ?? config.commandTimeoutMs;
-    const maxOutputBytes = options.maxOutputBytes ?? config.commandOutputMaxBytes;
+    const runtimeSettings = getRuntimeSettings();
+    const timeoutMs = options.timeoutMs ?? runtimeSettings.commandTimeoutMs;
+    const maxOutputBytes = options.maxOutputBytes ?? runtimeSettings.commandOutputMaxBytes;
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.inheritEnv === false ? options.env : { ...process.env, ...options.env },

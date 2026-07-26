@@ -84,6 +84,6 @@ jobs:
           cd $(printf '%q' "$VPS_APP_DIR")
           git fetch --prune origin master
           git checkout --detach $(printf '%q' "$DEPLOY_SHA")
-          sudo -n docker compose -f compose.yml up -d --build --remove-orphans --wait --wait-timeout 180
+          sudo -n docker compose -f compose.yml -f compose.build.yml up -d --build --remove-orphans --wait --wait-timeout 180
           sudo -n docker compose -f compose.yml ps
           EOF
