@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { deploymentNodes, deployments, projects, type DeploymentRow, type ProjectRow } from "../db/schema.js";
 import { config } from "../config.js";
@@ -11,7 +11,15 @@ import { deploymentEvents } from "./deployment-events.js";
 import { pathExists } from "./paths.js";
 import { gitSshEnv, resolveGitPrivateKeyPath } from "./ssh.js";
 
-const activeDeployments = new Map<string, DeploymentRow>();
+type ActiveLocalDeployment = {
+  deployment: DeploymentRow;
+  controller: AbortController;
+  promise: Promise<void>;
+};
+
+const activeDeployments = new Map<string, ActiveLocalDeployment>();
+const pendingDeploymentStarts = new Set<Promise<unknown>>();
+let acceptingDeployments = true;
 
 function now() {
   return new Date();
@@ -122,11 +130,12 @@ export async function finishDeployment(deploymentId: string, status: "success" |
   }
 }
 
-async function runLocalDeployment(project: ProjectRow, deployment: DeploymentRow, pendingEnv?: PendingDeploymentEnv) {
+async function runLocalDeployment(project: ProjectRow, deployment: DeploymentRow, controller: AbortController, pendingEnv?: PendingDeploymentEnv) {
   try {
     await runProjectDeployment(project, deployment, {
       appendLog: (chunk) => appendDeploymentLog(deployment.id, chunk),
-      updateMetadata: (metadata) => updateDeploymentMetadata(deployment.id, metadata)
+      updateMetadata: (metadata) => updateDeploymentMetadata(deployment.id, metadata),
+      signal: controller.signal
     }, pendingEnv);
     await finishDeployment(deployment.id, "success", 0);
     const { reconcileTunnelAssignments } = await import("./cloudflare.js");
@@ -148,10 +157,10 @@ export type StartDeploymentOptions = {
   pendingEnv?: PendingDeploymentEnv;
 };
 
-export async function startDeployment(projectId: string, trigger: "manual" | "webhook" | "github" | "rollback", options: StartDeploymentOptions = {}) {
+async function startDeploymentInternal(projectId: string, trigger: "manual" | "webhook" | "github" | "rollback", options: StartDeploymentOptions) {
   const active = activeDeployments.get(projectId);
   if (active) {
-    return { deployment: active, reused: true };
+    return { deployment: active.deployment, reused: true };
   }
 
   const result = await db.transaction(async (tx) => {
@@ -199,13 +208,60 @@ export async function startDeployment(projectId: string, trigger: "manual" | "we
 
   if (!result.reused && result.project && result.node) {
     if (result.node.role === "master" && result.node.id === config.localNodeId) {
-      activeDeployments.set(projectId, result.deployment);
-      void runLocalDeployment(result.project, result.deployment, options.pendingEnv);
+      const controller = new AbortController();
+      const promise = runLocalDeployment(result.project, result.deployment, controller, options.pendingEnv);
+      activeDeployments.set(projectId, { deployment: result.deployment, controller, promise });
+      void promise;
     } else {
       await appendDeploymentLog(result.deployment.id, `Queued deployment for node ${result.node.name} (${result.node.id}).\n`);
     }
   }
   return { deployment: result.deployment, reused: result.reused };
+}
+
+export function startDeployment(projectId: string, trigger: "manual" | "webhook" | "github" | "rollback", options: StartDeploymentOptions = {}) {
+  if (!acceptingDeployments) {
+    return Promise.reject(new Error("The server is shutting down and cannot accept new deployments."));
+  }
+  const promise = startDeploymentInternal(projectId, trigger, options);
+  pendingDeploymentStarts.add(promise);
+  const remove = () => pendingDeploymentStarts.delete(promise);
+  void promise.then(remove, remove);
+  return promise;
+}
+
+export async function drainActiveDeployments(timeoutMs: number) {
+  acceptingDeployments = false;
+  const deadline = Date.now() + timeoutMs;
+
+  while (pendingDeploymentStarts.size || activeDeployments.size) {
+    for (const deployment of activeDeployments.values()) {
+      deployment.controller.abort(new Error("Deployment cancelled because the server is shutting down."));
+    }
+    const operations = [
+      ...pendingDeploymentStarts,
+      ...[...activeDeployments.values()].map((deployment) => deployment.promise)
+    ];
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      return { drained: false, activeDeploymentCount: activeDeployments.size + pendingDeploymentStarts.size };
+    }
+
+    let timer: NodeJS.Timeout | undefined;
+    const settled = await Promise.race([
+      Promise.allSettled(operations).then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), remainingMs);
+        timer.unref();
+      })
+    ]);
+    if (timer) clearTimeout(timer);
+    if (!settled) {
+      return { drained: false, activeDeploymentCount: activeDeployments.size + pendingDeploymentStarts.size };
+    }
+  }
+
+  return { drained: true, activeDeploymentCount: 0 };
 }
 
 export async function latestDeployments(limit = 500, projectIds?: string[]) {
@@ -232,6 +288,38 @@ export async function latestDeployments(limit = 500, projectIds?: string[]) {
     .where(projectIds ? (projectIds.length ? inArray(deployments.projectId, projectIds) : sql`false`) : undefined)
     .orderBy(desc(deployments.startedAt))
     .limit(limit);
+}
+
+export async function paginatedDeployments(page: number, pageSize: number, projectIds?: string[]) {
+  const where = projectIds ? (projectIds.length ? inArray(deployments.projectId, projectIds) : sql`false`) : undefined;
+  const selection = {
+    id: deployments.id,
+    projectId: deployments.projectId,
+    projectName: projects.name,
+    nodeId: deployments.nodeId,
+    nodeName: deploymentNodes.name,
+    status: deployments.status,
+    trigger: deployments.trigger,
+    targetRef: deployments.targetRef,
+    commitSha: deployments.commitSha,
+    commitMessage: deployments.commitMessage,
+    rollbackFromDeploymentId: deployments.rollbackFromDeploymentId,
+    exitCode: deployments.exitCode,
+    startedAt: deployments.startedAt,
+    finishedAt: deployments.finishedAt
+  };
+  const [items, [totalRow]] = await Promise.all([
+    db.select(selection)
+      .from(deployments)
+      .leftJoin(projects, eq(projects.id, deployments.projectId))
+      .leftJoin(deploymentNodes, eq(deploymentNodes.id, deployments.nodeId))
+      .where(where)
+      .orderBy(desc(deployments.startedAt))
+      .limit(pageSize)
+      .offset((page - 1) * pageSize),
+    db.select({ value: count() }).from(deployments).where(where)
+  ]);
+  return { items, total: totalRow?.value ?? 0, page, pageSize };
 }
 
 export async function findDeployment(id: string) {

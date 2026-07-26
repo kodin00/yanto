@@ -359,7 +359,7 @@ input {
 }
 
 button {
-  cursor: pointer;
+  cursor: default;
 }
 
 button:disabled {
@@ -1528,8 +1528,7 @@ a.button {
   transition: background 0.14s ease, box-shadow 0.14s ease, outline-color 0.14s ease;
 }
 
-.project-card:hover,
-.project-card:focus-visible {
+.project-card:hover {
   background: var(--project-hover);
   outline: 1px solid rgba(45, 111, 79, 0.42);
   outline-offset: -1px;

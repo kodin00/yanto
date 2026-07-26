@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => {
   });
   return {
     findDeployment: vi.fn(),
-    latestDeployments: vi.fn(),
+    paginatedDeployments: vi.fn(),
     onLogUpdate: vi.fn((_id: string, next: (event: DeploymentLogEvent) => void) => {
       listener = next;
       return unsubscribe;
@@ -34,7 +34,7 @@ vi.mock("../src/server/auth.js", () => ({
 }));
 vi.mock("../src/server/services/deployments.js", () => ({
   findDeployment: mocks.findDeployment,
-  latestDeployments: mocks.latestDeployments
+  paginatedDeployments: mocks.paginatedDeployments
 }));
 vi.mock("../src/server/services/deployment-events.js", () => ({
   deploymentEvents: { onLogUpdate: mocks.onLogUpdate }
@@ -55,6 +55,23 @@ describe("deployment event streaming", () => {
   });
 
   afterEach(() => vi.restoreAllMocks());
+
+  it("returns the requested server-side deployment page", async () => {
+    const page = { items: [{ id: "dep_21" }], total: 42, page: 3, pageSize: 10 };
+    mocks.paginatedDeployments.mockResolvedValueOnce(page);
+    const server = createApp().listen(0);
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Server did not start.");
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/deployments?page=3&pageSize=10`);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual(page);
+      expect(mocks.paginatedDeployments).toHaveBeenCalledWith(3, 10, undefined);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
 
   it("does not lose a terminal update while loading the initial snapshot", async () => {
     let finishSnapshot!: (value: Record<string, unknown>) => void;

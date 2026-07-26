@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { type AnyPgColumn, bigint, boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { type AnyPgColumn, bigint, boolean, check, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import type { ProjectPermission } from "../../shared/types.js";
 
 export const users = pgTable(
@@ -18,7 +18,10 @@ export const users = pgTable(
   (table) => [
     uniqueIndex("users_username_lower_idx").on(sql`lower(${table.username})`),
     uniqueIndex("users_single_owner_idx").on(table.role).where(sql`${table.role} = 'owner'`),
-    index("users_status_idx").on(table.status)
+    index("users_status_idx").on(table.status),
+    check("users_role_check", sql`${table.role} IN ('owner', 'member')`),
+    check("users_status_check", sql`${table.status} IN ('invited', 'active', 'disabled')`),
+    check("users_username_nonempty_check", sql`length(${table.username}) > 0`)
   ]
 );
 
@@ -77,7 +80,8 @@ export const userProjectAccess = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.projectId] }),
-    index("user_project_access_project_idx").on(table.projectId)
+    index("user_project_access_project_idx").on(table.projectId),
+    check("user_project_access_permissions_array_check", sql`jsonb_typeof(${table.permissions}) = 'array'`)
   ]
 );
 
@@ -95,7 +99,8 @@ export const accountTokens = pgTable(
   (table) => [
     uniqueIndex("account_tokens_hash_idx").on(table.tokenHash),
     index("account_tokens_user_active_idx").on(table.userId, table.usedAt),
-    index("account_tokens_expires_idx").on(table.expiresAt)
+    index("account_tokens_expires_idx").on(table.expiresAt),
+    check("account_tokens_purpose_check", sql`${table.purpose} IN ('invite', 'reset')`)
   ]
 );
 
@@ -112,7 +117,10 @@ export const aiProviders = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
   },
-  (table) => [index("ai_providers_created_at_idx").on(table.createdAt)]
+  (table) => [
+    index("ai_providers_created_at_idx").on(table.createdAt),
+    check("ai_providers_protocol_check", sql`${table.protocol} IN ('openai_responses', 'openai_chat', 'anthropic_messages', 'codex_account')`)
+  ]
 );
 
 export const aiModels = pgTable(
@@ -162,7 +170,8 @@ export const agentTasks = pgTable(
     index("agent_tasks_status_created_idx").on(table.status, table.createdAt),
     index("agent_tasks_archived_updated_idx").on(table.archivedAt, table.updatedAt),
     index("agent_tasks_project_idx").on(table.projectId),
-    uniqueIndex("agent_tasks_project_branch_idx").on(table.projectId, table.taskBranch)
+    uniqueIndex("agent_tasks_project_branch_idx").on(table.projectId, table.taskBranch),
+    check("agent_tasks_status_check", sql`${table.status} IN ('backlog', 'running', 'review', 'done')`)
   ]
 );
 
@@ -182,7 +191,8 @@ export const agentRuns = pgTable(
   (table) => [
     index("agent_runs_task_started_idx").on(table.taskId, table.startedAt),
     index("agent_runs_status_idx").on(table.status),
-    uniqueIndex("agent_runs_one_running_per_task_idx").on(table.taskId).where(sql`${table.status} = 'running'`)
+    uniqueIndex("agent_runs_one_running_per_task_idx").on(table.taskId).where(sql`${table.status} = 'running'`),
+    check("agent_runs_status_check", sql`${table.status} IN ('running', 'succeeded', 'failed', 'canceled')`)
   ]
 );
 
@@ -196,7 +206,10 @@ export const agentMessages = pgTable(
     content: text("content").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
   },
-  (table) => [index("agent_messages_task_created_idx").on(table.taskId, table.createdAt)]
+  (table) => [
+    index("agent_messages_task_created_idx").on(table.taskId, table.createdAt),
+    check("agent_messages_role_check", sql`${table.role} IN ('user', 'assistant')`)
+  ]
 );
 
 export const agentEvents = pgTable(
@@ -391,7 +404,10 @@ export const frpTunnels = pgTable(
   },
   (table) => [
     index("frp_tunnels_node_id_idx").on(table.nodeId),
-    uniqueIndex("frp_tunnels_protocol_remote_port_idx").on(table.protocol, table.remotePort)
+    uniqueIndex("frp_tunnels_protocol_remote_port_idx").on(table.protocol, table.remotePort),
+    check("frp_tunnels_protocol_check", sql`${table.protocol} IN ('tcp', 'udp')`),
+    check("frp_tunnels_local_port_check", sql`${table.localPort} BETWEEN 1 AND 65535`),
+    check("frp_tunnels_remote_port_check", sql`${table.remotePort} BETWEEN 1 AND 65535`)
   ]
 );
 

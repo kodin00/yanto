@@ -11,7 +11,7 @@ import { config, warnOnUnsafeDefaults } from "./config.js";
 import { migrate, pool } from "./db/index.js";
 import { logger } from "./logger.js";
 import { ensureLocalMasterNode } from "./services/nodes.js";
-import { recoverInterruptedDeployments } from "./services/deployments.js";
+import { drainActiveDeployments, recoverInterruptedDeployments } from "./services/deployments.js";
 import { ensureEnabledCloudflaredConnectors, reconcileTunnelAssignments } from "./services/cloudflare.js";
 
 import authRouter from "./routes/auth.js";
@@ -186,9 +186,17 @@ async function main() {
     logger.info("shutdown starting", { signal });
     clearInterval(taskArchiveTimer);
     const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));
-    const drained = await drainActiveAgentRuns(config.agentShutdownTimeoutMs);
-    if (!drained.drained) {
-      logger.error("agent run shutdown timed out", { signal, activeRunCount: drained.activeRunCount });
+    const [agentDrain, deploymentDrain] = await Promise.all([
+      drainActiveAgentRuns(config.agentShutdownTimeoutMs),
+      drainActiveDeployments(config.agentShutdownTimeoutMs)
+    ]);
+    if (!agentDrain.drained) {
+      logger.error("agent run shutdown timed out", { signal, activeRunCount: agentDrain.activeRunCount });
+    }
+    if (!deploymentDrain.drained) {
+      logger.error("deployment shutdown timed out", { signal, activeDeploymentCount: deploymentDrain.activeDeploymentCount });
+    }
+    if (!agentDrain.drained || !deploymentDrain.drained) {
       server.closeAllConnections();
     }
     await Promise.race([

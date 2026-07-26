@@ -452,13 +452,25 @@ describe("api client", () => {
     });
 
     it("deployments requests the expanded history limit", async () => {
-      const fetchMock = mockFetch([]);
+      const fetchMock = mockFetch({ items: [], total: 0, page: 1, pageSize: 500 });
 
       await api.deployments();
 
-      expect(fetchMock).toHaveBeenCalledWith("/api/deployments?limit=500", expect.objectContaining({
+      expect(fetchMock).toHaveBeenCalledWith("/api/deployments?page=1&pageSize=500", expect.objectContaining({
         credentials: "include"
       }));
+    });
+
+    it("requests explicit server-side history pages", async () => {
+      const fetchMock = mockFetch({ items: [], total: 31, page: 3, pageSize: 10 });
+
+      await api.deploymentsPage(3, 10);
+      await api.backupsPage(2, 10);
+      await api.auditLogPage(4, 10);
+
+      expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/deployments?page=3&pageSize=10", expect.anything());
+      expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/backups?page=2&pageSize=10", expect.anything());
+      expect(fetchMock).toHaveBeenNthCalledWith(3, "/api/audit-logs?page=4&pageSize=10", expect.anything());
     });
 
     it("startContainer sends POST to /api/containers/:id/start", async () => {

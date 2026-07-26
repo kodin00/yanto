@@ -6,10 +6,11 @@ type PaginationProps = {
   label: string;
   page: number;
   totalItems: number;
+  disabled?: boolean;
   onPageChange: (page: number) => void;
 };
 
-export function Pagination({ label, page, totalItems, onPageChange }: PaginationProps) {
+export function Pagination({ label, page, totalItems, disabled, onPageChange }: PaginationProps) {
   const pages = Math.max(1, Math.ceil(totalItems / pageSize));
   if (totalItems <= pageSize) return null;
 
@@ -23,13 +24,13 @@ export function Pagination({ label, page, totalItems, onPageChange }: Pagination
         {label} {start}-{end} of {totalItems}
       </span>
       <div>
-        <Button variant="secondary" disabled={currentPage <= 1} onClick={() => onPageChange(currentPage - 1)} icon={<ChevronLeft size={15} />}>
+        <Button variant="secondary" disabled={disabled || currentPage <= 1} onClick={() => onPageChange(currentPage - 1)} icon={<ChevronLeft size={15} />}>
           Prev
         </Button>
         <span className="page-count" aria-live="polite">
           {currentPage} / {pages}
         </span>
-        <Button variant="secondary" disabled={currentPage >= pages} onClick={() => onPageChange(currentPage + 1)} icon={<ChevronRight size={15} />}>
+        <Button variant="secondary" disabled={disabled || currentPage >= pages} onClick={() => onPageChange(currentPage + 1)} icon={<ChevronRight size={15} />}>
           Next
         </Button>
       </div>

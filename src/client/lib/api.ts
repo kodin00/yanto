@@ -1,4 +1,4 @@
-import type { AgentGitPreview, AgentRun, AgentTask, AgentTaskDetail, AgentTaskWorktree, AiModel, AiProvider, AiProviderProtocol, AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, CodexAccountStatus, ContainerInfo, Deployment, DeploymentNode, FrpClientSetup, FrpOverview, FrpSettings, FrpTunnel, ManagedUser, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, PostgresBackupTarget, Project, ProjectBranch, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SessionUser, SetupWizardStatus, SystemUsage, UserProjectAccess } from "../../shared/types";
+import type { AgentGitPreview, AgentRun, AgentTask, AgentTaskDetail, AgentTaskWorktree, AiModel, AiProvider, AiProviderProtocol, AuditLog, Backup, CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflarePublicSettings, CloudflareRoute, CloudflareRouteDiagnostic, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareTunnelStatus, CloudflareZone, CodexAccountStatus, ContainerInfo, Deployment, DeploymentNode, FrpClientSetup, FrpOverview, FrpSettings, FrpTunnel, ManagedUser, McpAccessLevel, McpAccessToken, MultiNodePublicSettings, PaginatedResponse, PostgresBackupTarget, Project, ProjectBranch, ProjectWithDeployToken, R2PublicSettings, RollbackPreview, SessionUser, SetupWizardStatus, SystemUsage, UserProjectAccess } from "../../shared/types";
 
 export type BackupRecord = Backup;
 export type AuditLogEntry = AuditLog;
@@ -323,10 +323,12 @@ export const api = {
   pushAgentTask: (id: string) => request<{ sha: string }>(`/api/agent/tasks/${id}/push`, { method: "POST" }),
   cleanupAgentTask: (id: string, force = false) => request<void>(`/api/agent/tasks/${id}/worktree${force ? "?force=true" : ""}`, { method: "DELETE" }),
   agentTaskEventStream: (id: string) => `/api/agent/tasks/${id}/events/stream`,
-  deployments: (limit = 500) => request<Deployment[]>(`/api/deployments?limit=${limit}`),
+  deploymentsPage: (page = 1, pageSize = 10) => request<PaginatedResponse<Deployment>>(`/api/deployments?page=${page}&pageSize=${pageSize}`),
+  deployments: async (limit = 500) => (await request<PaginatedResponse<Deployment>>(`/api/deployments?page=1&pageSize=${limit}`)).items,
   deploymentLogs: (id: string) => request<string>(`/api/deployments/${id}/logs`),
   deploymentLogStream: (id: string) => `/api/deployments/${id}/logs/stream`,
-  backups: () => request<BackupRecord[]>("/api/backups"),
+  backupsPage: (page = 1, pageSize = 10) => request<PaginatedResponse<BackupRecord>>(`/api/backups?page=${page}&pageSize=${pageSize}`),
+  backups: async (limit = 50) => (await request<PaginatedResponse<BackupRecord>>(`/api/backups?page=1&pageSize=${limit}`)).items,
   postgresBackupTargets: () => request<PostgresTarget[]>("/api/backups/postgres-targets"),
   createBackup: (containerId?: string) =>
     request<BackupRecord>("/api/backups", {
@@ -357,7 +359,11 @@ export const api = {
   deleteBackup: (id: string) => request<void>(`/api/backups/${id}`, { method: "DELETE" }),
   uploadBackupToR2: (id: string) => request<{ bucket: string; key: string; endpoint: string; filename: string; size: number }>(`/api/backups/${id}/upload-r2`, { method: "POST" }),
   backupDownloadUrl: (id: string) => `/api/backups/${id}/download`,
-  auditLog: () => request<AuditLogEntry[]>("/api/audit-logs"),
+  auditLogPage: (page = 1, pageSize = 10, projectId?: string) => {
+    const project = projectId ? `&projectId=${encodeURIComponent(projectId)}` : "";
+    return request<PaginatedResponse<AuditLogEntry>>(`/api/audit-logs?page=${page}&pageSize=${pageSize}${project}`);
+  },
+  auditLog: async (limit = 100) => (await request<PaginatedResponse<AuditLogEntry>>(`/api/audit-logs?page=1&pageSize=${limit}`)).items,
   containers: () => request<ContainerInfo[]>("/api/containers"),
   containerLogs: (id: string) => request<string>(`/api/containers/${id}/logs`),
   containerLogStream: (id: string) => `/api/containers/${id}/logs/stream`,

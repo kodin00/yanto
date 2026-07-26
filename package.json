@@ -21,7 +21,7 @@
     "test:coverage": "vitest run --coverage",
     "lint": "eslint .",
     "db:generate": "drizzle-kit generate",
-    "db:push": "drizzle-kit push"
+    "db:migrate": "tsx -e \"import('./src/server/db/index.ts').then(async ({ migrate, pool }) => { await migrate(); await pool.end(); })\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
@@ -44,6 +44,9 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/cookie-parser": "^1.4.9",
     "@types/express": "^5.0.3",
     "@types/jsonwebtoken": "^9.0.10",
@@ -56,6 +59,8 @@
     "concurrently": "^9.2.1",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9.36.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "jsdom": "^29.1.1",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "typescript-eslint": "^8.44.1",

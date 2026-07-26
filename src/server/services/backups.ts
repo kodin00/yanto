@@ -1,4 +1,4 @@
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { count, desc, eq, inArray, sql } from "drizzle-orm";
 import { spawn } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
@@ -193,6 +193,15 @@ export async function listBackupsForProjects(projectIds: string[], limit = 50) {
   if (projectIds.length === 0) return [];
   return db.select().from(backups).where(inArray(backups.projectId, projectIds))
     .orderBy(desc(backups.createdAt)).limit(limit);
+}
+
+export async function paginatedBackups(page: number, pageSize: number, projectIds?: string[]) {
+  const where = projectIds ? (projectIds.length ? inArray(backups.projectId, projectIds) : sql`false`) : undefined;
+  const [items, [totalRow]] = await Promise.all([
+    db.select().from(backups).where(where).orderBy(desc(backups.createdAt)).limit(pageSize).offset((page - 1) * pageSize),
+    db.select({ value: count() }).from(backups).where(where)
+  ]);
+  return { items, total: totalRow?.value ?? 0, page, pageSize };
 }
 
 export async function getBackup(id: string) {

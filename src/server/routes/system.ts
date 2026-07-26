@@ -3,8 +3,9 @@ import { requireAuth, requireOwner } from "../auth.js";
 import { accessibleProjectIds, assertProjectAccess } from "../authorization.js";
 import { config } from "../config.js";
 import { asyncRoute, actor } from "../http-utils.js";
+import { requestPagination } from "../pagination.js";
 import { recordAuditLog } from "../services/audit.js";
-import { listAuditLogs, listAuditLogsForProjects } from "../services/audit.js";
+import { paginatedAuditLogs } from "../services/audit.js";
 import { cleanupDocker, previewDockerCleanup } from "../services/docker.js";
 import { ensureWorkerJoinToken } from "../services/settings.js";
 import { listNodes } from "../services/nodes.js";
@@ -47,13 +48,11 @@ router.get(
   "/api/audit-logs",
   requireAuth,
   asyncRoute(async (req, res) => {
-    const limit = Math.min(500, Math.max(1, Number(req.query.limit ?? 100)));
+    const { page, pageSize } = requestPagination(req.query, 10, 500);
     const projectId = typeof req.query.projectId === "string" ? req.query.projectId : undefined;
     if (projectId) assertProjectAccess(req, projectId);
     const projectIds = accessibleProjectIds(req);
-    res.json(projectIds === null || projectId
-      ? await listAuditLogs(limit, projectId)
-      : await listAuditLogsForProjects([...projectIds], limit));
+    res.json(await paginatedAuditLogs(page, pageSize, projectIds === null ? undefined : [...projectIds], projectId));
   })
 );
 

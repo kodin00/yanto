@@ -184,23 +184,27 @@ export async function createAgentTask(input: CreateAgentTaskInput) {
   if (input.autoCleanup && !input.autoPush) throw new HttpError(400, "Auto-cleanup requires auto-push.");
   const id = createId("agt");
   try {
-    const [task] = await db.insert(agentTasks).values({
-      id,
-      projectId: project.id,
-      modelId: input.modelId,
-      title: input.title.trim(),
-      prompt: input.prompt.trim(),
-      sourceBranch: input.sourceBranch.trim(),
-      taskBranch: input.taskBranch.trim(),
-      resumeExistingBranch: input.resumeExistingBranch ?? false,
-      autoCommit: input.autoCommit ?? false,
-      autoPush: input.autoPush ?? false,
-      autoCleanup: input.autoCleanup ?? false,
-      status: "backlog",
-      createdAt: new Date(),
-      updatedAt: new Date()
-    }).returning();
-    await db.insert(agentMessages).values({ id: createId("agm"), taskId: id, role: "user", content: task.prompt, createdAt: new Date() });
+    const task = await db.transaction(async (tx) => {
+      const createdAt = new Date();
+      const [createdTask] = await tx.insert(agentTasks).values({
+        id,
+        projectId: project.id,
+        modelId: input.modelId,
+        title: input.title.trim(),
+        prompt: input.prompt.trim(),
+        sourceBranch: input.sourceBranch.trim(),
+        taskBranch: input.taskBranch.trim(),
+        resumeExistingBranch: input.resumeExistingBranch ?? false,
+        autoCommit: input.autoCommit ?? false,
+        autoPush: input.autoPush ?? false,
+        autoCleanup: input.autoCleanup ?? false,
+        status: "backlog",
+        createdAt,
+        updatedAt: createdAt
+      }).returning();
+      await tx.insert(agentMessages).values({ id: createId("agm"), taskId: id, role: "user", content: createdTask.prompt, createdAt });
+      return createdTask;
+    });
     return (await getAgentTask(task.id))!;
   } catch (error) {
     if ((error as { code?: string }).code === "23505") throw new HttpError(409, "That task branch is already assigned to another task in this project.");

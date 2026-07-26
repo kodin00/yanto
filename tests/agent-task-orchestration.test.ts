@@ -6,10 +6,11 @@ type TestState = {
   messages: AgentMessageRow[];
   runs: AgentRunRow[];
   events: Array<Record<string, unknown>>;
+  failMessageInsert: boolean;
 };
 
 const mocks = vi.hoisted(() => {
-  const state: TestState = { tasks: [], messages: [], runs: [], events: [] };
+  const state: TestState = { tasks: [], messages: [], runs: [], events: [], failMessageInsert: false };
   const tableName = (table: object) => (table as Record<symbol, unknown>)[Symbol.for("drizzle:Name")] as string;
   const conditionValues = (condition: unknown): unknown[] => {
     if (!condition || typeof condition !== "object") return [];
@@ -57,6 +58,8 @@ const mocks = vi.hoisted(() => {
     values(values: Record<string, unknown>) {
       const name = tableName(table);
       const row = { ...values } as never;
+      if (name === "agent_tasks") state.tasks.push(row);
+      if (name === "agent_messages" && state.failMessageInsert) throw new Error("message insert failed");
       if (name === "agent_messages") state.messages.push(row);
       if (name === "agent_runs") state.runs.push(row);
       if (name === "agent_events") state.events.push(row);
@@ -192,15 +195,76 @@ describe("agent task orchestration", () => {
     mocks.state.messages = [];
     mocks.state.runs = [];
     mocks.state.events = [];
+    mocks.state.failMessageInsert = false;
     mocks.resolveProviderModel.mockResolvedValue(resolvedModel);
     mocks.prepareTaskWorktree.mockImplementation(() => new Promise(() => undefined));
     mocks.runAgentProvider.mockImplementation(() => new Promise(() => undefined));
     mocks.runCommand.mockResolvedValue({ exitCode: 0, output: "" });
-    mocks.db.transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => callback(mocks.db));
+    mocks.db.transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => {
+      const snapshot = {
+        tasks: [...mocks.state.tasks],
+        messages: [...mocks.state.messages],
+        runs: [...mocks.state.runs],
+        events: [...mocks.state.events]
+      };
+      try {
+        return await callback(mocks.db);
+      } catch (error) {
+        mocks.state.tasks = snapshot.tasks;
+        mocks.state.messages = snapshot.messages;
+        mocks.state.runs = snapshot.runs;
+        mocks.state.events = snapshot.events;
+        throw error;
+      }
+    });
     mocks.cleanupTaskWorktree.mockResolvedValue(undefined);
     mocks.commitTaskWorktree.mockResolvedValue("commit-sha");
     mocks.pushTaskWorktree.mockResolvedValue("pushed-sha");
     mocks.taskGitPreview.mockResolvedValue({ isClean: true });
+  });
+
+  it("creates the task and initial user message in one transaction", async () => {
+    mocks.state.tasks = [];
+    const { createAgentTask } = await loadService();
+
+    const created = await createAgentTask({
+      projectId: project.id,
+      modelId: "aim_test",
+      title: "Atomic task",
+      prompt: "Do the work",
+      sourceBranch: "main",
+      taskBranch: "task/atomic",
+      autoCommit: false,
+      autoPush: false,
+      autoCleanup: false
+    });
+
+    expect(mocks.db.transaction).toHaveBeenCalledOnce();
+    expect(mocks.state.tasks).toHaveLength(1);
+    expect(mocks.state.messages).toEqual([
+      expect.objectContaining({ taskId: created.id, role: "user", content: "Do the work" })
+    ]);
+  });
+
+  it("does not leave a task behind when its initial message insert fails", async () => {
+    mocks.state.tasks = [];
+    mocks.state.failMessageInsert = true;
+    const { createAgentTask } = await loadService();
+
+    await expect(createAgentTask({
+      projectId: project.id,
+      modelId: "aim_test",
+      title: "Atomic task",
+      prompt: "Do the work",
+      sourceBranch: "main",
+      taskBranch: "task/atomic",
+      autoCommit: false,
+      autoPush: false,
+      autoCleanup: false
+    })).rejects.toThrow("message insert failed");
+
+    expect(mocks.state.tasks).toEqual([]);
+    expect(mocks.state.messages).toEqual([]);
   });
 
   it("admits exactly one of two simultaneous starts for the same task", async () => {

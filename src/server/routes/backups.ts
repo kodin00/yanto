@@ -7,9 +7,10 @@ import { requireAuth } from "../auth.js";
 import { accessibleProjectIds, assertProjectPermission, filterByProjectPermission, isOwner, listAccessibleContainers, projectForContainer, revalidateRequestPrincipal } from "../authorization.js";
 import { config } from "../config.js";
 import { HttpError, asyncRoute, actor, routeParam } from "../http-utils.js";
+import { requestPagination } from "../pagination.js";
 import { backupInput } from "../route-schemas.js";
 import { recordAuditLog } from "../services/audit.js";
-import { createPostgresBackup, deleteBackup, getBackup, listBackups, listBackupsForProjects, listPostgresBackupTargets, markBackupDownloaded, restorePostgresBackupTarget, uploadBackupToR2 } from "../services/backups.js";
+import { createPostgresBackup, deleteBackup, getBackup, listPostgresBackupTargets, markBackupDownloaded, paginatedBackups, restorePostgresBackupTarget, uploadBackupToR2 } from "../services/backups.js";
 
 const router = Router();
 
@@ -77,14 +78,14 @@ router.get(
   "/api/backups",
   requireAuth,
   asyncRoute(async (req, res) => {
-    const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 50)));
+    const { page, pageSize } = requestPagination(req.query, 10, 200);
     const projectIds = accessibleProjectIds(req);
     if (projectIds === null) {
-      res.json(await listBackups(limit));
+      res.json(await paginatedBackups(page, pageSize));
       return;
     }
     const allowedIds = filterByProjectPermission(req, [...projectIds].map((projectId) => ({ projectId })), "backups").map((row) => row.projectId);
-    res.json(await listBackupsForProjects(allowedIds, limit));
+    res.json(await paginatedBackups(page, pageSize, allowedIds));
   })
 );
 

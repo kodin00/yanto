@@ -11,7 +11,7 @@ type Props = {
   isOwner: boolean;
   postgresTargets: PostgresTarget[];
   visibleBackups: Backup[];
-  backups: Backup[];
+  totalItems: number;
   busy: string | null;
   loading?: boolean;
   r2Ready: boolean;
@@ -29,7 +29,7 @@ export const BackupsView = memo(function BackupsView(props: Props) {
     isOwner,
     postgresTargets,
     visibleBackups,
-    backups,
+    totalItems,
     busy,
     loading,
     r2Ready,
@@ -59,7 +59,7 @@ export const BackupsView = memo(function BackupsView(props: Props) {
       <section className="panel">
         <div className="panel-head">
           <h2>Backup history</h2>
-          <span className="count">{backups.length} dumps</span>
+          <span className="count">{totalItems} dumps</span>
         </div>
         <BackupTable
           backups={visibleBackups}
@@ -82,7 +82,7 @@ export const BackupsView = memo(function BackupsView(props: Props) {
             })
           }
         />
-        <Pagination label="Backups" page={backupPage} totalItems={backups.length} onPageChange={setBackupPage} />
+        <Pagination label="Backups" page={backupPage} totalItems={totalItems} disabled={loading} onPageChange={setBackupPage} />
       </section>
     </div>
   );

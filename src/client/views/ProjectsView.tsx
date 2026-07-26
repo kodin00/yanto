@@ -1,4 +1,4 @@
-import { AlertTriangle, Copy, KeyRound, Play, Plus, RotateCw, Square, Undo2 } from "lucide-react";
+import { AlertTriangle, Copy, KeyRound, Pencil, Play, Plus, RotateCw, Square, Undo2 } from "lucide-react";
 import { memo } from "react";
 import type { CloudflareRoute, CloudflareRouteDiagnostic, ContainerInfo, Deployment, DeploymentNode, Project, SessionUser } from "../../shared/types";
 import { endpoint, githubWebhookEndpoint } from "../app-utils";
@@ -102,15 +102,6 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
             <article
               className={`project-card ${canConfigure ? "" : "read-only"}`}
               key={project.id}
-              role={canConfigure ? "button" : undefined}
-              tabIndex={canConfigure ? 0 : undefined}
-              onClick={() => { if (canConfigure) openProject(project); }}
-              onKeyDown={(event) => {
-                if (canConfigure && (event.key === "Enter" || event.key === " ")) {
-                  event.preventDefault();
-                  openProject(project);
-                }
-              }}
             >
               <div className="project-card-main">
                 <div className="project-card-title">
@@ -136,7 +127,7 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
                       ) : (
                         <StatusBadge status={primaryRoute.enabled ? "checking" : "disabled"} label={primaryRoute.enabled ? "Checking hostname" : "Route disabled"} />
                       )}
-                      <a href={`https://${primaryRoute.hostname}`} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()}>
+                      <a href={`https://${primaryRoute.hostname}`} target="_blank" rel="noopener noreferrer">
                         https://{primaryRoute.hostname}
                       </a>
                     </>
@@ -147,7 +138,7 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
                   )}
                 </div>
               </div>
-              <div className="project-card-side" onClick={(event) => event.stopPropagation()}>
+              <div className="project-card-side">
                 <div className="project-copy-actions">
                   <Button variant="ghost" onClick={() => void copyText(endpoint(project, settings.appBaseUrl))} icon={<Copy size={14} />}>
                     Deploy URL
@@ -157,7 +148,8 @@ export const ProjectsView = memo(function ProjectsView(props: Props) {
                   </Button> : null}
                   {canUseSecrets ? <Button variant="ghost" loading={busy === `token:${project.id}`} onClick={() => void copyDeployToken(project)} icon={<KeyRound size={14} />}>Secret</Button> : null}
                 </div>
-                <div className="actions" onClick={(event) => event.stopPropagation()}>
+                <div className="actions">
+                  {canConfigure ? <Button variant="secondary" onClick={() => openProject(project)} icon={<Pencil size={15} />}>Edit</Button> : null}
                   {canDeploy && project.gitUrl ? <Button variant="secondary" onClick={() => openRollback(project)} icon={<Undo2 size={15} />}>Rollback</Button> : null}
                   {canDeploy ? <Button disabled={!project.manualDeployEnabled} loading={busy === `deploy:${project.id}`} onClick={() => void deploy(project)} icon={<Play size={15} />}>{busy === `deploy:${project.id}` ? "Deploying" : "Deploy"}</Button> : null}
                   {canUseRuntime ? <Button

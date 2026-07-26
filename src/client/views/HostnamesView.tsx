@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import type { CloudflareClient, CloudflareRoute, CloudflareTunnel, CloudflareTunnelAssignment, CloudflareZone, ContainerInfo, Project } from "../../shared/types";
 import { cloudflareAssignmentTcpPorts, cloudflareServiceUrl } from "../app-utils";
@@ -16,6 +16,8 @@ export function HostnamesView(props: HostnamesProps) {
 }
 
 function OwnerHostnamesView({ projects, containers, refreshKey, toast }: HostnamesProps) {
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
   const [tab, setTab] = useState<Tab>("hostnames");
   const [clients, setClients] = useState<CloudflareClient[]>([]);
   const [tunnels, setTunnels] = useState<CloudflareTunnel[]>([]);
@@ -45,7 +47,7 @@ function OwnerHostnamesView({ projects, containers, refreshKey, toast }: Hostnam
     }
   };
 
-  useEffect(() => { void load().catch((error) => toast(error instanceof Error ? error.message : "Unable to load Cloudflare data.", "error")); }, [refreshKey]);
+  useEffect(() => { void load().catch((error) => toastRef.current(error instanceof Error ? error.message : "Unable to load Cloudflare data.", "error")); }, [refreshKey]);
 
   const selectedTunnel = tunnels.find((item) => item.id === hostnameForm.tunnelId);
   const selectedClient = selectedTunnel ? clients.find((client) => client.id === selectedTunnel.clientId) : undefined;
@@ -186,6 +188,8 @@ function OwnerHostnamesView({ projects, containers, refreshKey, toast }: Hostnam
 }
 
 function ProjectHostnamesView({ projects, containers, refreshKey, toast }: HostnamesProps) {
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
   const [routes, setRoutes] = useState<Record<string, CloudflareRoute[]>>({});
   const [form, setForm] = useState({ hostname: "", serviceTarget: "", noTlsVerify: false });
@@ -202,9 +206,16 @@ function ProjectHostnamesView({ projects, containers, refreshKey, toast }: Hostn
   useEffect(() => {
     let active = true;
     setLoading(true);
-    void Promise.all(projects.map(async (entry) => [entry.id, await api.projectCfRoutes(entry.id)] as const))
-      .then((entries) => { if (active) setRoutes(Object.fromEntries(entries)); })
-      .catch((error) => { if (active) toast(error instanceof Error ? error.message : "Unable to load hostnames.", "error"); })
+    void api.cloudflareHostnames()
+      .then((entries) => {
+        if (!active) return;
+        const nextRoutes = Object.fromEntries(projects.map((entry) => [entry.id, [] as CloudflareRoute[]]));
+        for (const route of entries) {
+          if (route.projectId && nextRoutes[route.projectId]) nextRoutes[route.projectId].push(route);
+        }
+        setRoutes(nextRoutes);
+      })
+      .catch((error) => { if (active) toastRef.current(error instanceof Error ? error.message : "Unable to load hostnames.", "error"); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [projects, refreshKey]);

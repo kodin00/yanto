@@ -11,6 +11,7 @@ import { getProject } from "./projects.js";
 import { encrypt, decrypt, isEncrypted } from "./crypto.js";
 import { normalizeString } from "./utils.js";
 import { classifyRouteDiagnostic } from "./cloudflare-diagnostics.js";
+import { runRoutePublicationLifecycle } from "./cloudflare-route-publication.js";
 import { HttpError } from "../http-utils.js";
 import type { CloudflareClient, CloudflareDnsRecord, CloudflareDnsRecordType, CloudflareRouteDiagnostic, CloudflareRouteDiagnosticDnsRecord, CloudflareRouteReachabilityStatus, CloudflareZone } from "../../shared/types.js";
 
@@ -149,7 +150,7 @@ function cloudflareErrorMessage(body: string) {
 
 async function cfFetch<T>(settings: CloudflareAuth, apiPath: string, init?: RequestInit): Promise<T> {
   if (!settings.apiToken) {
-    throw new Error("Cloudflare API token is not configured.");
+    throw new HttpError(409, "Cloudflare API token is not configured.");
   }
 
   const response = await fetch(`${CF_API_BASE}${apiPath}`, {
@@ -195,7 +196,7 @@ export async function validateCloudflareSettings(input: Partial<CloudflareSettin
   }
 
   if (!settings.apiToken) {
-    throw new Error("Provide an API token to validate.");
+    throw new HttpError(400, "Provide an API token to validate.");
   }
 
   const account = await cfFetch<{ name: string }>(settings, `/accounts/${settings.accountId}`);
@@ -226,7 +227,7 @@ function publicClient(row: CloudflareClientRow): CloudflareClient {
 
 async function requireClient(clientId: string) {
   const [row] = await db.select().from(cloudflareClients).where(eq(cloudflareClients.id, clientId)).limit(1);
-  if (!row) throw new Error("Cloudflare client not found.");
+  if (!row) throw new HttpError(404, "Cloudflare client not found.");
   return decryptClient(row);
 }
 
@@ -238,7 +239,7 @@ export async function validateCloudflareClient(input: { accountId: string; zoneI
   const accountId = normalizeString(input.accountId);
   const zoneId = normalizeString(input.zoneId);
   const apiToken = normalizeString(input.apiToken);
-  if (!accountId || !zoneId || !apiToken) throw new Error("Account ID, Zone ID, and API token are required.");
+  if (!accountId || !zoneId || !apiToken) throw new HttpError(400, "Account ID, Zone ID, and API token are required.");
   await cfFetch<unknown[]>({ apiToken }, `/accounts/${accountId}/cfd_tunnel?per_page=1`);
   const zones = await cfFetch<{ id: string; name: string; status: string }[]>({ apiToken }, `/zones?account.id=${encodeURIComponent(accountId)}&per_page=50`);
   const zone = zones.find((item) => item.id === zoneId) ?? await cfFetch<{ id: string; name: string; status: string }>({ apiToken }, `/zones/${zoneId}`);
@@ -271,8 +272,9 @@ export async function updateCloudflareClient(clientId: string, input: { name?: s
 }
 
 export async function deleteCloudflareClient(clientId: string) {
+  await requireClient(clientId);
   const owned = await db.select({ id: cloudflareTunnels.id }).from(cloudflareTunnels).where(eq(cloudflareTunnels.clientId, clientId)).limit(1);
-  if (owned.length) throw new Error("Delete this client's tunnels first.");
+  if (owned.length) throw new HttpError(409, "Delete this client's tunnels first.");
   await db.delete(cloudflareClients).where(eq(cloudflareClients.id, clientId));
 }
 
@@ -347,7 +349,7 @@ export async function connectCloudflaredToProjectNetwork(tunnel: CloudflareTunne
 export async function createManagedTunnel(input: { clientId: string; name: string }) {
   const client = await requireClient(input.clientId);
   const tunnelName = normalizeString(input.name);
-  if (!tunnelName) throw new Error("Tunnel name is required.");
+  if (!tunnelName) throw new HttpError(400, "Tunnel name is required.");
   const result = await cfFetch<{ id: string; name: string }>({ apiToken: client.apiToken }, `/accounts/${client.accountId}/cfd_tunnel`, {
     method: "POST",
     body: JSON.stringify({ name: tunnelName, config_src: "cloudflare" })
@@ -381,12 +383,12 @@ export async function createManagedTunnel(input: { clientId: string; name: strin
 
 export async function deleteManagedTunnel(tunnelId: string, force = false) {
   const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, tunnelId)).limit(1);
-  if (!tunnel) throw new Error("Tunnel not found.");
+  if (!tunnel) throw new HttpError(404, "Tunnel not found.");
   const [routes, assignments] = await Promise.all([
     db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.tunnelId, tunnelId)),
     db.select().from(cloudflareTunnelAssignments).where(eq(cloudflareTunnelAssignments.tunnelId, tunnelId))
   ]);
-  if (!force && (routes.length || assignments.length)) throw new Error("Remove hostnames and network assignments first, or force delete the tunnel.");
+  if (!force && (routes.length || assignments.length)) throw new HttpError(409, "Remove hostnames and network assignments first, or force delete the tunnel.");
   const client = await requireClient(tunnel.clientId);
   if (force) {
     for (const route of routes) await deleteDnsRecordForRoute(client, tunnel, route).catch(() => undefined);
@@ -402,7 +404,7 @@ export async function ensureTunnelForNode(nodeId: string): Promise<CloudflareTun
   const existing = await getTunnelForNode(nodeId);
   if (existing) return existing;
   const [client] = await db.select().from(cloudflareClients).limit(1);
-  if (!client) throw new Error("Add a Cloudflare client before creating a tunnel.");
+  if (!client) throw new HttpError(409, "Add a Cloudflare client before creating a tunnel.");
   return decryptTunnelRow(await createManagedTunnel({ clientId: client.id, name: `yanto-${nodeId}` }));
 }
 
@@ -473,12 +475,12 @@ export async function listTunnelAssignments(tunnelId?: string) {
 
 export async function createTunnelAssignment(input: { tunnelId: string; projectId?: string; composeProject?: string; composeService?: string; containerName?: string }) {
   const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, input.tunnelId)).limit(1);
-  if (!tunnel) throw new Error("Tunnel not found.");
+  if (!tunnel) throw new HttpError(404, "Tunnel not found.");
   const composeProject = normalizeString(input.composeProject);
   const composeService = normalizeString(input.composeService);
   const containerName = normalizeString(input.containerName);
   const targetType = composeProject && composeService ? "compose_service" : "container";
-  if (targetType === "container" && !containerName) throw new Error("Choose a Compose service or container.");
+  if (targetType === "container" && !containerName) throw new HttpError(400, "Choose a Compose service or container.");
   const [assignment] = await db.insert(cloudflareTunnelAssignments).values({
     id: createId("cfa"), tunnelId: tunnel.id, targetType, projectId: input.projectId || null,
     composeProject: composeProject || null, composeService: composeService || null, containerName: containerName || null
@@ -494,9 +496,9 @@ export async function createTunnelAssignment(input: { tunnelId: string; projectI
 
 export async function deleteTunnelAssignment(assignmentId: string) {
   const [assignment] = await db.select().from(cloudflareTunnelAssignments).where(eq(cloudflareTunnelAssignments.id, assignmentId)).limit(1);
-  if (!assignment) throw new Error("Network assignment not found.");
+  if (!assignment) throw new HttpError(404, "Network assignment not found.");
   const route = await db.select({ id: cloudflareRoutes.id }).from(cloudflareRoutes).where(eq(cloudflareRoutes.assignmentId, assignmentId)).limit(1);
-  if (route.length) throw new Error("Remove hostnames using this assignment first.");
+  if (route.length) throw new HttpError(409, "Remove hostnames using this assignment first.");
   const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, assignment.tunnelId)).limit(1);
   if (tunnel) await disconnectAssignment(tunnel, assignment);
   await db.delete(cloudflareTunnelAssignments).where(eq(cloudflareTunnelAssignments.id, assignmentId));
@@ -556,8 +558,8 @@ export async function createManagedHostname(input: { tunnelId: string; assignmen
     db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, input.tunnelId)).limit(1),
     db.select().from(cloudflareTunnelAssignments).where(eq(cloudflareTunnelAssignments.id, input.assignmentId)).limit(1)
   ]);
-  if (!tunnel || !assignment || assignment.tunnelId !== tunnel.id) throw new Error("The hostname target must be assigned to this tunnel.");
-  if (!(await assignmentContainerIds(assignment)).length) throw new Error("The assigned target container is not available.");
+  if (!tunnel || !assignment || assignment.tunnelId !== tunnel.id) throw new HttpError(400, "The hostname target must be assigned to this tunnel.");
+  if (!(await assignmentContainerIds(assignment)).length) throw new HttpError(409, "The assigned target container is not available.");
   const hostname = normalizeString(input.hostname).toLowerCase();
   const serviceTarget = `${input.protocol}://${assignmentHost(assignment)}:${input.port}`;
   const [route] = await db.insert(cloudflareRoutes).values({
@@ -581,9 +583,9 @@ export async function createManagedHostname(input: { tunnelId: string; assignmen
 
 export async function retryManagedHostname(routeId: string) {
   const [route] = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.id, routeId)).limit(1);
-  if (!route) throw new Error("Hostname not found.");
+  if (!route) throw new HttpError(404, "Hostname not found.");
   const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, route.tunnelId)).limit(1);
-  if (!tunnel) throw new Error("Tunnel not found.");
+  if (!tunnel) throw new HttpError(404, "Tunnel not found.");
   const client = await requireClient(tunnel.clientId);
   await db.update(cloudflareRoutes).set({ enabled: true, syncStatus: "pending", lastError: null, updatedAt: new Date() }).where(eq(cloudflareRoutes.id, route.id));
   try {
@@ -601,7 +603,7 @@ export async function retryManagedHostname(routeId: string) {
 
 export async function deleteManagedHostname(routeId: string) {
   const [route] = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.id, routeId)).limit(1);
-  if (!route) throw new Error("Hostname not found.");
+  if (!route) throw new HttpError(404, "Hostname not found.");
   const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, route.tunnelId)).limit(1);
   const warnings: string[] = [];
   if (tunnel) {
@@ -669,10 +671,10 @@ function toPublicDnsRecord(record: CfDnsRecordResult): CloudflareDnsRecord {
 
 function ensureDnsSettings(settings: CloudflareDnsAuth) {
   if (!settings.zoneId) {
-    throw new Error("Cloudflare Zone ID is not configured.");
+    throw new HttpError(409, "Cloudflare Zone ID is not configured.");
   }
   if (!settings.apiToken) {
-    throw new Error("Cloudflare API token is not configured.");
+    throw new HttpError(409, "Cloudflare API token is not configured.");
   }
 }
 
@@ -924,20 +926,16 @@ export async function listRoutesForProject(projectId: string): Promise<Cloudflar
 
 export async function publishProjectRoute(projectId: string, hostname: string, serviceTarget: string, noTlsVerify = false, nodeId?: string): Promise<CloudflareRouteRow> {
   const project = await getProject(projectId);
-  if (!project) throw new Error("Project not found.");
+  if (!project) throw new HttpError(404, "Project not found.");
 
   const targetNodeId = nodeId ?? project.targetNodeId;
   const tunnel = await ensureTunnelForNode(targetNodeId);
   const settings = await getStoredCloudflareSettings();
   const [existingRoute] = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.projectId, projectId)).limit(1);
   const normalizedNoTlsVerify = serviceTarget.startsWith("https://") ? noTlsVerify : false;
-
-  if (existingRoute && existingRoute.hostname !== hostname) {
-    const [existingTunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, existingRoute.tunnelId)).limit(1);
-    if (existingTunnel) {
-      await deleteTunnelDnsRecord(settings, existingTunnel.cfTunnelId, existingRoute.hostname, existingRoute.cfDnsRecordId);
-    }
-  }
+  const [previousTunnel] = existingRoute?.tunnelId
+    ? await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, existingRoute.tunnelId)).limit(1)
+    : [];
 
   let routeId = existingRoute?.id ?? createId("cfr");
   if (existingRoute) {
@@ -949,7 +947,8 @@ export async function publishProjectRoute(projectId: string, hostname: string, s
         serviceTarget,
         noTlsVerify: normalizedNoTlsVerify,
         enabled: true,
-        cfDnsRecordId: null,
+        syncStatus: "pending",
+        lastError: null,
         updatedAt: new Date()
       })
       .where(eq(cloudflareRoutes.id, existingRoute.id));
@@ -967,27 +966,66 @@ export async function publishProjectRoute(projectId: string, hostname: string, s
         protocol: serviceTarget.startsWith("https://") ? "https" : "http",
         port: Number(serviceTarget.match(/:(\d+)$/)?.[1] ?? 80),
         noTlsVerify: normalizedNoTlsVerify,
-        enabled: true
+        enabled: true,
+        syncStatus: "pending",
+        lastError: null
       })
       .returning();
     routeId = created.id;
   }
 
-  const dnsRecordId = await upsertTunnelDnsRecord(settings, tunnel.cfTunnelId, hostname);
-  if (dnsRecordId) {
-    await db
-      .update(cloudflareRoutes)
-      .set({ cfDnsRecordId: dnsRecordId, lastPublishedAt: new Date() })
-      .where(eq(cloudflareRoutes.id, routeId));
-  }
-
-  await putTunnelConfig(tunnel);
-  if (existingRoute?.tunnelId && existingRoute.tunnelId !== tunnel.id) {
-    const [previousTunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, existingRoute.tunnelId)).limit(1);
-    if (previousTunnel) await putTunnelConfig(decryptTunnelRow(previousTunnel));
-  }
-  await ensureCloudflaredRunning(tunnel);
-  await connectCloudflaredToProjectNetwork(tunnel, project);
+  await runRoutePublicationLifecycle({
+    publishDns: () => upsertTunnelDnsRecord(settings, tunnel.cfTunnelId, hostname),
+    publishIngress: async () => {
+      await putTunnelConfig(tunnel);
+      if (previousTunnel && previousTunnel.id !== tunnel.id) await putTunnelConfig(decryptTunnelRow(previousTunnel));
+    },
+    prepareRuntime: async () => {
+      await ensureCloudflaredRunning(tunnel);
+      await connectCloudflaredToProjectNetwork(tunnel, project);
+    },
+    cleanupPrevious: async () => {
+      if (existingRoute && previousTunnel && existingRoute.hostname !== hostname) {
+        await deleteTunnelDnsRecord(settings, previousTunnel.cfTunnelId, existingRoute.hostname, existingRoute.cfDnsRecordId);
+      }
+    },
+    markActive: async (cfDnsRecordId) => {
+      await db.update(cloudflareRoutes).set({
+        cfDnsRecordId,
+        syncStatus: "active",
+        lastError: null,
+        lastPublishedAt: new Date(),
+        updatedAt: new Date()
+      }).where(eq(cloudflareRoutes.id, routeId));
+    },
+    markError: async (lastError, dnsRecordId) => {
+      if (dnsRecordId && (!existingRoute || existingRoute.hostname !== hostname)) {
+        await deleteTunnelDnsRecord(settings, tunnel.cfTunnelId, hostname, dnsRecordId).catch(() => undefined);
+      }
+      if (existingRoute) {
+        await db.update(cloudflareRoutes).set({
+          tunnelId: existingRoute.tunnelId,
+          assignmentId: existingRoute.assignmentId,
+          zoneId: existingRoute.zoneId,
+          hostname: existingRoute.hostname,
+          serviceTarget: existingRoute.serviceTarget,
+          protocol: existingRoute.protocol,
+          port: existingRoute.port,
+          noTlsVerify: existingRoute.noTlsVerify,
+          enabled: existingRoute.enabled,
+          cfDnsRecordId: existingRoute.cfDnsRecordId,
+          lastPublishedAt: existingRoute.lastPublishedAt,
+          syncStatus: "error",
+          lastError,
+          updatedAt: new Date()
+        }).where(eq(cloudflareRoutes.id, routeId));
+      } else {
+        await db.update(cloudflareRoutes).set({ enabled: false, syncStatus: "error", lastError, updatedAt: new Date() }).where(eq(cloudflareRoutes.id, routeId));
+      }
+      await putTunnelConfig(tunnel).catch(() => undefined);
+      if (previousTunnel && previousTunnel.id !== tunnel.id) await putTunnelConfig(decryptTunnelRow(previousTunnel)).catch(() => undefined);
+    }
+  });
 
   const [updated] = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.id, routeId)).limit(1);
   return updated;
@@ -995,7 +1033,7 @@ export async function publishProjectRoute(projectId: string, hostname: string, s
 
 export async function disableProjectRoute(routeId: string): Promise<CloudflareRouteRow> {
   const [route] = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.id, routeId)).limit(1);
-  if (!route) throw new Error("Route not found.");
+  if (!route) throw new HttpError(404, "Route not found.");
 
   await db.update(cloudflareRoutes).set({ enabled: false, updatedAt: new Date() }).where(eq(cloudflareRoutes.id, routeId));
 
@@ -1008,7 +1046,7 @@ export async function disableProjectRoute(routeId: string): Promise<CloudflareRo
 
 export async function enableProjectRoute(routeId: string): Promise<CloudflareRouteRow> {
   const [route] = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.id, routeId)).limit(1);
-  if (!route) throw new Error("Route not found.");
+  if (!route) throw new HttpError(404, "Route not found.");
 
   await db.update(cloudflareRoutes).set({ enabled: true, updatedAt: new Date() }).where(eq(cloudflareRoutes.id, routeId));
 
@@ -1027,7 +1065,7 @@ export async function enableProjectRoute(routeId: string): Promise<CloudflareRou
 
 export async function deleteProjectRoute(routeId: string): Promise<void> {
   const [route] = await db.select().from(cloudflareRoutes).where(eq(cloudflareRoutes.id, routeId)).limit(1);
-  if (!route) throw new Error("Route not found.");
+  if (!route) throw new HttpError(404, "Route not found.");
 
   const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, route.tunnelId)).limit(1);
   const settings = await getStoredCloudflareSettings();
@@ -1076,7 +1114,7 @@ export async function startCloudflared(tunnel: CloudflareTunnelRow): Promise<voi
 export async function stopCloudflared(nodeId: string): Promise<void> {
   const [tunnel] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, nodeId)).limit(1);
   const resolved = tunnel ?? (await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.nodeId, nodeId)).limit(1))[0];
-  if (!resolved) throw new Error("Tunnel not found.");
+  if (!resolved) throw new HttpError(404, "Tunnel not found.");
   const containerName = cloudflaredContainerName(resolved.id);
   await runRequiredDocker(["stop", containerName]);
   await runRequiredDocker(["rm", containerName]);
@@ -1087,7 +1125,7 @@ export async function stopCloudflared(nodeId: string): Promise<void> {
 export async function restartCloudflared(nodeId: string): Promise<void> {
   const [byId] = await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.id, nodeId)).limit(1);
   const tunnel = byId ?? (await db.select().from(cloudflareTunnels).where(eq(cloudflareTunnels.nodeId, nodeId)).limit(1))[0];
-  if (!tunnel) throw new Error("No tunnel found. Create a tunnel in Hostnames → Tunnels & Networks first.");
+  if (!tunnel) throw new HttpError(404, "No tunnel found. Create a tunnel in Hostnames → Tunnels & Networks first.");
 
   try {
     await stopCloudflared(nodeId);

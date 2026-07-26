@@ -6,70 +6,14 @@
       "idx": 0,
       "version": "7",
       "when": 1779550654157,
-      "tag": "0000_high_human_torch",
+      "tag": "0000_authoritative_baseline",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1782835200000,
-      "tag": "0001_smart_mcp_access_tokens",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1782835200001,
-      "tag": "0002_manual_frp_clients",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1783671511000,
-      "tag": "0003_agent_workspace",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1783671511001,
-      "tag": "0004_codex_account",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1783671511002,
-      "tag": "0005_agent_run_reliability",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1783671511003,
-      "tag": "0006_agent_task_archive",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "7",
-      "when": 1783671511004,
-      "tag": "0007_ai_provider_default_model",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1783671511005,
-      "tag": "0008_project_scoped_users",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1784710800000,
-      "tag": "0009_docker_image_projects",
+      "when": 1785077066948,
+      "tag": "0001_legacy_compatibility",
       "breakpoints": true
     }
   ]

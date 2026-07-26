@@ -3,6 +3,26 @@ import type { HealthStatus, SystemUsage } from "../../shared/types.js";
 import { pool } from "../db/index.js";
 import { runCommand } from "./commands.js";
 
+const HEALTH_CHECK_TIMEOUT_MS = 3_000;
+
+async function withHealthDeadline<T>(operation: Promise<T>, message: string, onTimeout?: () => void) {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          onTimeout?.();
+          reject(new Error(message));
+        }, HEALTH_CHECK_TIMEOUT_MS);
+        timer.unref();
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function parseDfLine(line: string) {
   const parts = line.trim().split(/\s+/);
   if (parts.length < 6) {
@@ -20,20 +40,30 @@ function parseDfLine(line: string) {
 }
 
 export async function healthStatus(): Promise<HealthStatus> {
-  const checks: HealthStatus["checks"] = {
-    database: { ok: false },
-    docker: { ok: false }
-  };
-
-  try {
-    await pool.query("SELECT 1");
-    checks.database = { ok: true };
-  } catch (error) {
-    checks.database = { ok: false, message: error instanceof Error ? error.message : String(error) };
-  }
-
-  const docker = await runCommand("docker", ["version", "--format", "{{.Server.Version}}"]);
-  checks.docker = docker.exitCode === 0 ? { ok: true, message: docker.output.trim() } : { ok: false, message: docker.output.trim() };
+  const dockerController = new AbortController();
+  const [database, docker] = await Promise.all([
+    withHealthDeadline(
+      pool.query({ text: "SELECT 1", query_timeout: HEALTH_CHECK_TIMEOUT_MS } as { text: string }),
+      `Database health check timed out after ${HEALTH_CHECK_TIMEOUT_MS}ms.`
+    )
+      .then(() => ({ ok: true }))
+      .catch((error: unknown) => ({ ok: false, message: error instanceof Error ? error.message : String(error) })),
+    withHealthDeadline(
+      runCommand("docker", ["version", "--format", "{{.Server.Version}}"], {
+        signal: dockerController.signal,
+        timeoutMs: HEALTH_CHECK_TIMEOUT_MS,
+        killProcessGroup: true,
+        maxOutputBytes: 64 * 1024
+      }),
+      `Docker health check timed out after ${HEALTH_CHECK_TIMEOUT_MS}ms.`,
+      () => dockerController.abort()
+    )
+      .then((result) => result.exitCode === 0
+        ? { ok: true, message: result.output.trim() }
+        : { ok: false, message: result.output.trim() })
+      .catch((error: unknown) => ({ ok: false, message: error instanceof Error ? error.message : String(error) }))
+  ]);
+  const checks: HealthStatus["checks"] = { database, docker };
 
   return {
     ok: Object.values(checks).every((check) => check.ok),

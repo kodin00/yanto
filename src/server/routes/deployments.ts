@@ -2,7 +2,8 @@ import { Router } from "express";
 import { requireAuth } from "../auth.js";
 import { accessibleProjectIds, assertProjectAccess, startStreamAuthorizationGuard } from "../authorization.js";
 import { asyncRoute, routeParam, sendStreamEvent, startEventStream } from "../http-utils.js";
-import { findDeployment, latestDeployments } from "../services/deployments.js";
+import { requestPagination } from "../pagination.js";
+import { findDeployment, paginatedDeployments } from "../services/deployments.js";
 import { deploymentEvents, type DeploymentLogEvent } from "../services/deployment-events.js";
 
 const router = Router();
@@ -11,10 +12,9 @@ router.get(
   "/api/deployments",
   requireAuth,
   asyncRoute(async (req, res) => {
-    const requestedLimit = Number(req.query.limit ?? 500);
-    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 500) : 500;
+    const { page, pageSize } = requestPagination(req.query, 10, 500);
     const projectIds = accessibleProjectIds(req);
-    res.json(await latestDeployments(limit, projectIds === null ? undefined : [...projectIds]));
+    res.json(await paginatedDeployments(page, pageSize, projectIds === null ? undefined : [...projectIds]));
   })
 );
 

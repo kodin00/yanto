@@ -57,7 +57,8 @@ import { Button, ConfirmDialog, CustomSelect, IconButton, LoadingInline, LogView
 import { ContainerTerminal } from "./components/ContainerTerminal";
 import { EnvEditor, type ProjectEnvState } from "./components/EnvEditor";
 import { YantoBootLoader } from "./components/YantoBootLoader";
-import { api, setApiUnauthorizedHandler, type AuditLogEntry, type BackupRecord, type CloudflareDnsRecordPayload, type CloudflareRoutePayload, type PostgresTarget } from "./lib/api";
+import { api, setApiUnauthorizedHandler, type BackupRecord, type CloudflareDnsRecordPayload, type CloudflareRoutePayload, type PostgresTarget } from "./lib/api";
+import { useOperationalHistory } from "./hooks/useOperationalHistory";
 import { canManageProject, canView } from "./permissions";
 import packageJson from "../../package.json";
 
@@ -332,7 +333,6 @@ export function App() {
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
   const [nodes, setNodes] = useState<DeploymentNode[]>([]);
-  const [backups, setBackups] = useState<BackupRecord[]>([]);
   const [cloudflareClients, setCloudflareClients] = useState<CloudflareClient[]>([]);
   const [dnsClientId, setDnsClientId] = useState("");
   const [dnsRecords, setDnsRecords] = useState<CloudflareDnsRecord[]>([]);
@@ -343,8 +343,6 @@ export function App() {
   const lastViewLoadAtRef = useRef<Partial<Record<View, number>>>({});
   const viewLoadRequestsRef = useRef(new Map<View, Promise<void>>());
   const [routeDiagnostics, setRouteDiagnostics] = useState<CloudflareRouteDiagnostic[]>([]);
-  const [postgresTargets, setPostgresTargets] = useState<PostgresTarget[]>([]);
-  const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
   const [usage, setUsage] = useState<SystemUsage | null>(null);
   const [settings, setSettings] = useState({ projectsRoot: "/projects", hostProjectsRoot: "~/projects", sshKeysDir: "", appBaseUrl: "", sshKey: emptySshKeySettings, r2: emptyR2Settings, cf: emptyCfSettings, setupWizard: emptySetupWizardStatus, multiNode: emptyMultiNodeSettings });
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -364,6 +362,35 @@ export function App() {
   const [viewLoading, setViewLoading] = useState<Partial<Record<View, boolean>>>({});
   const [viewErrors, setViewErrors] = useState<Partial<Record<View, string>>>({});
   const [toast, setToast] = useState<ToastState>(null);
+  const showHistoryError = useCallback((message: string) => setToast({ message, kind: "error" }), []);
+  const markHistoryPageLoaded = useCallback((targetView: "deployments" | "backups" | "audit") => {
+    lastViewLoadAtRef.current[targetView] = Date.now();
+  }, []);
+  const {
+    deploymentRows,
+    deploymentTotal,
+    deploymentPage,
+    backups,
+    backupTotal,
+    backupPage,
+    postgresTargets,
+    auditEntries,
+    auditTotal,
+    auditPage,
+    loadDeployments,
+    loadBackups,
+    loadAudit,
+    refreshDeployments,
+    refreshBackups,
+    selectDeploymentPage,
+    selectBackupPage,
+    selectAuditPage
+  } = useOperationalHistory({
+    setViewLoading,
+    setViewErrors,
+    onError: showHistoryError,
+    onPageLoaded: markHistoryPageLoaded
+  });
   const [projectModal, setProjectModal] = useState<Project | "new" | null>(null);
   const [projectForm, setProjectForm] = useState(emptyProject);
   const [projectEnv, setProjectEnv] = useState<ProjectEnvState>(emptyProjectEnvState);
@@ -383,10 +410,7 @@ export function App() {
   const [setupStep, setSetupStep] = useState<SetupStep>("intro");
   const [setupAutoPrompted, setSetupAutoPrompted] = useState(false);
   const [projectPage, setProjectPage] = useState(1);
-  const [deploymentPage, setDeploymentPage] = useState(1);
-  const [backupPage, setBackupPage] = useState(1);
   const [dnsPage, setDnsPage] = useState(1);
-  const [auditPage, setAuditPage] = useState(1);
   const [frpRefreshKey, setFrpRefreshKey] = useState(0);
   const [tasksRefreshKey, setTasksRefreshKey] = useState(0);
   const [hostnamesRefreshKey, setHostnamesRefreshKey] = useState(0);
@@ -435,29 +459,6 @@ export function App() {
       setViewLoading((current) => ({ ...current, projects: false }));
     }
   }, [fetchContainerRows]);
-
-  const refreshDeployments = useCallback(async () => {
-    setViewLoading((current) => ({ ...current, deployments: true }));
-    try {
-      setDeployments(await api.deployments());
-    } finally {
-      setViewLoading((current) => ({ ...current, deployments: false }));
-    }
-  }, []);
-
-  const refreshBackups = useCallback(async () => {
-    setViewLoading((current) => ({ ...current, backups: true }));
-    try {
-      const [backupRows, postgresRows] = await Promise.all([
-        api.backups(),
-        api.postgresBackupTargets()
-      ]);
-      setBackups(backupRows);
-      setPostgresTargets(postgresRows);
-    } finally {
-      setViewLoading((current) => ({ ...current, backups: false }));
-    }
-  }, []);
 
   const refreshSettings = useCallback(async () => {
     const [settingRows, tokenRows, projectRows] = await Promise.all([api.settings(), api.mcpTokens(), api.projects()]);
@@ -516,7 +517,7 @@ export function App() {
     }
 
     if (targetView === "deployments") {
-      setDeployments(await api.deployments());
+      await loadDeployments();
       return;
     }
 
@@ -545,9 +546,7 @@ export function App() {
     }
 
     if (targetView === "backups") {
-      const [backupRows, postgresRows] = await Promise.all([api.backups(), api.postgresBackupTargets()]);
-      setBackups(backupRows);
-      setPostgresTargets(postgresRows);
+      await loadBackups();
       return;
     }
 
@@ -587,7 +586,7 @@ export function App() {
     }
 
     if (targetView === "audit") {
-      setAuditEntries(await api.auditLog());
+      await loadAudit();
       return;
     }
 
@@ -606,7 +605,7 @@ export function App() {
       .then((logRows) => setSystemLogs(logRows))
       .catch(() => setSystemLogs(""))
       .finally(() => setBusy((current) => (current === "system-logs" ? null : current)));
-  }, [fetchContainerRows, user]);
+  }, [fetchContainerRows, loadAudit, loadBackups, loadDeployments, user]);
 
   const loadViewWithState = useCallback((targetView: View, options: ViewLoadOptions = {}) => {
     const { showLoading = true, maxAgeMs = 0 } = options;
@@ -788,10 +787,10 @@ export function App() {
     value: node.id
   })), [nodes]);
   const visibleProjects = useMemo(() => pageItems(projects, projectPage), [projectPage, projects]);
-  const visibleDeployments = useMemo(() => pageItems(deployments, deploymentPage), [deploymentPage, deployments]);
-  const visibleBackups = useMemo(() => pageItems(backups, backupPage), [backupPage, backups]);
+  const visibleDeployments = deploymentRows;
+  const visibleBackups = backups;
   const visibleDnsRecords = useMemo(() => pageItems(dnsRecords, dnsPage), [dnsPage, dnsRecords]);
-  const visibleAuditEntries = useMemo(() => pageItems(auditEntries, auditPage), [auditEntries, auditPage]);
+  const visibleAuditEntries = auditEntries;
   const routeDiagnosticsByRouteId = useMemo(() => Object.fromEntries(routeDiagnostics.map((diagnostic) => [diagnostic.routeId, diagnostic])), [routeDiagnostics]);
   const sshReady = Boolean(settings.sshKey?.activePrivateKeyPath);
   const r2Ready = Boolean(settings.r2?.enabled && settings.r2.accountId && settings.r2.bucket && settings.r2.hasAccessKeyId && settings.r2.hasSecretAccessKey);
@@ -825,10 +824,6 @@ export function App() {
   }, [projects]);
 
   useEffect(() => {
-    setDeploymentPage((page) => Math.min(page, totalPages(deployments)));
-  }, [deployments]);
-
-  useEffect(() => {
     if (!multiNodeEnabled && view === "nodes") {
       setView(user?.role === "owner" ? "settings" : "dashboard");
     }
@@ -840,16 +835,8 @@ export function App() {
   }, [availableViews, user, view]);
 
   useEffect(() => {
-    setBackupPage((page) => Math.min(page, totalPages(backups)));
-  }, [backups]);
-
-  useEffect(() => {
     setDnsPage((page) => Math.min(page, totalPages(dnsRecords)));
   }, [dnsRecords]);
-
-  useEffect(() => {
-    setAuditPage((page) => Math.min(page, totalPages(auditEntries)));
-  }, [auditEntries]);
 
   async function submitLogin(event: FormEvent) {
     event.preventDefault();
@@ -1968,15 +1955,15 @@ export function App() {
 
         {view === "deployments" ? (
           <DeploymentsView
-            deployments={deployments}
             visibleDeployments={visibleDeployments}
+            totalItems={deploymentTotal}
             deploymentPage={deploymentPage}
             busy={busy}
             loading={viewLoading.deployments}
             openDeploymentLogs={openDeploymentLogs}
             retryDeployment={retryDeployment}
             canRetry={(deployment) => canManageProject(user, deployment.projectId, "deploy")}
-            setDeploymentPage={setDeploymentPage}
+            setDeploymentPage={(page) => void selectDeploymentPage(page)}
           />
         ) : null}
 
@@ -1985,7 +1972,7 @@ export function App() {
             isOwner={user.role === "owner"}
             postgresTargets={postgresTargets}
             visibleBackups={visibleBackups}
-            backups={backups}
+            totalItems={backupTotal}
             busy={busy}
             loading={viewLoading.backups}
             r2Ready={user.role === "owner" ? r2Ready : true}
@@ -1995,7 +1982,7 @@ export function App() {
             uploadBackupR2={uploadBackupR2}
             setConfirm={setConfirm}
             refreshBackups={refreshBackups}
-            setBackupPage={setBackupPage}
+            setBackupPage={(page) => void selectBackupPage(page)}
           />
         ) : null}
 
@@ -2034,10 +2021,11 @@ export function App() {
 
         {view === "audit" && viewLoading.audit && !auditEntries.length ? <ViewSkeleton /> : view === "audit" ? (
           <AuditView
-            auditEntries={auditEntries}
             visibleAuditEntries={visibleAuditEntries}
+            totalItems={auditTotal}
+            loading={viewLoading.audit}
             auditPage={auditPage}
-            setAuditPage={setAuditPage}
+            setAuditPage={(page) => void selectAuditPage(page)}
           />
         ) : null}
 

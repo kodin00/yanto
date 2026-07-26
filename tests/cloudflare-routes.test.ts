@@ -1,5 +1,6 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { HttpError } from "../src/server/http-utils.js";
 
 const cloudflareMocks = vi.hoisted(() => ({
   createCloudflareClient: vi.fn(),
@@ -73,15 +74,20 @@ function createApp() {
   const app = express();
   app.use(express.json());
   app.use(cloudflareRouter);
+  app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    void _next;
+    res.status(error instanceof HttpError ? error.status : 500).json({ message: error instanceof Error ? error.message : "Unexpected error." });
+  });
   return app;
 }
 
-async function request(path: string, authorization?: string) {
+async function request(path: string, authorization?: string, method = "GET") {
   const server = createApp().listen(0);
   try {
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Server did not start.");
     const response = await fetch(`http://127.0.0.1:${address.port}${path}`, {
+      method,
       headers: authorization ? { authorization } : {}
     });
     return { status: response.status, body: await response.json() as unknown };
@@ -136,5 +142,17 @@ describe("cloudflare routes", () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual(tunnels);
     expect(cloudflareMocks.listPublicTunnels).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [404, "Cloudflare client not found."],
+    [409, "Delete this client's tunnels first."]
+  ] as const)("preserves expected Cloudflare domain status %s", async (status, message) => {
+    cloudflareMocks.deleteCloudflareClient.mockRejectedValue(new HttpError(status, message));
+
+    const response = await request("/api/cloudflare/clients/cfc_1", "ok", "DELETE");
+
+    expect(response.status).toBe(status);
+    expect(response.body).toEqual({ message });
   });
 });

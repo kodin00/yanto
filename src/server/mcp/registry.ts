@@ -1,5 +1,4 @@
-import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { config } from "../config.js";
 import { db } from "../db/index.js";
@@ -17,9 +16,6 @@ import {
   deploymentInput,
   envInput,
   envVariablesInput,
-  frpSettingsInput,
-  frpTunnelInput,
-  frpTunnelUpdateInput,
   multiNodeSettingsInput,
   projectInput,
   r2SettingsInput,
@@ -75,8 +71,6 @@ import {
 import { cleanupDocker, containerLogs, listContainers, previewDockerCleanup, restartContainer, startContainer, stopContainer } from "../services/docker.js";
 import { findDeployment, latestDeployments, previewRollbackForProject, rollbackTargetForProject, startDeployment } from "../services/deployments.js";
 import type { PendingDeploymentEnv } from "../services/deployment-runner.js";
-import { controlFrpServer, createFrpTunnel, deleteFrpTunnel, frpOverview, saveFrpSettings, updateFrpTunnel } from "../services/frp.js";
-import { hasMcpAccess } from "../services/mcp-tokens.js";
 import { listNodes } from "../services/nodes.js";
 import { previewEnvContent, readProjectEnv, readProjectEnvVariables, writeProjectEnv, writeProjectEnvVariables } from "../services/project-env.js";
 import { restartProjectCompose, stopProjectCompose } from "../services/project-runtime.js";
@@ -94,7 +88,10 @@ import { generateManagedSshPrivateKey, managedSshKeyStatus, saveManagedSshPrivat
 import { healthStatus, systemUsage } from "../services/system.js";
 import { logger } from "../logger.js";
 import type { YantoMcpContext } from "./context.js";
-import { asRecord, limitText, requireConfirm, safeTool, toolResult } from "./tool-utils.js";
+import { registerFrpTools } from "./frp-tools.js";
+import { registerYantoResources } from "./resources.js";
+import { destructive, externalDestructive, externalRead, externalWrite, readOnly, registerTool, summarize, write } from "./tool-registration.js";
+import { limitText, requireConfirm, toolResult } from "./tool-utils.js";
 
 const confirmInput = z.object({ confirm: z.boolean().optional() });
 const idInput = z.object({ id: z.string().min(1) });
@@ -110,7 +107,6 @@ const cloudflareClientDnsDeleteInput = z.object({ clientId: z.string().min(1), i
 const cloudflareNodeInput = z.object({ nodeId: z.string().min(1) });
 const cloudflareProjectRouteInput = z.object({ projectId: z.string().min(1) }).extend(cloudflareRouteInput.shape);
 const cloudflareDeleteTunnelInput = z.object({ id: z.string().min(1), force: z.boolean().optional(), confirm: z.boolean().optional() });
-const frpServerInput = z.object({ confirm: z.boolean().optional() });
 const sshKeyInput = z.object({ privateKey: z.string().min(1), confirm: z.boolean().optional() });
 const settingsConfirmInput = z.object({ confirm: z.boolean().optional() });
 const r2SettingsMcpInput = r2SettingsInput.extend({ confirm: z.boolean().optional() });
@@ -134,48 +130,6 @@ const hostnameDeleteInput = deleteInput;
 const assignmentListInput = z.object({ tunnelId: z.string().min(1).optional() });
 const assignmentDeleteInput = deleteInput;
 const tunnelRuntimeActionInput = z.object({ nodeId: z.string().min(1), confirm: z.boolean().optional() });
-const frpTunnelUpdateMcpInput = frpTunnelUpdateInput.extend({ id: z.string().min(1) });
-
-type ToolLevel = "read" | "write" | "admin";
-type ToolHandler<T extends z.ZodTypeAny> = (input: z.infer<T>) => Promise<CallToolResult> | CallToolResult;
-
-const readOnly: ToolAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
-const externalRead: ToolAnnotations = { ...readOnly, openWorldHint: true };
-const write: ToolAnnotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
-const externalWrite: ToolAnnotations = { ...write, openWorldHint: true };
-const destructive: ToolAnnotations = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
-const externalDestructive: ToolAnnotations = { ...destructive, openWorldHint: true };
-
-function summarize(name: string, value: unknown, key = "result") {
-  const count = Array.isArray(value) ? ` (${value.length})` : "";
-  return toolResult(`${name}${count}`, asRecord(value, key));
-}
-
-function registerTool<T extends z.ZodTypeAny>(
-  server: McpServer,
-  ctx: YantoMcpContext,
-  level: ToolLevel,
-  name: string,
-  description: string,
-  inputSchema: T,
-  annotations: ToolAnnotations,
-  handler: ToolHandler<T>
-) {
-  if (!hasMcpAccess(ctx.accessLevel, level)) {
-    return;
-  }
-  const register = server.registerTool.bind(server) as any;
-  register(
-    name,
-    {
-      title: name,
-      description,
-      inputSchema,
-      annotations
-    },
-    (args: any) => safeTool(() => handler(inputSchema.parse(args)))
-  );
-}
 
 async function settingsSnapshot() {
   const [count, sshKey, r2, cf, setupWizard, multiNode] = await Promise.all([
@@ -620,73 +574,9 @@ export function createYantoMcpServer(ctx: YantoMcpContext) {
     return toolResult("Route deleted.", { ok: true, id: input.id });
   });
 
-  registerTool(server, ctx, "read", "yanto_frp_overview", "Read FRP overview.", z.object({}), readOnly, async () => summarize("FRP overview", await frpOverview(), "overview"));
-  registerTool(server, ctx, "write", "yanto_frp_settings_update", "Update FRP settings.", frpSettingsInput, write, async (input) => {
-    const settings = await saveFrpSettings(input.publicHost);
-    await recordAuditLog({ actor: ctx.actor, action: "frp.settings.save", entityType: "frp", metadata: { publicHost: settings.publicHost } });
-    return summarize("FRP settings saved", settings, "settings");
-  });
-  registerTool(server, ctx, "write", "yanto_frp_server_start", "Start FRP server.", z.object({}), write, async () => {
-    const serverState = await controlFrpServer("start");
-    await recordAuditLog({ actor: ctx.actor, action: "frp.server.start", entityType: "frp_server" });
-    return summarize("FRP server started", serverState, "server");
-  });
-  registerTool(server, ctx, "admin", "yanto_frp_server_stop", "Stop FRP server. Requires confirm: true.", frpServerInput, destructive, async (input) => {
-    requireConfirm(input.confirm, "FRP server stop");
-    const serverState = await controlFrpServer("stop");
-    await recordAuditLog({ actor: ctx.actor, action: "frp.server.stop", entityType: "frp_server" });
-    return summarize("FRP server stopped", serverState, "server");
-  });
-  registerTool(server, ctx, "admin", "yanto_frp_server_restart", "Restart FRP server. Requires confirm: true.", frpServerInput, destructive, async (input) => {
-    requireConfirm(input.confirm, "FRP server restart");
-    const serverState = await controlFrpServer("restart");
-    await recordAuditLog({ actor: ctx.actor, action: "frp.server.restart", entityType: "frp_server" });
-    return summarize("FRP server restarted", serverState, "server");
-  });
-  registerTool(server, ctx, "write", "yanto_frp_tunnel_create", "Create FRP tunnel.", frpTunnelInput, write, async (input) => {
-    const tunnel = await createFrpTunnel(input);
-    await recordAuditLog({ actor: ctx.actor, action: "frp.tunnel.create", entityType: "frp_tunnel", entityId: tunnel.id, metadata: { protocol: tunnel.protocol, remotePort: tunnel.remotePort } });
-    return summarize("FRP tunnel created", tunnel, "tunnel");
-  });
-  registerTool(server, ctx, "write", "yanto_frp_tunnel_update", "Update FRP tunnel.", frpTunnelUpdateMcpInput, write, async (input) => {
-    const { id, ...patch } = input;
-    const tunnel = await updateFrpTunnel(id, patch);
-    await recordAuditLog({ actor: ctx.actor, action: "frp.tunnel.update", entityType: "frp_tunnel", entityId: tunnel.id, metadata: { enabled: tunnel.enabled, remotePort: tunnel.remotePort } });
-    return summarize("FRP tunnel updated", tunnel, "tunnel");
-  });
-  registerTool(server, ctx, "admin", "yanto_frp_tunnel_delete", "Delete FRP tunnel. Requires confirm: true.", deleteInput, destructive, async (input) => {
-    requireConfirm(input.confirm, "FRP tunnel deletion");
-    const tunnel = await deleteFrpTunnel(input.id);
-    await recordAuditLog({ actor: ctx.actor, action: "frp.tunnel.delete", entityType: "frp_tunnel", entityId: tunnel.id });
-    return toolResult("FRP tunnel deleted.", { ok: true, id: input.id });
-  });
+  registerFrpTools(server, ctx);
 
-  if (hasMcpAccess(ctx.accessLevel, "read")) {
-    server.registerResource("yanto_overview", "yanto://overview", { title: "Yanto overview", mimeType: "application/json" }, async (uri) => ({
-      contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(await settingsSnapshot(), null, 2) }]
-    }));
-    server.registerResource("yanto_project_compose", new ResourceTemplate("yanto://projects/{id}/compose", { list: undefined }), { title: "Project compose", mimeType: "text/yaml" }, async (uri, variables) => {
-      const project = await requireProject(String(variables.id));
-      const compose = await readProjectCompose(project);
-      return { contents: [{ uri: uri.href, mimeType: "text/yaml", text: compose.content }] };
-    });
-    server.registerResource("yanto_project_env", new ResourceTemplate("yanto://projects/{id}/env", { list: undefined }), { title: "Project masked environment", mimeType: "text/plain" }, async (uri, variables) => {
-      const project = await requireProject(String(variables.id));
-      const env = await readProjectEnv(project);
-      return { contents: [{ uri: uri.href, mimeType: "text/plain", text: env.content }] };
-    });
-    server.registerResource("yanto_deployment_logs", new ResourceTemplate("yanto://deployments/{id}/logs", { list: undefined }), { title: "Deployment logs", mimeType: "text/plain" }, async (uri, variables) => {
-      const deployment = await findDeployment(String(variables.id));
-      if (!deployment) throw new HttpError(404, "Deployment not found.");
-      return { contents: [{ uri: uri.href, mimeType: "text/plain", text: deployment.logs }] };
-    });
-    server.registerResource("yanto_container_logs", new ResourceTemplate("yanto://containers/{id}/logs", { list: undefined }), { title: "Container logs", mimeType: "text/plain" }, async (uri, variables) => ({
-      contents: [{ uri: uri.href, mimeType: "text/plain", text: await containerLogs(String(variables.id)) }]
-    }));
-    server.registerResource("yanto_system_logs", "yanto://system/logs", { title: "System logs", mimeType: "text/plain" }, async (uri) => ({
-      contents: [{ uri: uri.href, mimeType: "text/plain", text: logger.history() || "No system log entries recorded yet." }]
-    }));
-  }
+  registerYantoResources(server, ctx, { settingsSnapshot, requireProject });
 
   return server;
 }

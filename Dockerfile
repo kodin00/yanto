@@ -31,6 +31,7 @@ RUN apt-get update \
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/drizzle ./drizzle
 COPY config/frps.toml /etc/frp/frps.toml
 EXPOSE 8080
 CMD ["sh", "-c", "if [ \"$YANTO_NODE_ROLE\" = \"worker\" ]; then exec node dist/server/server/worker.js; else exec node dist/server/server/index.js; fi"]

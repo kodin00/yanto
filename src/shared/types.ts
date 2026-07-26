@@ -6,6 +6,13 @@ export type UserStatus = "invited" | "active" | "disabled";
 export type ProjectPermission = "deploy" | "runtime" | "config" | "secrets" | "backups" | "tasks" | "hostnames";
 export type AppView = "dashboard" | "projects" | "tasks" | "deployments" | "containers" | "nodes" | "backups" | "hostnames" | "frp" | "dns" | "audit" | "settings";
 
+export type PaginatedResponse<T> = {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
 export type UserProjectAccess = {
   projectId: string;
   projectName: string;
