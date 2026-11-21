@@ -168,7 +168,10 @@ impl ProjectService {
         projects::get(&mut tx, id).await?.ok_or_else(not_found)?;
         let existing = repo::list(&mut tx, id).await?;
         for old in &existing {
-            if !wanted.iter().any(|w| w.compose_service == old.compose_service) {
+            if !wanted
+                .iter()
+                .any(|w| w.compose_service == old.compose_service)
+            {
                 repo::delete(&mut tx, &old.id).await?;
             }
         }

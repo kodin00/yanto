@@ -731,11 +731,7 @@ impl BackupService {
     async fn purge_failed(&self, who: &AuditActor) -> Result<u64, CoreError> {
         let failed = {
             let mut conn = self.ctx.db.reader().acquire().await.map_err(db_err)?;
-            repo::old_failed(
-                &mut conn,
-                self.ctx.now() - FAILED_RETENTION_DAYS * DAY_MS,
-            )
-            .await?
+            repo::old_failed(&mut conn, self.ctx.now() - FAILED_RETENTION_DAYS * DAY_MS).await?
         };
         self.delete_rows(who, &failed, "failed").await
     }
@@ -932,7 +928,10 @@ impl BackupService {
             let pre = self.run(&who, &job).await.map_err(|e| {
                 CoreError::new(
                     e.kind.clone(),
-                    format!("pre-restore backup failed, nothing was restored: {}", e.message),
+                    format!(
+                        "pre-restore backup failed, nothing was restored: {}",
+                        e.message
+                    ),
                 )
             })?;
             let key = series_key_of(&pre, kind);

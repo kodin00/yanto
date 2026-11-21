@@ -19,8 +19,8 @@ mod users;
 
 pub use authkeys::{AuthorizedKeysPort, KeysEdit, KeysEditFn, KeysUpdated, SshdInfo};
 pub use backup::{
-    BackupHost, DbTarget, LockGuard, ProjectBackupPort, ProjectBackupRequest, ProjectRestoreRequest,
-    RestoreMode, UnavailableProjectBackups,
+    BackupHost, DbTarget, LockGuard, ProjectBackupPort, ProjectBackupRequest,
+    ProjectRestoreRequest, RestoreMode, UnavailableProjectBackups,
 };
 pub use clock::{Clock, SystemClock};
 pub use command::{

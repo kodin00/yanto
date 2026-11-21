@@ -624,10 +624,7 @@ async fn project_database_backup_uses_the_declaration_and_the_framework() {
         .await
         .unwrap();
     let list = s.list(&a).await.unwrap();
-    assert!(
-        list.iter()
-            .any(|x| x.id == b.id && x.database_id.is_none())
-    );
+    assert!(list.iter().any(|x| x.id == b.id && x.database_id.is_none()));
 }
 
 #[tokio::test]
@@ -643,7 +640,9 @@ async fn project_volume_backups_make_one_archive_per_volume() {
         matches!(kind(e), ErrorKind::Validation(_)),
         "no volumes is a clear error"
     );
-    core.host.project_backups.set_volumes(&["blog_data", "blog_uploads"]);
+    core.host
+        .project_backups
+        .set_volumes(&["blog_data", "blog_uploads"]);
     let both = s
         .create_project(&a, "prj_1", BackupKind::ProjectVolumes, None, true)
         .await
@@ -707,7 +706,10 @@ async fn targets_list_volumes_and_databases_per_visible_project() {
             .any(|t| t.target.as_deref() == Some("db") && t.kind == BackupKind::ProjectPostgres)
     );
     let mine = core.services.backups.targets(&ma).await.unwrap();
-    assert!(mine.iter().all(|t| t.project_id.as_deref() == Some("prj_1")));
+    assert!(
+        mine.iter()
+            .all(|t| t.project_id.as_deref() == Some("prj_1"))
+    );
     assert_eq!(mine.len(), 2, "one volume and one database: {mine:?}");
 }
 
@@ -843,14 +845,20 @@ async fn restore_volume_into_a_new_volume_then_in_place_and_database() {
     assert_eq!(restores.len(), before + 2);
     assert_eq!(restores[before].0.mode, RestoreMode::InPlace);
     assert_eq!(restores[before + 1].0.kind, BackupKind::ProjectPostgres);
-    assert_eq!(restores[before + 1].0.db.as_ref().unwrap().compose_service, "db");
+    assert_eq!(
+        restores[before + 1].0.db.as_ref().unwrap().compose_service,
+        "db"
+    );
     assert_eq!(audit_count(&core, "backup.restore", "ok").await, 3);
 
     // A pre-restore failure aborts before anything is restored.
     core.clock.advance(Duration::from_secs(1));
     core.host
         .project_backups
-        .fail_next(crate::error::CoreError::new(ErrorKind::Unavailable, "dump failed"));
+        .fail_next(crate::error::CoreError::new(
+            ErrorKind::Unavailable,
+            "dump failed",
+        ));
     let n = core.host.project_backups.restores().len();
     let e = s
         .restore(
@@ -875,14 +883,23 @@ async fn restore_volume_into_a_new_volume_then_in_place_and_database() {
     std::fs::write(&path, b"tampered").unwrap();
     core.clock.advance(Duration::from_secs(1));
     let e = s
-        .restore(&o, &dump.id, RestoreOptions { in_place: true, confirm_name: Some("Project blog".into()) })
+        .restore(
+            &o,
+            &dump.id,
+            RestoreOptions {
+                in_place: true,
+                confirm_name: Some("Project blog".into()),
+            },
+        )
         .await
         .unwrap_err();
     assert!(e.message.contains("checksum mismatch"), "{}", e.message);
     assert_eq!(core.host.project_backups.restores().len(), n);
 
     // Members cannot restore; the Yanto database is CLI-only.
-    let m = core.create_member("mia", &[("prj_1", &[Permission::Backups])]).await;
+    let m = core
+        .create_member("mia", &[("prj_1", &[Permission::Backups])])
+        .await;
     let ma = core.session_actor(&m).await;
     assert_eq!(
         kind(s.restore(&ma, &vol.id, RestoreOptions::default()).await),

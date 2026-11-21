@@ -140,8 +140,14 @@ const GRID: &[(&str, &str)] = &[
     ),
     ("project_ports_list", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
     ("project_ports_set", "Y   N    N   Y   Y   N   N   N   Y"),
-    ("project_databases_list", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
-    ("project_databases_set", "Y   N    N   Y   Y   N   N   N   Y"),
+    (
+        "project_databases_list",
+        "Y   Y    Y   Y   Y   Y   Y   Y   Y",
+    ),
+    (
+        "project_databases_set",
+        "Y   N    N   Y   Y   N   N   N   Y",
+    ),
     (
         "project_deploy_token_reveal",
         "Y   N    N   N   Y   N   N   N   Y",

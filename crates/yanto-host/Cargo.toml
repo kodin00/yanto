@@ -25,5 +25,6 @@ zstd = "0.14.4"
 
 [dev-dependencies]
 base64.workspace = true
+tar = "0.4.46"
 tempfile.workspace = true
 yanto-core = { workspace = true, features = ["testing"] }
