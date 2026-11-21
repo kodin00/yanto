@@ -1,0 +1,13 @@
+# Development config: everything lives under ./dev-data (gitignored).
+config_version = 1
+
+[server]
+bind = "127.0.0.1"
+port = 9197
+
+[paths]
+data_dir = "./dev-data"
+
+[log]
+level = "debug"
+format = "pretty"
