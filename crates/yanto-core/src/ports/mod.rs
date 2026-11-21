@@ -6,5 +6,9 @@
 //! One file per concern, one `pub mod` line per file below.
 
 mod clock;
+mod docker;
+mod host_stats;
 
 pub use clock::{Clock, SystemClock};
+pub use docker::*;
+pub use host_stats::*;
