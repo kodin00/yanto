@@ -2,6 +2,7 @@
 
 pub mod actor;
 pub mod config;
+pub mod cron;
 pub mod crypto;
 pub mod db;
 pub mod error;
