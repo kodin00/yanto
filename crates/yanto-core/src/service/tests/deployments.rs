@@ -838,6 +838,46 @@ async fn deploy_webhook_is_rate_limited_per_ip_and_project() {
     assert!(e.retry_after_secs.is_some());
 }
 
+#[tokio::test]
+async fn github_webhook_flood_from_one_ip_does_not_block_github() {
+    let c = ctx().await;
+    let created = c
+        .core
+        .services
+        .projects
+        .create(&c.owner, &git_input("Gh", "https://github.com/o/gh.git"))
+        .await
+        .unwrap();
+    let d = &c.core.services.deployments;
+    let body = push("master");
+    let call = |ip: &'static str, sig: Option<String>| {
+        let (d, id, body) = (d.clone(), created.project.id.clone(), body.clone());
+        async move {
+            d.github_webhook(
+                &Origin::new(Channel::Webhook, Some(ip.into())),
+                &id,
+                &GithubDelivery {
+                    signature: sig.as_deref(),
+                    event: Some("push"),
+                    delivery_id: None,
+                    form_encoded: false,
+                    body: &body,
+                },
+            )
+            .await
+        }
+    };
+    for _ in 0..60 {
+        let _ = call("203.0.113.66", None).await;
+    }
+    assert_eq!(
+        kind(call("203.0.113.66", None).await),
+        ErrorKind::RateLimited
+    );
+    let sig = github_signature(created.deploy_token.expose(), &body);
+    assert!(call("192.30.252.1", Some(sig)).await.is_ok());
+}
+
 fn push(branch: &str) -> Vec<u8> {
     format!(
         r#"{{"ref":"refs/heads/{branch}","after":"{}","deleted":false}}"#,

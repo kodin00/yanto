@@ -1340,12 +1340,15 @@ impl DeploymentService {
         d: &GithubDelivery<'_>,
     ) -> Result<GithubOutcome, CoreError> {
         let who = Self::hook_actor("github", "github", Channel::Webhook, origin);
+        // Keyed by IP and Project (03 a.4): keyed by Project alone, anyone who knows the webhook
+        // URL could burn the budget with unsigned requests and block GitHub's real deliveries.
+        let key = format!("{}|{project_id}", origin.ip.as_deref().unwrap_or("unknown"));
         let now = self.ctx.now();
         self.hooks
             .github
-            .check(project_id, now)
+            .check(&key, now)
             .map_err(CoreError::rate_limited)?;
-        self.hooks.github.record_failure(project_id, now);
+        self.hooks.github.record_failure(&key, now);
         if d.body.len() > GITHUB_BODY_CAP {
             return Err(CoreError::validation("body", "payload too large"));
         }
