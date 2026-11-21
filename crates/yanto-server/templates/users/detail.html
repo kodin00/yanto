@@ -17,18 +17,18 @@
       {% for g in grants %}
         <tr>
           <td><input type="checkbox" name="keep" value="{{ g.project_id }}" checked aria-label="Keep {{ g.project_id }}"></td>
-          <td><code>{{ g.project_id }}</code></td>
+          <td>{{ g.label }}</td>
           {% for p in g.perms %}<td><input type="checkbox" name="perm" value="{{ g.project_id }}|{{ p.0 }}"{% if p.1 %} checked{% endif %} aria-label="{{ p.0 }} on {{ g.project_id }}"></td>{% endfor %}
         </tr>
       {% endfor %}
         <tr>
           <td>add</td>
-          <td><input name="new_project" placeholder="project id" autocomplete="off"></td>
+          <td><select name="new_project" aria-label="Project to add"><option value="">choose a Project</option>{% for c in choices %}<option value="{{ c.0 }}">{{ c.1 }}</option>{% endfor %}</select></td>
           {% for p in all_permissions %}<td><input type="checkbox" name="new_perm" value="{{ p }}" aria-label="New {{ p }}"></td>{% endfor %}
         </tr>
       </tbody>
     </table>
-    <p class="muted">A Project row with no permissions grants view-only access. Project pickers arrive with Projects.</p>
+    <p class="muted">A Project row with no permissions grants view-only access. Tick permissions on the new row, then save.</p>
     <button type="submit">Save access</button> <span id="access-msg"></span>
   </form>
 </section>

@@ -72,6 +72,8 @@ struct LinkPage {
 
 struct GrantView {
     project_id: String,
+    /// `Name (slug)` when the Project still exists.
+    label: String,
     perms: Vec<(&'static str, bool)>,
 }
 
@@ -81,6 +83,8 @@ struct DetailPage {
     ctx: PageCtx,
     user: UserRowView,
     grants: Vec<GrantView>,
+    /// Projects the Member has no row for yet, for the "add" picker.
+    choices: Vec<(String, String)>,
     all_permissions: Vec<&'static str>,
     created: String,
     is_owner: bool,
@@ -166,10 +170,28 @@ async fn detail(
         .get(&session.0.actor, &id)
         .await
         .map_err(|e| DashError::new(e, &headers))?;
+    let projects = s
+        .services
+        .projects
+        .list(&session.0.actor)
+        .await
+        .map_err(|e| DashError::new(e, &headers))?;
+    let label_of = |id: &str| {
+        projects
+            .iter()
+            .find(|p| p.id == id)
+            .map_or_else(|| id.to_owned(), |p| format!("{} ({})", p.name, p.slug))
+    };
+    let choices = projects
+        .iter()
+        .filter(|p| !user.grants.iter().any(|g| g.project_id == p.id))
+        .map(|p| (p.id.clone(), format!("{} ({})", p.name, p.slug)))
+        .collect();
     let grants = user
         .grants
         .iter()
         .map(|g| GrantView {
+            label: label_of(&g.project_id),
             project_id: g.project_id.clone(),
             perms: Permission::ALL
                 .iter()
@@ -184,6 +206,7 @@ async fn detail(
         created: fmt_ts(user.created_at),
         user: (&user).into(),
         grants,
+        choices,
         all_permissions: Permission::ALL.iter().map(|p| p.as_str()).collect(),
     }))
 }
