@@ -29,7 +29,7 @@ A service installed by the operator on the Host outside Docker that Yanto checks
 _Avoid_: Sidecar, managed container
 
 **Hostname**:
-A public domain name routed to a Project's published loopback port through an Ingress Provider.
+A public domain name routed through an Ingress Provider to a Project's published loopback port or to the Hosted Registry.
 _Avoid_: Domain, route, vhost
 
 **Ingress Provider**:
@@ -41,7 +41,7 @@ A port on the Host that `frps` forwards to a service on a remote machine running
 _Avoid_: Port forward, reverse tunnel
 
 **Hosted Registry**:
-The private container image registry Yanto runs on the Master when the operator enables it. Projects can deploy images pushed to it.
+The private container image registry Yanto runs on the Host when the operator enables it. Projects can deploy images pushed to it.
 _Avoid_: Docker Hub, repo, local registry
 
 **Registry Credential**:
@@ -49,7 +49,7 @@ Stored login for an external registry (e.g. GHCR, Docker Hub), used to pull priv
 _Avoid_: Registry login, pull secret
 
 **Cron Entry**:
-A line in `/etc/cron.d/yanto`, the one cron file Yanto owns; each entry names the Unix user it runs as.
+A line in `/etc/cron.d/yanto`, the one cron file Yanto owns. Its command runs as a named Unix user through `yanto cron-run`, which records each run.
 _Avoid_: Scheduled job, task, timer
 
 **Backup**:
