@@ -1,43 +1,53 @@
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::Context;
 use tokio::net::TcpListener;
-use yanto_core::{Config, Db};
+use yanto_core::service::Services;
 use yanto_server::AppState;
 
-pub fn run(config_path: &Path) -> anyhow::Result<()> {
-    let mut config = Config::load(config_path).with_context(|| {
-        format!(
-            "loading config (use --config or YANTO_CONFIG, default {})",
-            yanto_core::config::DEFAULT_CONFIG_PATH
-        )
-    })?;
-    config.apply_env(|k| std::env::var(k).ok())?;
-    crate::logging::init(&config.log)?;
+use super::common::{block_on, load_config, open};
 
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .context("building tokio runtime")?
-        .block_on(serve(config))
+pub fn run(config_path: &Path) -> anyhow::Result<()> {
+    let config = load_config(config_path)?;
+    crate::logging::init(&config.log)?;
+    block_on(serve(config))
 }
 
-async fn serve(config: Config) -> anyhow::Result<()> {
-    let db = Db::open(&config.db_path())
-        .await
-        .context("opening database")?;
-    let addr = format!("{}:{}", config.server.bind, config.server.port);
+async fn serve(config: yanto_core::Config) -> anyhow::Result<()> {
+    let rt = open(config).await?;
+    let addr = format!("{}:{}", rt.config.server.bind, rt.config.server.port);
     let listener = TcpListener::bind(&addr)
         .await
         .with_context(|| format!("binding {addr}"))?;
-    tracing::info!(%addr, data_dir = %config.paths.data_dir.display(), "yanto listening");
+    tracing::info!(%addr, data_dir = %rt.config.paths.data_dir.display(), "yanto listening");
 
-    let state = AppState::new(db.clone(), config);
+    if rt.services.auth.setup_pending().await? {
+        tracing::warn!("no Owner exists yet: run `yanto setup-code` and open /setup to create one");
+    }
+
+    let purge = tokio::spawn(purge_loop(rt.services.clone()));
+    let state = AppState::load(rt.db.clone(), rt.config.clone(), rt.services.clone()).await;
     yanto_server::serve(listener, state, shutdown_signal()).await?;
 
     tracing::info!("shutting down");
-    db.close().await;
+    purge.abort();
+    rt.db.close().await;
     Ok(())
+}
+
+/// Hourly cleanup of expired sessions and invite/reset tokens (docs/rewrite/01 section 6.3).
+async fn purge_loop(services: Services) {
+    let mut tick = tokio::time::interval(Duration::from_secs(3600));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tick.tick().await;
+        match services.auth.purge_expired().await {
+            Ok(n) if n > 0 => tracing::info!(removed = n, "purged expired sessions and tokens"),
+            Ok(_) => {}
+            Err(err) => tracing::warn!(error = %err, "expired-row purge failed"),
+        }
+    }
 }
 
 /// Resolves on SIGINT or SIGTERM.

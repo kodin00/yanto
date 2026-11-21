@@ -26,6 +26,10 @@ pub struct Cli {
 pub enum Command {
     /// Run the dashboard and API server
     Serve,
+    /// Issue a one-time setup code for creating the first Owner (while none exists)
+    SetupCode,
+    /// Revoke the Owner's sessions and print a one-time password reset link
+    OwnerReset,
     /// Print the version
     Version,
 }
@@ -38,6 +42,14 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn identity_subcommands_parse() {
+        let cli = Cli::try_parse_from(["yanto", "setup-code", "--config", "/tmp/c.toml"]).unwrap();
+        assert!(matches!(cli.command, Command::SetupCode));
+        let cli = Cli::try_parse_from(["yanto", "owner-reset"]).unwrap();
+        assert!(matches!(cli.command, Command::OwnerReset));
     }
 
     #[test]

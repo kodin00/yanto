@@ -2299,6 +2299,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

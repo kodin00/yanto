@@ -12,5 +12,7 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         cli::Command::Serve => cmd::serve::run(&cli.config),
+        cli::Command::SetupCode => cmd::setup_code::run(&cli.config),
+        cli::Command::OwnerReset => cmd::owner_reset::run(&cli.config),
     }
 }
