@@ -39,6 +39,9 @@ pub struct Engine {
     pub retention: i64,
     pub wake: Notify,
     cancels: Mutex<HashMap<String, CancellationToken>>,
+    /// Called when a Deployment or stack action changed which containers exist or run (the
+    /// container list cache is dropped, 08 section 10). Set once by `Services::new`.
+    containers_changed: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -62,7 +65,20 @@ impl Engine {
             retention: 50,
             wake: Notify::new(),
             cancels: Mutex::new(HashMap::new()),
+            containers_changed: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Register the hook run by [`Self::containers_changed`]; only the first call takes effect.
+    pub fn on_containers_changed(&self, f: impl Fn() + Send + Sync + 'static) {
+        let _ = self.containers_changed.set(Box::new(f));
+    }
+
+    /// Tell the container service its cached list is stale.
+    pub fn containers_changed(&self) {
+        if let Some(f) = self.containers_changed.get() {
+            f();
+        }
     }
 
     /// Register the token a running Deployment observes.

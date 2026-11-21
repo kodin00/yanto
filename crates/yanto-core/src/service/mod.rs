@@ -161,16 +161,18 @@ impl Services {
         let engine = Engine::new(ctx.clone(), deps.host, cfg);
         let projects: Arc<dyn containers::ContainerProjects> =
             Arc::new(containers::SlugProjects::new(ctx.clone()));
+        let container_service =
+            containers::ContainerService::new(ctx.clone(), deps.docker.clone(), projects.clone());
+        engine.on_containers_changed({
+            let c = container_service.clone();
+            move || c.invalidate_cache()
+        });
         Self {
             audit: audit::AuditService::new(ctx.clone()),
             auth: auth::AuthService::new(ctx.clone()),
             users: users::UserService::new(ctx.clone()),
             tokens: tokens::TokenService::new(ctx.clone()),
-            containers: containers::ContainerService::new(
-                ctx.clone(),
-                deps.docker.clone(),
-                projects.clone(),
-            ),
+            containers: container_service,
             system: system::SystemService::new(
                 ctx.clone(),
                 deps.docker,

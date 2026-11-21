@@ -381,3 +381,176 @@ async fn exec_rules_runtime_running_session_only_and_caps() {
     t.finish(io.input, 0, 0, "closed").await;
     w.svc.exec_open(&runner, &w.shop, 80, 24).await.unwrap();
 }
+
+/// The real `SlugProjects` hook (what `Services::new` wires): a container belongs to the Project
+/// whose `slug` equals its `com.docker.compose.project` label, and Member rules follow from it.
+#[tokio::test]
+async fn compose_label_maps_containers_to_projects_for_member_runtime() {
+    use super::projects::image_input;
+    let core = TestCore::new().await;
+    let o = core.setup_owner().await;
+    let owner = core.session_actor(&o).await;
+    let mut shop = image_input("Shop", "nginx:alpine");
+    shop.slug = Some("shop".into());
+    let shop = core
+        .services
+        .projects
+        .create(&owner, &shop)
+        .await
+        .unwrap()
+        .project;
+    let mut blog = image_input("Blog", "nginx:alpine");
+    blog.slug = Some("blog".into());
+    let blog = core
+        .services
+        .projects
+        .create(&owner, &blog)
+        .await
+        .unwrap()
+        .project;
+
+    let web = core.docker.add_container(
+        "shop-web-1",
+        "running",
+        &[("com.docker.compose.project", "shop")],
+    );
+    let post = core.docker.add_container(
+        "blog-web-1",
+        "running",
+        &[("com.docker.compose.project", "blog")],
+    );
+    let ghost = core.docker.add_container(
+        "ghost-1",
+        "running",
+        &[("com.docker.compose.project", "no-such-project")],
+    );
+    let stray = core.docker.add_container("stray", "running", &[]);
+    let svc = &core.services.containers;
+
+    let runner = core
+        .create_member("runner", &[(&shop.id, &[Permission::Runtime])])
+        .await;
+    let runner = core.session_actor(&runner).await;
+    let viewer = core.create_member("viewer", &[(&shop.id, &[])]).await;
+    let viewer = core.session_actor(&viewer).await;
+    let other = core
+        .create_member("other", &[(&blog.id, &[Permission::Runtime])])
+        .await;
+    let other = core.session_actor(&other).await;
+
+    // Visibility: only the Project's own containers.
+    let names = |l: crate::service::containers::ContainerList| {
+        let mut n: Vec<String> = l.containers.into_iter().map(|c| c.name).collect();
+        n.sort();
+        n
+    };
+    assert_eq!(names(svc.list(&runner).await.unwrap()), ["shop-web-1"]);
+    assert_eq!(names(svc.list(&other).await.unwrap()), ["blog-web-1"]);
+    assert_eq!(svc.list(&owner).await.unwrap().containers.len(), 4);
+    let listed = svc.list(&runner).await.unwrap().containers;
+    assert_eq!(listed[0].project.as_deref(), Some(shop.id.as_str()));
+
+    // Actions need `runtime` on the owning Project.
+    svc.restart(&runner, &web).await.unwrap();
+    assert_eq!(
+        svc.stop(&viewer, &web).await.unwrap_err().kind,
+        ErrorKind::Forbidden
+    );
+    assert_eq!(
+        svc.stop(&other, &web).await.unwrap_err().kind,
+        ErrorKind::NotFound
+    );
+    assert_eq!(
+        svc.stop(&runner, &post).await.unwrap_err().kind,
+        ErrorKind::NotFound
+    );
+    // A label that names no Project, or no label at all, is Owner-only.
+    for c in [&ghost, &stray] {
+        assert_eq!(
+            svc.get(&runner, c).await.unwrap_err().kind,
+            ErrorKind::NotFound
+        );
+        svc.get(&owner, c).await.unwrap();
+    }
+    // The audit row carries the mapped Project.
+    let project: String =
+        sqlx::query_scalar("SELECT project_id FROM audit_logs WHERE action = 'container.restart'")
+            .fetch_one(core.db.reader())
+            .await
+            .unwrap();
+    assert_eq!(project, shop.id);
+
+    // Renaming the slug moves ownership: the label no longer maps to the Project.
+    sqlx::query("UPDATE projects SET slug = 'shop2' WHERE id = ?")
+        .bind(&shop.id)
+        .execute(core.db.writer())
+        .await
+        .unwrap();
+    core.services.containers.invalidate_cache();
+    assert_eq!(
+        svc.get(&runner, &web).await.unwrap_err().kind,
+        ErrorKind::NotFound
+    );
+}
+
+/// A finished Deployment drops the cached container list so new containers show up at once.
+#[tokio::test]
+async fn deployments_and_stack_actions_invalidate_the_container_cache() {
+    use super::projects::image_input;
+    let core = TestCore::new().await;
+    let o = core.setup_owner().await;
+    let owner = core.session_actor(&o).await;
+    let mut input = image_input("Shop", "nginx:alpine");
+    input.slug = Some("shop".into());
+    let project = core
+        .services
+        .projects
+        .create(&owner, &input)
+        .await
+        .unwrap()
+        .project;
+    let svc = &core.services.containers;
+    assert!(svc.list(&owner).await.unwrap().containers.is_empty());
+
+    core.docker.add_container(
+        "shop-web-1",
+        "running",
+        &[("com.docker.compose.project", "shop")],
+    );
+    // Still inside the 5 s window: the cached (empty) list is served.
+    assert!(svc.list(&owner).await.unwrap().containers.is_empty());
+
+    core.services
+        .deployments
+        .deploy(&owner, &project.id, &Default::default())
+        .await
+        .unwrap();
+    let eng = core.services.engine();
+    while crate::deploy::worker::run_once(eng.clone()).await {}
+    assert_eq!(
+        svc.list(&owner).await.unwrap().containers.len(),
+        1,
+        "fresh after the deployment"
+    );
+
+    core.docker.add_container(
+        "shop-worker-1",
+        "running",
+        &[("com.docker.compose.project", "shop")],
+    );
+    assert_eq!(
+        svc.list(&owner).await.unwrap().containers.len(),
+        1,
+        "cached again"
+    );
+    core.services
+        .projects
+        .restart(&owner, &project.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        svc.list(&owner).await.unwrap().containers.len(),
+        2,
+        "fresh after a stack action"
+    );
+}

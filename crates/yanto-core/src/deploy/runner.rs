@@ -239,6 +239,7 @@ async fn finalize(
     if let Err(err) = outcome {
         tracing::error!(error = %err, deployment = %dep.id, "could not record deployment result");
     }
+    eng.containers_changed();
     eng.hub.publish(HubEvent::Done {
         deployment_id: dep.id.clone(),
         project_id: dep.project_id.clone(),
