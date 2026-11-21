@@ -11,11 +11,17 @@
 
 use std::collections::BTreeSet;
 
+use super::backups::{project_backup_fixture, yanto_row_fixture};
 use crate::ErrorKind;
-use crate::actor::{Actor, Permission, Scope};
+use crate::actor::{Access, Actor, Permission, Scope};
+use crate::authkeys::test_keys;
+use crate::backup::{BackupKind, Trigger};
+use crate::cron::{EntryInput, Overlap};
 use crate::db::repo::users::UserStatus;
 use crate::error::CoreError;
 use crate::service::all_operations;
+use crate::service::authorized_keys::AddKey;
+use crate::service::backups::Retention;
 use crate::service::users::GrantInput;
 use crate::testing::{TestCore, TestUser};
 
@@ -54,6 +60,36 @@ const GRID: &[(&str, &str)] = &[
     // Any authenticated actor, read scope.
     ("whoami", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
     ("audit_list", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    // Host management (M5). All Owner-only; tokens need the scope in the OpSpec.
+    ("cron_list", "Y   N    Y   Y   Y   N   N   N   Y"),
+    ("cron_files_list", "Y   N    Y   Y   Y   N   N   N   Y"),
+    ("cron_runs_list", "Y   N    Y   Y   Y   N   N   N   Y"),
+    ("cron_preview", "Y   N    Y   Y   Y   N   N   N   Y"),
+    ("cron_create", "Y   N    N   N   Y   N   N   N   Y"),
+    ("cron_update", "Y   N    N   N   Y   N   N   N   Y"),
+    ("cron_toggle", "Y   N    N   Y   Y   N   N   N   Y"),
+    ("cron_delete", "Y   N    N   N   Y   N   N   N   Y"),
+    ("cron_reapply", "Y   N    N   N   Y   N   N   N   Y"),
+    ("cron_run", "Y   N    N   N   N   N   N   N   Y"),
+    ("authorized_keys_list", "Y   N    Y   Y   Y   N   N   N   Y"),
+    ("authorized_keys_add", "Y   N    N   N   Y   N   N   N   Y"),
+    (
+        "authorized_keys_delete",
+        "Y   N    N   N   Y   N   N   N   Y",
+    ),
+    // Backups: the member (alice) has access to prj_1 without `backups`, so Project ops are denied.
+    ("backups_list", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    ("backup_targets_list", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    ("backup_create", "Y   N    N   Y   Y   N   N   N   Y"),
+    ("backup_create_yanto", "Y   N    N   Y   Y   N   N   N   Y"),
+    ("backup_download", "Y   N    N   N   Y   N   N   N   Y"),
+    (
+        "backup_download_yanto",
+        "Y   N    N   N   Y   N   N   N   Y",
+    ),
+    ("backup_delete", "Y   N    N   N   Y   N   N   N   Y"),
+    ("backup_delete_yanto", "Y   N    N   N   Y   N   N   N   Y"),
+    ("backup_prune", "Y   N    N   N   N   N   N   N   Y"),
 ];
 
 fn grid_row(name: &str) -> Vec<bool> {
@@ -86,6 +122,21 @@ struct Fixture {
     owner: TestUser,
     alice: TestUser,
     bob: TestUser,
+    /// Existing Backup rows (Project kind on prj_1, and the Yanto DB) for the id-based operations.
+    project_backup: String,
+    yanto_backup: String,
+}
+
+fn cron_input() -> EntryInput {
+    EntryInput {
+        name: "matrix".into(),
+        schedule: "@daily".into(),
+        run_as_user: "deploy".into(),
+        command: "true".into(),
+        overlap: Overlap::Allow,
+        timeout_s: None,
+        enabled: true,
+    }
 }
 
 async fn fixture() -> Fixture {
@@ -95,11 +146,15 @@ async fn fixture() -> Fixture {
         .create_member("alice", &[("prj_1", &[Permission::Deploy])])
         .await;
     let bob = core.create_member("bob", &[]).await;
+    let project_backup = project_backup_fixture(&core, "prj_1").await;
+    let yanto_backup = yanto_row_fixture(&core).await;
     Fixture {
         core,
         owner,
         alice,
         bob,
+        project_backup,
+        yanto_backup,
     }
 }
 
@@ -198,6 +253,54 @@ async fn invoke(f: &Fixture, op: &str, a: &Actor) -> Result<(), CoreError> {
         "user_delete" => s.users.delete(a, &f.bob.id).await,
         "whoami" => s.tokens.whoami(a).await.map(|_| ()),
         "audit_list" => s.audit.list(a, &Default::default()).await.map(|_| ()),
+        "cron_list" => s.cron.list(a).await.map(|_| ()),
+        "cron_files_list" => s.cron.files_list(a).await.map(|_| ()),
+        "cron_runs_list" => s.cron.runs_list(a, "crn_missing").await.map(|_| ()),
+        "cron_preview" => s.cron.preview(a, "* * * * *", 5).await.map(|_| ()),
+        "cron_create" => s.cron.create(a, &cron_input()).await.map(|_| ()),
+        "cron_update" => s
+            .cron
+            .update(a, "crn_missing", &cron_input())
+            .await
+            .map(|_| ()),
+        "cron_toggle" => s.cron.toggle(a, "crn_missing", false).await.map(|_| ()),
+        "cron_delete" => s.cron.delete(a, "crn_missing").await,
+        "cron_reapply" => s.cron.reapply(a, false).await,
+        "cron_run" => s.cron.run_entry(a, "crn_missing").await.map(|_| ()),
+        "authorized_keys_list" => s.authorized_keys.list(a).await.map(|_| ()),
+        "authorized_keys_add" => s
+            .authorized_keys
+            .add(
+                a,
+                &AddKey {
+                    name: "matrix".into(),
+                    public_key: test_keys::ed25519(3, ""),
+                },
+            )
+            .await
+            .map(|_| ()),
+        "authorized_keys_delete" => s
+            .authorized_keys
+            .delete(a, "akey_missing", None)
+            .await
+            .map(|_| ()),
+        "backups_list" => s.backups.list(a).await.map(|_| ()),
+        "backup_targets_list" => s.backups.targets(a).await.map(|_| ()),
+        "backup_create" => s
+            .backups
+            .create_project(a, "prj_1", BackupKind::ProjectVolumes, None, false)
+            .await
+            .map(|_| ()),
+        "backup_create_yanto" => s
+            .backups
+            .create_yanto(a, Trigger::Manual, None)
+            .await
+            .map(|_| ()),
+        "backup_download" => s.backups.download(a, &f.project_backup).await.map(|_| ()),
+        "backup_download_yanto" => s.backups.download(a, &f.yanto_backup).await.map(|_| ()),
+        "backup_delete" => s.backups.delete(a, &f.project_backup).await,
+        "backup_delete_yanto" => s.backups.delete(a, &f.yanto_backup).await,
+        "backup_prune" => s.backups.prune(a, Retention::default()).await.map(|_| ()),
         other => panic!("no invocation for {other}"),
     }
 }
@@ -214,7 +317,8 @@ async fn every_actor_profile_against_every_operation() {
 
             // 1. The spec-level decision. Member/token rows have no Project here, so the
             //    spec check uses an unrestricted call; Project-scoped ops arrive in M2.
-            let spec = actor.authorize(op, None);
+            let project = matches!(op.access, Access::Project(_)).then_some("prj_1");
+            let spec = actor.authorize(op, project);
             if allowed {
                 assert!(spec.is_ok(), "{} should allow {profile}: {spec:?}", op.name);
             } else {
@@ -283,4 +387,22 @@ async fn happy_paths_really_succeed_for_the_owner() {
     s.tokens.whoami(&o).await.unwrap();
     s.audit.list(&o, &Default::default()).await.unwrap();
     s.auth.owner_reset(&Actor::cli()).await.unwrap();
+    // M5: the Owner can really use the host-management operations.
+    let e = s.cron.create(&o, &cron_input()).await.unwrap();
+    s.cron.toggle(&o, &e.id, false).await.unwrap();
+    s.cron.run_entry(&o, &e.id).await.unwrap();
+    s.cron.runs_list(&o, &e.id).await.unwrap();
+    s.cron.delete(&o, &e.id).await.unwrap();
+    let key = AddKey {
+        name: "m".into(),
+        public_key: test_keys::ed25519(4, ""),
+    };
+    let k = s.authorized_keys.add(&o, &key).await.unwrap();
+    s.authorized_keys.list(&o).await.unwrap();
+    s.authorized_keys
+        .delete(&o, &k.key.id, Some("deploy"))
+        .await
+        .unwrap();
+    s.backups.download(&o, &f.project_backup).await.unwrap();
+    s.backups.delete(&o, &f.yanto_backup).await.unwrap();
 }

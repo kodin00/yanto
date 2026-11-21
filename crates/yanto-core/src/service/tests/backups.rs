@@ -297,7 +297,7 @@ async fn failed_backups_older_than_a_week_are_purged_by_the_next_scheduled_run()
     assert!(list.iter().all(|b| b.id != "bak_old"));
 }
 
-async fn project_backup_fixture(core: &TestCore, project: &str) -> String {
+pub(super) async fn project_backup_fixture(core: &TestCore, project: &str) -> String {
     let dir = core.dir.path().join("backups/projects/blog");
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("20260101T000000Z-postgres.sql.zst");
@@ -321,6 +321,36 @@ async fn project_backup_fixture(core: &TestCore, project: &str) -> String {
     .await
     .unwrap();
     repo::mark_success(&mut conn, id, 4, "abc", 2)
+        .await
+        .unwrap();
+    id.to_owned()
+}
+
+/// A finished `yanto_sqlite` row with a real file, for permission tests.
+pub(super) async fn yanto_row_fixture(core: &TestCore) -> String {
+    let dir = core.dir.path().join("backups/yanto");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("20260101T000000Z-yanto.tar.zst");
+    std::fs::write(&file, b"archive").unwrap();
+    let mut conn = core.db.writer().acquire().await.unwrap();
+    let id = "bak_yanto";
+    repo::insert_running(
+        &mut conn,
+        &NewBackup {
+            id,
+            project_id: None,
+            kind: "yanto_sqlite",
+            database_id: None,
+            trigger: "manual",
+            filename: "20260101T000000Z-yanto.tar.zst",
+            file_path: &file.to_string_lossy(),
+            note: None,
+            now: 1,
+        },
+    )
+    .await
+    .unwrap();
+    repo::mark_success(&mut conn, id, 7, "abc", 2)
         .await
         .unwrap();
     id.to_owned()
