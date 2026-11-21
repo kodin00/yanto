@@ -403,10 +403,10 @@ impl AuthService {
         }
         let actor = actor_for_user(&mut conn, &user, ActorKind::User, origin).await?;
         drop(conn);
-        if now - session.last_seen_at >= TOUCH_INTERVAL_MS {
-            if let Err(err) = self.touch_session(&id, now).await {
-                tracing::warn!(error = %err, "could not update session last_seen_at");
-            }
+        if now - session.last_seen_at >= TOUCH_INTERVAL_MS
+            && let Err(err) = self.touch_session(&id, now).await
+        {
+            tracing::warn!(error = %err, "could not update session last_seen_at");
         }
         Ok(SessionAuth {
             actor,

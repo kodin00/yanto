@@ -430,7 +430,6 @@ mod tests {
         a.kind = ActorKind::ApiToken {
             token_id: "tok_x".into(),
             token_name: "ci".into(),
-            token_name: "ci".into(),
             scope,
         };
         a.channel = Channel::Rest;

@@ -14,6 +14,9 @@ pub mod auth;
 pub mod tokens;
 pub mod users;
 
+#[cfg(test)]
+mod tests;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -104,6 +107,7 @@ impl Ctx {
 /// All services, built once by the composition root and shared by every adapter.
 #[derive(Debug, Clone)]
 pub struct Services {
+    ctx: Ctx,
     pub audit: audit::AuditService,
     pub auth: auth::AuthService,
     pub users: users::UserService,
@@ -132,7 +136,13 @@ impl Services {
             auth: auth::AuthService::new(ctx.clone()),
             users: users::UserService::new(ctx.clone()),
             tokens: tokens::TokenService::new(ctx.clone()),
+            ctx,
         }
+    }
+
+    /// Shared context, for service modules in other crates' tests and the audit writer.
+    pub fn ctx(&self) -> &Ctx {
+        &self.ctx
     }
 }
 
