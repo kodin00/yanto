@@ -137,16 +137,16 @@ Outermost → innermost:
    - `/api/v1/*`: bearer-token extractor only; no cookies read, no CSRF (token is not ambient credential).
    - `/mcp`: bearer-token extractor.
    - `/deploy`, `/webhooks/github`: Deploy Token / signature; no session; no CSRF.
-   - `/healthz`: unauthenticated, minimal (`ok`), no version info.
+   - `/healthz`: unauthenticated, minimal (`ok`), no version info (detailed checks: `GET /api/v1/health`, `read` scope).
 
 ### 5.2 Dashboard sessions
 
 - **tower-sessions** with a **custom `SessionStore` over sqlx/SQLite**. Docs show the trait: `create/save/load/delete` (async-trait, `Debug + Send + Sync + 'static`), with `Expiry::{OnSessionEnd, OnInactivity, AtDateTime}` and `SessionManagerLayer::with_expiry`. A custom store (not a stock one) because the parity item "sessions revocable server-side" needs `user_id` as an indexed column (revoke all sessions of a user on password reset / owner-reset / member removal). Stock store crate for sqlx/SQLite was not checked: **unverified**.
-- Table `sessions(id, user_id NULL, data BLOB/JSON, expires_at, created_at, last_seen_at, ip, user_agent)`; the store writes `user_id` from session data on `save`. ASSUMPTION: the store parses the `Record` data to extract `user_id`; alternative is a separate `user_sessions` link table written by the login service.
-- Expiry: `OnInactivity` (default 7 days — ASSUMPTION) with absolute cap (30 days — ASSUMPTION), enforced in `load`. Note from docs: reads are not activity; only modification extends expiry, so the middleware must `save` periodically (touch `last_seen`).
-- Cookie: `HttpOnly`, `SameSite=Lax`, `Secure` when `server.public_url` is `https://` (legacy `cookieSecure` behavior), cookie name `yanto_session`. Session id rotated on login (fixation) and on privilege change.
+- Table `sessions` as in 02 §4.1 (`id` = SHA-256 of the cookie value, `user_id NOT NULL`, `csrf_token`, timestamps, `ip`, `user_agent`); the custom store maps the tower-sessions `Record` onto those columns, so `user_id` is a real indexed column and a session without a user is never persisted.
+- Expiry: **7 days absolute, no sliding window** (03 §a.3; legacy parity), enforced in `load` against `sessions.expires_at`; `last_seen_at` is touched at most once a minute for display only.
+- Cookie: `HttpOnly`, `SameSite=Lax`, `Secure` when `server.public_url` is `https://` (legacy `cookieSecure` behavior), cookie name `yanto_session` (same name for http and https; no `__Host-` prefix, 03 §a.3). Session id rotated on login (fixation) and on privilege change.
 - Passwords: **argon2id** (crate **unverified**), per-user salt; legacy scrypt/bcrypt shapes are not carried over (ADR 0004). Login rate limiting: in-memory per-IP+username limiter with backoff (ASSUMPTION; no crate chosen). Constant-time compare via `subtle` (**unverified**).
-- First Owner: `POST /setup` is enabled only while no Owner exists and requires the one-time **setup code** (hash stored in `settings`, consumed atomically with Owner creation, written by `yanto install`; re-issuable with `yanto setup-code` while no Owner exists; see doc 05).
+- First Owner: `POST /setup` is enabled only while no Owner exists and requires the one-time **setup code** (hash stored in `app_settings` key `setup.code_hash`, consumed atomically with Owner creation, written by `yanto install`; re-issuable with `yanto setup-code` while no Owner exists; see doc 05).
 
 ### 5.3 CSRF (dashboard only)
 
@@ -171,7 +171,7 @@ High-entropy random tokens → fast hash (SHA-256) is adequate; passwords use ar
 ### 5.5 Webhooks
 
 - `POST /deploy?id=<project>` with `Authorization: Bearer <Deploy Token>` → `deployments.trigger(Actor::DeployToken)`.
-- `POST /webhooks/github` → verify `X-Hub-Signature-256` HMAC over the **raw body** (legacy captured raw body for this reason; in axum extract `Bytes` before JSON parsing). Per-Project webhook secret: **ASSUMPTION** (check how legacy stored it before implementing). Only `push` to the Project's tracked branch triggers.
+- `POST /webhooks/github` → verify `X-Hub-Signature-256` HMAC over the **raw body** (legacy captured raw body for this reason; in axum extract `Bytes` before JSON parsing). The HMAC key is the Project's Deploy Token (decrypted from `deploy_token_enc`; 02 §3), as in legacy. Only `push` to the Project's tracked branch triggers.
 
 ## 6. Background work
 
@@ -180,20 +180,20 @@ All background tasks are spawned by `yanto serve` only, under one `tokio_util::s
 ### 6.1 Deployment queue (SQLite table)
 
 ```
-deployments(id, project_id, status, trigger, target_ref, queued_at, started_at,
-            finished_at, exit_code, requested_by, cancel_requested, log_bytes, …)
-status: queued → running → success | failed | cancelled
+deployments(id, project_id, status, trigger, triggered_by, target_ref, queued_at,
+            started_at, finished_at, exit_code, log_bytes, …)   -- full columns: 02 §4.2
+status: queued → running → success | failed | cancelled | interrupted
 ```
 - **Enqueue** = `INSERT` with `status='queued'` (service, in a txn with audit). Then `Notify::notify_one()` in-process; a **poll fallback** every ~2 s (ASSUMPTION) covers inserts made by other processes (`yanto mcp` stdio, CLI) — SQLite has no cross-process notify.
-- **Claim**: single worker loop; `UPDATE deployments SET status='running', started_at=? WHERE id=(SELECT id FROM deployments d WHERE status='queued' AND NOT EXISTS (SELECT 1 FROM deployments r WHERE r.project_id=d.project_id AND r.status='running') ORDER BY queued_at LIMIT 1) RETURNING *`. Guarantees **one running Deployment per Project**; global concurrency via a `Semaphore` (`deploy.max_concurrent`, default 2 — ASSUMPTION).
-- **Crash recovery** on startup (legacy step 6): all `running` → `failed` with "Yanto restarted" log line; `queued` stay queued.
-- **Cancel**: set `cancel_requested`; worker holds `HashMap<DeploymentId, CancellationToken>`; cancellation kills the running subprocess (§7.2). Stop/rollback/restart use the same machinery (parity: stop, rollback with preview, queue).
-- **Timeouts**: `deploy.command_timeout` (legacy: 1 h) per step; `deploy.log_max_bytes` truncation marker (legacy: 500 000 chars).
+- **Claim**: single worker loop; `UPDATE deployments SET status='running', started_at=? WHERE id=(SELECT id FROM deployments d WHERE status='queued' AND NOT EXISTS (SELECT 1 FROM deployments r WHERE r.project_id=d.project_id AND r.status='running') ORDER BY queued_at LIMIT 1) RETURNING *`. Guarantees **one running Deployment per Project**; global concurrency via a `Semaphore` (`app_settings` `deploy.max_concurrent`, default 2 — ASSUMPTION).
+- **Crash recovery** on startup (legacy step 6): all `running` → `interrupted` with a "Yanto restarted" system log line; `queued` stay queued.
+- **Cancel**: in-memory only (no DB column); a queued row goes straight to `cancelled`; for a running one the worker holds `HashMap<DeploymentId, CancellationToken>`; cancellation kills the running subprocess (§7.2). Stop/rollback/restart use the same machinery (parity: stop, rollback with preview, queue).
+- **Timeouts**: `runtime.command_timeout_ms` (legacy: 1 h) per step; `runtime.deployment_log_max_bytes` truncation marker (legacy: 500 000 chars).
 
 ### 6.2 Log storage and SSE fan-out
 
 - **EventHub** (`yanto-core::jobs::hub`): `DashMap`/`Mutex<HashMap<_, broadcast::Sender<Event>>>` keyed by Deployment id (log lines) plus one global channel (deployment status, container events for the dashboard). `tokio::sync::broadcast` capacity ~1024 (ASSUMPTION).
-- Deployment runner appends log lines to `deployment_logs(deployment_id, seq, ts, stream, text)` in batches (every N lines or 250 ms — ASSUMPTION) and publishes `Event::Log{seq,…}` after the batch commits.
+- Deployment runner appends log lines to `deployment_logs(deployment_id, seq, ts, stream, data)` in batches (every N lines or 250 ms — ASSUMPTION) and publishes `Event::Log{seq,…}` after the batch commits.
 - **SSE endpoint** (axum `Sse` + `KeepAlive`, docs-confirmed; wrap `broadcast::Receiver` with `tokio_stream::wrappers::BroadcastStream`, as the axum example comment suggests): **subscribe first, then replay** rows with `seq > Last-Event-ID` from SQLite, then forward live events, dropping duplicates by `seq`. On `Lagged`, re-query from the last delivered `seq` — no data loss, bounded memory. SSE `id:` = `seq`, so browser reconnect resumes automatically.
 - htmx side: `hx-ext="sse"` (htmx SSE extension, vendored) swaps log fragments; status badges update from the global channel.
 
@@ -202,9 +202,9 @@ status: queued → running → success | failed | cancelled
 | Task | Default | Notes |
 |---|---|---|
 | Deployment log pruning | keep last N Deployments per Project and/or age (ASSUMPTION: 50 / 90 d) | deletes `deployment_logs` rows, keeps the `deployments` row |
-| Audit log pruning | optional, off by default (ASSUMPTION) | |
+| Audit log pruning | `audit.retention_days` (default 365, 0 = keep) | |
 | Expired sessions / invites / reset tokens | hourly | |
-| Backup pruning | per-schedule `keep` count | files + rows |
+| Backup pruning | `yanto backup … --keep-last/--keep-days` after a successful scheduled run (04 §7.4) | files + rows |
 | WAL checkpoint | `PRAGMA wal_checkpoint(TRUNCATE)` hourly (ASSUMPTION) | |
 
 Each runs as its own `tokio::spawn` loop with `tokio::select!` on the cancellation token and `MissedTickBehavior::Delay`.
@@ -235,7 +235,7 @@ Compose has no daemon API, so Yanto shells out to the `docker compose` plugin (p
 
 - Invocation: `docker compose --project-name <slug> --project-directory <dir> -f <compose file(s)> [--env-file <f>] <verb>`; verbs: `config` (validate/preview), `pull`, `up -d --remove-orphans`, `ps --format json`, `down`, `exec -T` (DB dumps). Arguments are passed as `Command::args` (never via a shell); Project names are slugged `[a-z0-9_-]`.
 - **Streaming**: `Command::new("docker").stdin(null).stdout(piped).stderr(piped).kill_on_drop(true)`; two reader tasks (`BufReader::lines` or chunked reads, tolerant of `\r` progress output) push into one `mpsc` to the log sink (DB batch writer + EventHub). Output is size-capped by `deploy.log_max_bytes`.
-- **Cancellation**: spawn the child in its **own process group** (`std::os::unix::process::CommandExt::process_group(0)` — stable std API), then on cancel/timeout send `SIGTERM` to the group, wait `grace` (10 s — ASSUMPTION), then `SIGKILL`. Required because `docker compose` spawns children (buildkit, git). Signal sending through `nix` (**unverified**) or `libc::kill` wrapper.
+- **Cancellation**: spawn the child in its **own process group** (`std::os::unix::process::CommandExt::process_group(0)` — stable std API), then on cancel/timeout send `SIGTERM` to the group, wait `grace` (5 s, legacy `runCommand`), then `SIGKILL`. Required because `docker compose` spawns children (buildkit, git). Signal sending through `nix` (**unverified**) or `libc::kill` wrapper.
 - **Git** (`git.rs`): `git` CLI, not a Rust git library (ASSUMPTION: matches legacy and honors host config). Deploy Key via `GIT_SSH_COMMAND="ssh -i <key> -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"` (legacy default `accept-new`). Same cancellation path.
 - Working copies live under `/var/lib/yanto/projects/<slug>/`; image-backed Projects store only generated compose + `.env`.
 
@@ -276,7 +276,7 @@ pub struct HostnameBinding { pub hostname: Hostname, pub target_port: u16 /* 127
 
 ### 8.1 Config file
 
-`/etc/yanto/config.toml`, `root:root 0600`, written by `yanto install` (doc 05), read at startup via `serde` + `toml` (**unverified**). Override path with `--config` / `YANTO_CONFIG`. Env overrides: `YANTO_<SECTION>__<KEY>` only for a documented few (bind, port, log level) — ASSUMPTION. Config is **static bootstrap**; operator-editable runtime settings (Cloudflare accounts, SSH user, app URL, command timeouts) live in the DB `settings` table and the dashboard, as in legacy.
+`/etc/yanto/config.toml`, `root:root 0600`, written by `yanto install` (doc 05), read at startup via `serde` + `toml` (**unverified**). Override path with `--config` / `YANTO_CONFIG`. Env overrides: `YANTO_<SECTION>__<KEY>` only for a documented few (bind, port, log level) — ASSUMPTION. Config is **static bootstrap plus host-integration paths** (anything that changes the systemd `ReadWritePaths`, so it is changed with `yanto install --reconfigure`, shown read-only in the dashboard). Operator-editable runtime settings (app URL, timeouts, retention, trusted proxies; 02 §4.5 `app_settings`) and Cloudflare clients live in the DB and the dashboard, as in legacy.
 
 ```toml
 # illustrative — no secrets in this file; they live in the data dir and DB
@@ -290,19 +290,18 @@ public_url = ""              # optional; drives cookie Secure + CSRF origin chec
 data_dir = "/var/lib/yanto"
 
 [ssh]
-authorized_keys_user = "deploy"   # Unix user for Authorized Keys
+authorized_keys_user = "deploy"   # Unix user for Authorized Keys (set by `yanto install`, no default)
 
 [docker]
 socket = "/var/run/docker.sock"
-
-[registry]
-enabled = false
 
 [ingress]
 providers = ["cloudflare-tunnel", "traefik"]   # which to expect/check
 [ingress.traefik]
 dynamic_dir = "/etc/traefik/dynamic"
 cert_resolver = "letsencrypt"
+entrypoint = "websecure"
+unit = "traefik"
 [ingress.cloudflared]
 unit = "cloudflared"
 
@@ -311,17 +310,12 @@ enabled = false
 config_path = "/etc/frp/frps.toml"
 unit = "frps"
 
-[deploy]
-max_concurrent = 2
-command_timeout = "1h"
-log_max_bytes = 500000
-
 [log]
 level = "info"
 format = "json"     # or "pretty"
 ```
 
-The file never contains the app encryption key, tokens, or passwords.
+The file never contains the app encryption key, tokens, or passwords. Hosted Registry enablement is DB state (`hosted_registry_settings.enabled`), not config; deploy limits are `app_settings` (`deploy.max_concurrent`, `runtime.command_timeout_ms`, `runtime.deployment_log_max_bytes`).
 
 ### 8.2 Data dir `/var/lib/yanto` (root, `0700`)
 
@@ -410,6 +404,6 @@ All versions **unverified** unless noted; pin at first `cargo add` after checkin
 5. **Volume Backups**: method not decided (helper container via bollard vs `docker run … tar`); needs an image available offline.
 6. **Cron `%` escaping and temp-file naming** on Debian/Ubuntu need a real test.
 7. **Exec terminal over WebSocket** is the largest attack surface of the dashboard; session + CSRF + Origin + permission + audit are all required, plus idle timeout.
-8. **GitHub webhook secret storage** unknown from legacy docs — check source before implementing.
+8. **GitHub webhook secret** = Deploy Token (see OQ-1 in 07); no separate secret.
 9. **sqlx SQLite single-writer** pool design is an ASSUMPTION; load is small (ADR 0002) but queue claim and log batch writes must not starve interactive requests.
 10. **vendored JS** (htmx, SSE ext, xterm) needs a documented update procedure and checksum list to stay compatible with "no npm".

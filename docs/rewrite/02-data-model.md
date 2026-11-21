@@ -28,14 +28,14 @@ Labels: items not grounded in `docs/legacy/` or the ADRs are marked **ASSUMPTION
 
 ## 2. Migration strategy
 
-- Files: `crates/<db-crate>/migrations/NNNN_<slug>.sql` (ASSUMPTION: crate layout is decided in the architecture doc). Numbering is sequential, 4 digits.
+- Files: `crates/yanto-core/migrations/NNNN_<slug>.sql` (01 §6.4). Numbering is sequential, 4 digits.
 - Embedded: `sqlx::migrate!("./migrations")` compiles the files into the binary. `sqlx-cli` is a dev tool only, pinned in `mise.toml`; the shipped binary needs no CLI.
-- Applied at startup, before listeners bind, by the single Master process. SQLite's file lock replaces the legacy Postgres advisory lock.
+- Applied at startup, before listeners bind, by the single Yanto process. SQLite's file lock replaces the legacy Postgres advisory lock.
 - Forward-only: no `down` migrations. sqlx checksums applied files, so applied migrations are immutable; fixes are new migrations.
-- Before applying any pending migration on an existing DB, write `<data_dir>/backups/pre-migrate-<version>-<ts>.db` via `VACUUM INTO` (ASSUMPTION; keeps last 3). Failure to migrate aborts startup and leaves the service down rather than serving a half-migrated schema.
+- Before applying any pending migration on an existing DB, write `<data_dir>/backups/yanto/pre-migrate-<version>-<ts>.db` (DB only) via `VACUUM INTO` (ASSUMPTION; keeps last 3). Failure to migrate aborts startup and leaves the service down rather than serving a half-migrated schema.
 - `0001_init.sql` is the whole v1.0.0 schema. There is no bridge or backfill code (contrast legacy `legacy-handwritten-schema` bridge).
 - Table rebuilds (SQLite cannot drop constraints) use the create-new / copy / drop / rename recipe inside one transaction with `foreign_keys` temporarily off via `PRAGMA defer_foreign_keys`.
-- `yanto migrate --check` reports pending migrations without applying (CLI, doc 03).
+- `yanto db status` reports pending migrations without applying; `yanto db migrate` applies them without serving (CLI, doc 05 §10).
 
 ## 3. Secrets at rest
 
@@ -192,7 +192,7 @@ Purpose: a deployable unit (Git or image source) run with Docker Compose.
 |---|---|---|
 | `id` | TEXT | PK, `prj` |
 | `name` | TEXT | NOT NULL, 1-100 chars |
-| `slug` | TEXT | NOT NULL, UNIQUE, `CHECK (slug GLOB '[a-z0-9][a-z0-9_-]*' AND length(slug) <= 63)`. Is the Compose project name and on-disk directory name `<projects_root>/<slug>` (path is derived, not stored). Uniqueness makes container-to-Project mapping unambiguous, removing legacy's 409 "ambiguous folder" case. |
+| `slug` | TEXT | NOT NULL, UNIQUE, `CHECK (slug GLOB '[a-z0-9][a-z0-9_-]*' AND length(slug) <= 63)`. Is the Compose project name and on-disk directory name `<data_dir>/projects/<slug>` (path is derived, not stored). Uniqueness makes container-to-Project mapping unambiguous, removing legacy's 409 "ambiguous folder" case. |
 | `source_kind` | TEXT | NOT NULL, `CHECK (source_kind IN ('git','image'))` |
 | `git_url` | TEXT | NULL |
 | `branch` | TEXT | NULL |
@@ -325,12 +325,14 @@ Singleton (`id = 1`).
 | `enabled` | INTEGER | boolean default 0 |
 | `listen_port` | INTEGER | NOT NULL default 5000, bound on `127.0.0.1` only (D10) |
 | `container_name` | TEXT | NOT NULL default `'yanto-registry'` (ASSUMPTION) |
-| `data_dir` | TEXT | NOT NULL (registry blobs) |
+| `image_digest` | TEXT | NULL (pinned `registry:2` digest after first pull) |
+| `gc_in_progress` | INTEGER | boolean default 0 (crash recovery restores normal mode) |
+| `internal_password_enc` | TEXT | NULL (password of the internal `yanto-internal` user; section 3) |
 | `public_host` | TEXT | NULL (display; TLS/ingress via a Hostname) |
 | `updated_at` | INTEGER | NOT NULL |
 
 #### `registry_users`
-Purpose: **source of truth** for htpasswd. Yanto regenerates `<data_dir>/registry/htpasswd` atomically (write temp, `rename`) after any change and bind-mounts it read-only into the container.
+Purpose: **source of truth** for htpasswd. Yanto regenerates `<data_dir>/registry/auth/htpasswd` atomically (write temp, `rename`) after any change and bind-mounts it read-only into the container.
 
 | Column | Type | Constraints |
 |---|---|---|
@@ -360,14 +362,14 @@ Purpose: rows rendered into `/etc/cron.d/yanto` (D11). DB is the source of truth
 Command execution is a root-equivalent primitive: creation is Owner-only and `admin` scope (risk area: access control / command injection).
 
 #### `authorized_keys`
-Purpose: public keys allowed to SSH to the Host as the configured Unix user, rendered into a marked block (`# BEGIN YANTO` / `# END YANTO`) of that user's `~/.ssh/authorized_keys`; text outside the block is never touched. The configured Unix user is an `app_settings` key (`ssh.authorized_keys_user`).
+Purpose: public keys allowed to SSH to the Host as the configured Unix user, rendered into a marked block (`# BEGIN YANTO MANAGED KEYS` / `# END YANTO MANAGED KEYS`, exact lines in 04 §6.1) of that user's `~/.ssh/authorized_keys`; text outside the block is never touched. The configured Unix user is `config.toml` `[ssh] authorized_keys_user` (01 §8.1).
 
 | Column | Type | Constraints |
 |---|---|---|
 | `id` | TEXT | PK, `akey` |
 | `name` | TEXT | NOT NULL, UNIQUE |
 | `key_type` | TEXT | NOT NULL (`ssh-ed25519`, `ecdsa-sha2-*`, `ssh-rsa`, `sk-*`) |
-| `public_key` | TEXT | NOT NULL, one line, no options prefix accepted (prevents `command=` injection), validated with `ssh-keygen -l` |
+| `public_key` | TEXT | NOT NULL, one line, no options prefix accepted (prevents `command=` injection), parsed and validated with the `ssh-key` crate |
 | `fingerprint` | TEXT | NOT NULL, UNIQUE |
 | `enabled` | INTEGER | boolean default 1 |
 | `created_at` | INTEGER | NOT NULL |
@@ -379,10 +381,10 @@ Purpose: records of local, downloadable Backups (D14). R2 columns dropped.
 |---|---|---|
 | `id` | TEXT | PK, `bak` |
 | `project_id` | TEXT | FK `projects` ON DELETE SET NULL; NULL for `yanto_sqlite` |
-| `kind` | TEXT | NOT NULL, `CHECK (kind IN ('project_volumes','project_postgres','project_mysql','yanto_sqlite'))` |
+| `kind` | TEXT | NOT NULL, `CHECK (kind IN ('project_volumes','project_postgres','project_mysql','yanto_sqlite'))` (CLI/UI aliases: `volumes`, `postgres`, `mysql`, `yanto`) |
 | `database_id` | TEXT | FK `project_databases` ON DELETE SET NULL (for DB kinds) |
 | `status` | TEXT | NOT NULL, `CHECK (status IN ('running','success','failed'))` |
-| `trigger` | TEXT | NOT NULL, `CHECK (trigger IN ('manual','api','cron'))` |
+| `trigger` | TEXT | NOT NULL, `CHECK (trigger IN ('manual','api','cron','pre_restore'))` |
 | `filename` | TEXT | NOT NULL |
 | `file_path` | TEXT | NOT NULL, under `<data_dir>/backups/`, canonicalized and prefix-checked on every read/delete (path traversal; risk area: input validation) |
 | `size_bytes` | INTEGER | NULL |
@@ -391,7 +393,7 @@ Purpose: records of local, downloadable Backups (D14). R2 columns dropped.
 | `created_at`, `finished_at`, `downloaded_at` | INTEGER | created NOT NULL |
 | `download_count` | INTEGER | NOT NULL default 0 |
 
-Indexes: `backups_created_idx(created_at DESC)`, `backups_project_idx(project_id, created_at DESC)`, `backups_status_idx(status)`. Formats (ASSUMPTION): `.tar.zst` for volumes, `.sql.gz` for dumps, `.db` for SQLite. Backups of `yanto_sqlite` bundle `app.key` with the DB (D22; Owner-only download, flagged sensitive in the UI). Startup recovery marks stale `running` rows `failed`. No retention in v1 beyond manual delete (ASSUMPTION).
+Indexes: `backups_created_idx(created_at DESC)`, `backups_project_idx(project_id, created_at DESC)`, `backups_status_idx(status)`. Layout and formats (04 §7): `<data_dir>/backups/projects/<slug>/<ts>-<kind>.tar.zst` (volumes) or `.sql.zst` (dumps); `<data_dir>/backups/yanto/<ts>-yanto.tar.zst` (DB + `app.key`, D22). Backups of `yanto_sqlite` bundle `app.key` with the DB (D22; Owner-only download, flagged sensitive in the UI). Startup recovery marks stale `running` rows `failed`. Retention is flag-driven (`--keep-last`/`--keep-days` on scheduled runs, 04 §7.4); manual Backups are never auto-deleted.
 
 ### 4.5 Audit and settings
 
@@ -417,7 +419,7 @@ Indexes: `audit_created_idx(created_at DESC)`, `audit_project_created_idx(projec
 #### `app_settings`
 Purpose: non-secret key/value settings (legacy shape kept). `key TEXT PK`, `value TEXT NOT NULL CHECK (json_valid(value))`, `updated_at INTEGER NOT NULL`.
 
-Known keys (ASSUMPTION, derived from legacy runtime settings minus Turnstile/R2/worker keys):
+Known keys (ASSUMPTION, derived from legacy runtime settings). Host-integration paths (`ssh`, Traefik dir/resolver/entrypoint, `frps` config path, daemon unit names) are **not** here: they live in `config.toml` (01 §8.1). Dropped legacy keys are listed in section 5.
 
 | Key | Value | Default |
 |---|---|---|
@@ -429,8 +431,8 @@ Known keys (ASSUMPTION, derived from legacy runtime settings minus Turnstile/R2/
 | `runtime.deployment_log_max_bytes` | int | ASSUMPTION |
 | `deploy.max_concurrent`, `deploy.retention_per_project` | int | 2, 50 |
 | `audit.retention_days` | int | 365 |
-| `ssh.authorized_keys_user` | string | set by `yanto install` |
-| `traefik.dynamic_dir`, `traefik.cert_resolver`, `traefik.entrypoint` | strings | set by install/doctor |
+| `host.public_ip`, `host.public_ip_v6` | string | none; used for Traefik A/AAAA records (04 §9.3) |
+| `audit.store_ip` | bool | true |
 | `cloudflared.config_mode` | `"remote"` | fixed (ADR 0006) |
 | `setup.code_hash` | hex | deleted on Owner creation |
 | `setup.wizard` | `completed/dismissed` | legacy parity |
@@ -526,23 +528,17 @@ Purpose: public name routed to a Project's published loopback port through an In
 Checks: `CHECK ((ingress_provider='cloudflare_tunnel') = (tunnel_id IS NOT NULL))`, `CHECK (manage_dns = 0 OR zone_id IS NOT NULL)`, `CHECK (no_tls_verify = 0 OR scheme = 'https')`.
 Indexes: `hostnames_project_idx(project_id)`, `hostnames_port_idx(project_port_id)`, `hostnames_tunnel_idx(tunnel_id)`.
 Cross-table invariant (service layer, since SQLite CHECK cannot span tables): `project_port.project_id = hostnames.project_id`; enforced additionally with a `BEFORE INSERT/UPDATE` trigger that aborts on mismatch.
-Origin is always `<scheme>://<bind_address>:<host_port>` from the target port; nothing about Docker networks is stored. Traefik provider output is one file per Hostname, `<traefik.dynamic_dir>/yanto-<id>.yml`, written atomically; the file provider hot-reloads. Rows with errors keep `enabled=1` and `sync_status='error'` so a retry is possible (legacy marked new failed routes disabled; ASSUMPTION: keeping intent is clearer).
+Origin is always `<scheme>://<bind_address>:<host_port>` from the target port; nothing about Docker networks is stored. Traefik provider output is one Yanto-owned file, `<ingress.traefik.dynamic_dir>/yanto.yml`, regenerated whole from all Traefik Hostnames and written atomically; the file provider hot-reloads. Rows with errors keep `enabled=1` and `sync_status='error'` so a retry is possible (legacy marked new failed routes disabled; ASSUMPTION: keeping intent is clearer).
 
 ### 4.7 FRP
 
 #### `frps_settings`
-Singleton (`id = 1`). Yanto manages the `frps` server side only (D17); tunnel definitions are not stored (clients are manual), and the tunnel list is read live from the `frps` dashboard API.
+Singleton (`id = 1`). Yanto manages the `frps` server side only (D17). It stores no FRP secrets and no tunnel definitions: dashboard credentials and `auth.token` stay in the operator's `frps.toml` (config path: `config.toml` `[frp] config_path`), and the tunnel list is read live from the `frps` dashboard API.
 
 | Column | Type | Constraints |
 |---|---|---|
 | `id` | INTEGER | PK, `CHECK (id = 1)` |
-| `public_host` | TEXT | NOT NULL default `''` (shown in client setup hints) |
-| `bind_port` | INTEGER | NOT NULL default 7000 (ASSUMPTION: frps default) |
-| `dashboard_url` | TEXT | NOT NULL default `'http://127.0.0.1:7500'`, loopback only |
-| `dashboard_user` | TEXT | NULL |
-| `dashboard_password_enc` | TEXT | NULL |
-| `auth_token_enc` | TEXT | NULL (frps `auth.token`, for display in the manual client hint) |
-| `config_path` | TEXT | NOT NULL default `'/etc/frp/frps.toml'` (ASSUMPTION) |
+| `public_host` | TEXT | NOT NULL default `''` (shown in the manual client setup hints) |
 | `updated_at` | INTEGER | NOT NULL |
 
 ## 5. Dropped legacy tables and columns

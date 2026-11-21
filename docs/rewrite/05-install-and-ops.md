@@ -70,7 +70,7 @@ Every prompt has a flag; a flag given on the command line suppresses its prompt.
 | Public URL (optional) | `--public-url <url>` | empty | `http(s)://…`; drives cookie `Secure` + CSRF origin check (see 01 §5) |
 | Data dir | `--data-dir <path>` | `/var/lib/yanto` | absolute; created `0700 root:root` |
 | Unix user for Authorized Keys | `--ssh-user <name>` | `$SUDO_USER` if set and not root, else first non-system user (uid ≥ 1000) | must exist in `/etc/passwd`; `root` allowed but warns. Non-interactive with no derivable default → error requiring `--ssh-user` |
-| Enable Hosted Registry | `--enable-registry` / `--no-enable-registry` | no | if yes: verifies Docker can pull `registry:2` lazily at first enable in the dashboard (not during install) and port `127.0.0.1:5000` is free |
+| Enable Hosted Registry | `--enable-registry` / `--no-enable-registry` | no | if yes: only checks that `127.0.0.1:5000` is free; the container is created when the Owner enables the Hosted Registry in the dashboard (DB state, not config) |
 | Ingress Providers to expect | `--ingress <list>` (`cloudflare-tunnel`, `traefik`, `none`; comma-separated or repeated) | `none` | multi-select. For each selected provider the wizard runs the daemon check (§3.3) |
 | Traefik dynamic dir | `--traefik-dynamic-dir <path>` | `/etc/traefik/dynamic` (ASSUMPTION) | asked only if `traefik` selected; dir should exist (warn if not) |
 | Traefik cert resolver | `--traefik-cert-resolver <name>` | `letsencrypt` (ASSUMPTION) | asked only if `traefik` selected |
@@ -200,9 +200,10 @@ KillMode=control-group
 UMask=0077
 LimitNOFILE=65536
 Environment=HOME=/root
-Environment=DOCKER_CONFIG=/var/lib/yanto/docker
 StateDirectory=yanto
 StateDirectoryMode=0700
+RuntimeDirectory=yanto
+RuntimeDirectoryMode=0700
 
 # --- sandboxing: Tier A (safe, always on) ---
 NoNewPrivileges=yes
@@ -248,7 +249,7 @@ Everything below is from systemd semantics as I know them (**ASSUMPTION**, not r
 |---|---|
 | `ProtectSystem=strict` | Makes the whole FS read-only except `ReadWritePaths`. The installer **must** list every path Yanto writes: data dir (`StateDirectory=` covers the default), `/etc/cron.d`, the Traefik dynamic dir, the `frps` config dir, and the configured Unix user's `~/.ssh` (authorized_keys write needs temp file + rename in that dir). Prefix optional paths with `-` so a missing dir doesn't fail the unit. Connecting to `/var/run/docker.sock` and talking to systemd need no write access (ASSUMPTION: unix-socket `connect` works on a read-only mount). If an operator later changes a configured path, `yanto install --reconfigure` re-renders the list; the dashboard shows a warning when a configured path is not in `ReadWritePaths` (ASSUMPTION). Fallback if this proves brittle: `ProtectSystem=full` (only `/usr`, `/boot`, `/etc` read-only — but `/etc/cron.d` and Traefik/frp dirs are in `/etc`, so they would still need `ReadWritePaths`). |
 | `ProtectHome=read-only` | The user's home must stay writable at `~/.ssh` only (via `ReadWritePaths`). `ProtectHome=yes` would hide homes entirely and break Authorized Keys — **do not use**. |
-| `DOCKER_CONFIG=<data_dir>/docker` and `HOME=/root` | So `docker login` for Registry Credentials writes inside the data dir rather than `/root/.docker` (which is read-only under `ProtectSystem=strict`). Git/ssh use `-o UserKnownHostsFile=<data_dir>/ssh/known_hosts` for the same reason (01 §7.2). |
+| `RuntimeDirectory=yanto` (`/run/yanto`, tmpfs) and `HOME=/root` | Registry auth never runs `docker login`: each Docker command that needs credentials gets a throwaway `DOCKER_CONFIG` dir under `/run/yanto/` (04 §4.7), so nothing is written to `/root/.docker` (read-only under `ProtectSystem=strict`). Git/ssh use `-o UserKnownHostsFile=<data_dir>/ssh/known_hosts` for the same reason (01 §7.2). |
 
 **Do NOT set** (each breaks a core function):
 
@@ -290,7 +291,7 @@ Flags: `--check` (report only), `--version <vX.Y.Z>` (default latest non-prerele
 2. Query Releases: `GET https://api.github.com/repos/kodin00/yanto/releases/latest` (or `/tags/<v>`); unauthenticated GitHub API rate limit applies (60/h — from general knowledge, **unverified**); honor optional `GITHUB_TOKEN`. Compare semver; stop if not newer.
 3. Download `yanto-<target>` + `SHA256SUMS` to a temp dir; **verify SHA256** exactly as `install.sh`. Verify the new binary runs: `<new> version` exits 0 and reports the expected version.
 4. **Refuse downgrades** across migrations: the new binary embeds its migration list; if the DB records migrations the target binary does not know (sqlx reports a missing migration), abort before replacing anything.
-5. If a Deployment is running: list it and wait (`--yes` proceeds; the shutdown path will mark it failed per 01 §6.1). ASSUMPTION.
+5. If a Deployment is running: list it and wait (`--yes` proceeds; the shutdown path will mark it `interrupted` per 01 §6.1). ASSUMPTION.
 6. **Back up** `yanto.db` (SQLite online backup into `backups/yanto/pre-update-<ts>.db`).
 7. Atomic replace: write `/usr/local/bin/yanto.new` (0755), keep current as `/usr/local/bin/yanto.prev`, `rename` over `yanto`. (Linux permits replacing a running executable by rename.)
 8. `systemctl restart yanto` (skipped with `--no-restart`), poll `/healthz` 30 s. On failure: restore `yanto.prev`, restart, report, exit non-zero. (The DB backup stays; forward-only migrations mean a rollback after a *successful* migration needs `--rollback` plus restoring that backup — print this explicitly.)
