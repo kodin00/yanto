@@ -460,7 +460,7 @@ async fn invoke_m2(f: &Fixture, op: &str, a: &Actor) -> Option<Result<(), CoreEr
         "project_compose_read" => s.projects.compose_read(a, p).await.map(|_| ()),
         "project_env_read" => s.projects.env_read(a, p).await.map(|_| ()),
         "project_env_content_read" => s.projects.env_content_read(a, p, false).await.map(|_| ()),
-        "project_env_preview" => s.projects.env_preview(a, "A=1").await.map(|_| ()),
+        "project_env_preview" => s.projects.env_preview(a, None, "A=1").await.map(|_| ()),
         "project_env_write" => s.projects.env_write(a, p, "A=1\n").await.map(|_| ()),
         "project_env_variables_write" => s
             .projects

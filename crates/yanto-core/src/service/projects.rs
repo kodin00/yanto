@@ -907,9 +907,18 @@ impl ProjectService {
         Ok(text)
     }
 
-    /// Parse arbitrary text; values are masked, nothing is stored.
-    pub async fn env_preview(&self, actor: &Actor, text: &str) -> Result<EnvView, CoreError> {
+    /// Parse arbitrary text; values are masked, nothing is stored. With a Project (the
+    /// dashboard editor) the caller also needs the `secrets` permission on it.
+    pub async fn env_preview(
+        &self,
+        actor: &Actor,
+        project: Option<&str>,
+        text: &str,
+    ) -> Result<EnvView, CoreError> {
         actor.authorize(&OP_PROJECT_ENV_PREVIEW, None)?;
+        if let Some(p) = project {
+            actor.authorize(&OP_PROJECT_ENV_READ, Some(p))?;
+        }
         text_limit("content", text)?;
         let f = env::parse(text);
         Ok(EnvView {

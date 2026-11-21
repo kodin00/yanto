@@ -506,10 +506,8 @@ impl DeploymentService {
             let mut conn = self.ctx.db.reader().acquire().await.map_err(db_err)?;
             deployments::get(&mut conn, id).await?
         }) else {
-            // Unknown id: the same answer an actor without access would get.
-            if actor.is_owner() {
-                return Err(not_found());
-            }
+            // Unknown id: scope and role are still checked first, and a Member gets the same
+            // answer (404) as for a Deployment of a Project they cannot see.
             actor.authorize(op, Some("-"))?;
             return Err(not_found());
         };
