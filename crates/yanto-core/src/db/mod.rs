@@ -16,6 +16,9 @@ pub mod repo;
 #[cfg(test)]
 mod project_schema_tests;
 
+#[cfg(test)]
+mod ingress_schema_tests;
+
 /// A write transaction on the single writer connection (`BEGIN IMMEDIATE`).
 pub type WriteTx = sqlx::Transaction<'static, sqlx::Sqlite>;
 
