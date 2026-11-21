@@ -79,7 +79,7 @@ pub fn user_agent(headers: &HeaderMap) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn cookie_value(headers: &HeaderMap) -> Option<String> {
+pub(super) fn cookie_value(headers: &HeaderMap) -> Option<String> {
     headers
         .get_all(header::COOKIE)
         .iter()
