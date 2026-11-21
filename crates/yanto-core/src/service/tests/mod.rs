@@ -2,6 +2,7 @@
 
 mod audit;
 mod auth;
+mod authorized_keys;
 mod cron;
 mod matrix;
 mod tokens;

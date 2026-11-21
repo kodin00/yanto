@@ -11,6 +11,7 @@
 
 pub mod audit;
 pub mod auth;
+pub mod authorized_keys;
 pub mod cron;
 pub mod tokens;
 pub mod users;
@@ -116,6 +117,7 @@ pub struct Services {
     pub users: users::UserService,
     pub tokens: tokens::TokenService,
     pub cron: cron::CronService,
+    pub authorized_keys: authorized_keys::AuthorizedKeysService,
 }
 
 impl Services {
@@ -141,6 +143,11 @@ impl Services {
             users: users::UserService::new(ctx.clone()),
             tokens: tokens::TokenService::new(ctx.clone()),
             cron: cron::CronService::new(ctx.clone(), deps.host_mgmt.clone()),
+            authorized_keys: authorized_keys::AuthorizedKeysService::new(
+                ctx.clone(),
+                deps.host_mgmt.clone(),
+                cfg.ssh.authorized_keys_user.clone(),
+            ),
             ctx,
         }
     }
@@ -159,6 +166,7 @@ pub fn all_operations() -> Vec<&'static OpSpec> {
     v.extend(users::OPERATIONS);
     v.extend(tokens::OPERATIONS);
     v.extend(cron::OPERATIONS);
+    v.extend(authorized_keys::OPERATIONS);
     v.push(&audit::OP_AUDIT_LIST);
     v
 }
