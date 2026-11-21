@@ -1127,6 +1127,8 @@ impl RegistryService {
                 Err((_, e)) => return Err(api_err(e)),
             }
         }
+        // The registry lists tags in storage order; show them sorted.
+        tags.sort_by(|a, b| a.tag.cmp(&b.tag));
         Ok(TagPage {
             repo: repo_name.to_owned(),
             tags,

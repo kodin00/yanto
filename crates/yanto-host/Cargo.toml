@@ -25,5 +25,6 @@ reqwest = { version = "0.13.5", default-features = false, features = ["query"] }
 
 [dev-dependencies]
 base64.workspace = true
+sqlx.workspace = true
 tempfile.workspace = true
 yanto-core = { workspace = true, features = ["testing"] }
