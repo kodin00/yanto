@@ -603,6 +603,13 @@ async fn env_payload_needs_secrets_and_is_written_then_cleared() {
     };
     assert_eq!(kind(d.deploy(&ma, &p.id, &req).await), ErrorKind::Forbidden);
     let queued = d.deploy(&c.owner, &p.id, &req).await.unwrap().deployment.id;
+    c.core.commands.on(
+        "pull nginx:alpine",
+        Reply {
+            lines: vec!["leaking abc-123-xyz here".into()],
+            ..Reply::ok()
+        },
+    );
     let pending: String =
         sqlx::query_scalar("SELECT pending_env_enc FROM deployments WHERE id = ?")
             .bind(&queued)

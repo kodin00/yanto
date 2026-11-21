@@ -103,7 +103,7 @@ pub async fn execute(eng: Arc<Engine>, dep: DeploymentRow, cancel: CancellationT
             return;
         }
     };
-    let redactor = build_redactor(&eng, &project).await;
+    let redactor = build_redactor(&eng, &project, &dep).await;
     let handle = logs::spawn(
         eng.clone(),
         dep.id.clone(),
@@ -143,7 +143,7 @@ async fn load_project(eng: &Engine, id: &str) -> Result<Option<ProjectRow>, Core
 }
 
 /// Secrets that must never reach the stored log: Deploy Token, registry secret, env values.
-async fn build_redactor(eng: &Engine, p: &ProjectRow) -> Redactor {
+async fn build_redactor(eng: &Engine, p: &ProjectRow, dep: &DeploymentRow) -> Redactor {
     let mut secrets = Vec::new();
     if let Ok(t) = eng
         .ctx
@@ -171,6 +171,22 @@ async fn build_redactor(eng: &Engine, p: &ProjectRow) -> Redactor {
                 .into_iter()
                 .map(|(_, v)| v.to_owned()),
         );
+    }
+    // Env values this Deployment is about to write (payload or restored snapshot).
+    for (col, enc) in [
+        ("pending_env_enc", dep.pending_env_enc.as_deref()),
+        ("env_snapshot_enc", dep.env_snapshot_enc.as_deref()),
+    ] {
+        if let Some(e) = enc
+            && let Ok(text) = eng.ctx.secrets.open("deployments", col, &dep.id, e)
+        {
+            secrets.extend(
+                super::env::parse(text.expose())
+                    .vars()
+                    .into_iter()
+                    .map(|(_, v)| v.to_owned()),
+            );
+        }
     }
     Redactor::new(secrets)
 }
