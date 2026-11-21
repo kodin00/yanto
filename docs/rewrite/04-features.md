@@ -78,7 +78,7 @@ Per-step timeouts (ASSUMPTION): git 10 min, pull 30 min, build/up 60 min. Each c
 
 ### 1.4 Webhooks
 - **Manual/CI**: `POST /deploy?id=<project_id>`, `Authorization: Bearer <deploy_token>`, optional JSON `{"ref": "<git ref>"}` (validated; ASSUMPTION). Requires `manual_deploy_enabled`. Constant-time token compare against the decrypted token. Response `202 {deployment_id, status, reused}`. Not CSRF-protected (bearer-only; no cookie auth accepted on this route). Rate limit 60/min per (client IP, project) (legacy value).
-- **GitHub**: `POST /webhooks/github?id=<project_id>`. Verify `X-Hub-Signature-256: sha256=<hex>` = HMAC-SHA256(secret = the Project's Deploy Token, body = raw bytes, before any form decoding), constant-time compare; missing/invalid → 401. Then: `X-GitHub-Event: ping` → 200; not `push` → 202 ignored; `deleted: true` → 202 ignored; ref not `refs/heads/<project branch>` → 202 ignored; `github_webhook_enabled=false` → 202 ignored; else enqueue with trigger `github` and `target_ref = after` sha is **not** used (deploy branch head, as legacy). Form-encoded delivery (`payload=` field) is unwrapped after verification. Dedupe on `X-GitHub-Delivery` (keep last 1000 / 24 h) → duplicate returns 200 `duplicate`. Body cap 5 MiB (ASSUMPTION) → 413.
+- **GitHub**: `POST /webhooks/github?id=<project_id>`. Verify `X-Hub-Signature-256: sha256=<hex>` = HMAC-SHA256(secret = the Project's Deploy Token, body = raw bytes, before any form decoding), constant-time compare; missing/invalid → 401. Then: `X-GitHub-Event: ping` → 200; not `push` → 202 ignored; `deleted: true` → 202 ignored; ref not `refs/heads/<project branch>` → 202 ignored; `github_webhook_enabled=false` → 202 ignored; else enqueue with trigger `github`; the Deployment uses the branch head, not the pushed `after` sha (legacy behavior). Form-encoded delivery (`payload=` field) is unwrapped after verification. Dedupe on `X-GitHub-Delivery` (keep last 1000 / 24 h) → duplicate returns 200 `duplicate`. Body cap 5 MiB (ASSUMPTION) → 413.
 - Image Projects: the same endpoints pull the current tag and redeploy (typical CI flow: push to Hosted Registry, then call `/deploy`).
 - Deploy Token reveal requires `secrets`; rotate invalidates the old token and the GitHub secret simultaneously (UI says so).
 
@@ -199,3 +199,168 @@ Reads: `/proc/*`, `statvfs`, `journalctl` subprocess. Writes: none for usage/hea
 - [ ] Prune preview lists candidates and never lists volumes; executing with defaults leaves stopped containers intact.
 - [ ] `/healthz` is public and minimal; `/api/v1/health` reports each dependency with its own status and returns within ~3 s when Docker hangs.
 - [ ] App logs stream live for the Owner and are denied to Members.
+
+---
+
+## 4. Hosted Registry and Registry Credentials
+
+### 4.1 Behavior
+Optional (D10). When enabled, Yanto runs one `registry:2` container (CNCF Distribution) bound to `127.0.0.1:5000`, with htpasswd basic auth and delete enabled. The operator manages registry users, browses repositories/tags, deletes tags, and runs garbage collection from the dashboard. Projects deploy images from it. It is a workload (ADR 0006), so Yanto creates and owns the container, unlike Host Daemons.
+
+Image tag `registry:2` is fixed by D10. Whether it tracks Distribution 2.x or a later major is **unverified** (it affects the in-container config path, §4.2); pin by digest after first pull and record it (ASSUMPTION).
+
+### 4.2 Files and container (exact)
+Files, all root-owned:
+- `DATA/registry/htpasswd` (0600): one line per user `name:<bcrypt hash>`.
+- `DATA/registry/config.yml` (0644): rendered by Yanto:
+  ```yaml
+  version: 0.1
+  log: { level: info }
+  storage:
+    filesystem: { rootdirectory: /var/lib/registry }
+    delete: { enabled: true }
+  http: { addr: :5000 }
+  auth:
+    htpasswd: { realm: Yanto Registry, path: /auth/htpasswd }
+  ```
+  Keys `storage.delete.enabled`, `auth.htpasswd.realm/path`, `http.addr`, and `maintenance.readonly.enabled` are grounded in the Distribution configuration docs. `version: 0.1`, `log.level` and `storage.filesystem.rootdirectory` appear in the GC docs/examples; the `log` block shape is **unverified**.
+- Named Docker volume `yanto-registry-data` mounted at `/var/lib/registry` (blobs; survives container recreation).
+
+Container (bollard `create_container`/`start`): name `yanto-registry`, image `registry:2`, labels `yanto.managed=registry`, `HostConfig.PortBindings 5000/tcp → 127.0.0.1:5000`, `RestartPolicy unless-stopped`, binds `DATA/registry/config.yml:/etc/docker/registry/config.yml:ro` (**unverified** path; newer Distribution images may read `/etc/distribution/config.yml` — verify against the pulled image's `Cmd`/docs before implementing, or pass the path explicitly as the container command), `DATA/registry/htpasswd:/auth/htpasswd:ro`, volume above. Disable removes the container only; volume and files are kept unless "delete data" is chosen with typed confirmation.
+
+htpasswd facts (Distribution docs): the only supported format is **bcrypt**; entries with other hash types are **ignored**; the file is **loaded once at startup**; with TLS absent basic auth sends passwords in cleartext headers; a missing file is auto-created with a generated user (so Yanto must always write the file *before* first start). Therefore:
+- Hash with bcrypt (cost 10, ASSUMPTION), `$2y$` prefix as `htpasswd -B` produces (ASSUMPTION that Go bcrypt accepts `$2y$`; Apache-compatible files rely on it — test in CI).
+- Any user add/remove/password change = rewrite the file atomically (temp file in `DATA/registry/`, fsync, rename) **then restart the container** so it reloads (no hot reload documented).
+- Passwords are shown once at creation, stored only as hashes. Min length 16 for generated, 12 for chosen (ASSUMPTION). Username `^[a-z0-9._-]{1,32}$`.
+- Yanto keeps one internal user `yanto-internal` whose password is stored encrypted (it must be recoverable to browse via the API and to pull for Projects).
+
+### 4.3 Browse, delete, GC
+**Browse** (Yanto calls `http://127.0.0.1:5000` with `yanto-internal` basic auth):
+- Repositories: `GET /v2/_catalog?n=<n>` and follow `last=<value>` pagination until no `Link: …rel="next"` header (pagination defined for tags; Distribution docs state catalog behaves identically).
+- Tags: `GET /v2/<name>/tags/list?n=<n>&last=<tag>` (default 100 per page, `Link` header for next).
+- Per tag: `HEAD /v2/<name>/manifests/<tag>` with `Accept: application/vnd.docker.distribution.manifest.v2+json` (plus OCI manifest/index media types, ASSUMPTION) to read `Docker-Content-Digest`; manifest `GET` for size/layers/created is best effort. Multi-arch indexes show as one row with child count.
+- Registry unreachable/401 → page shows state "registry down / auth mismatch" with container status from Docker.
+
+**Delete tag**: the API deletes **by digest only** (`DELETE /v2/<name>/manifests/<digest>` → `202 Accepted`, `404` if already gone). Flow: resolve tag → digest, list all other tags pointing to the same digest, show them in the confirmation ("deleting this will also remove tags: …"), then delete. Requires `storage.delete.enabled: true`. Blobs remain on disk until GC.
+
+**Garbage collection** (Distribution docs: `registry garbage-collect [--dry-run] [--delete-untagged] [--quiet] /path/to/config.yml`; docs say to restart the registry with `maintenance.readonly.enabled: true` before GC, and restart again without it afterwards):
+1. Preview: `docker exec yanto-registry registry garbage-collect --dry-run [--delete-untagged] <config path>` (exec via bollard); show the output.
+2. Run: render `config.yml` with `maintenance: { readonly: { enabled: true } }`, restart the container (pushes now rejected, pulls still work), `exec ... registry garbage-collect [--delete-untagged] <config path>`, stream output to an SSE log, then re-render the normal config and restart. A drop-guard restores normal mode even on error; on Yanto restart a persisted `registry_gc_in_progress` flag triggers the same restore.
+3. Record bytes reclaimed from `df` of the volume before/after (via a throwaway helper container `du`; best effort).
+- Alternative considered: stop the container and run `registry garbage-collect` in a one-off container on the same volume. Rejected as default because pulls would also fail during GC; kept as documented fallback if readonly mode misbehaves (**unverified** under load).
+- Concurrency: GC, user changes, and enable/disable are mutually exclusive (one registry-op mutex).
+- Warning in UI: untagged manifests (e.g. old digests referenced by rollback targets, §1.1) are deleted by `--delete-untagged`; default off.
+
+### 4.4 How Projects reference it
+- Image reference `127.0.0.1:5000/<repo>:<tag>` (or `<digest>`). Pulling from `127.0.0.1` works over plain HTTP because Docker treats loopback registries as insecure by default (**unverified** here; confirm in Docker docs). The Docker daemon, not the container network, resolves this, so it works for every Project.
+- Credentials for pulls are the internal user, injected via the per-command `DOCKER_CONFIG` (§4.7) when a Project's image host is `127.0.0.1:5000`; no operator action.
+- Compose files inside Git Projects can use the same reference; Yanto detects the host and injects auth likewise.
+- A Project referencing the Hosted Registry while it is disabled/down fails at the pull step with a hint to enable it.
+
+### 4.5 Exposing for remote push
+Docker clients require HTTPS for non-loopback registries, so a Hostname is mandatory. Two supported paths, both created as ordinary Hostnames (§9) pointing at `http://127.0.0.1:5000`; the registry is not a Project, so Hostname targets also allow "Hosted Registry" (special target, port 5000):
+- **Cloudflare Tunnel**: easiest (no open ports, edge TLS). **Caveat**: Cloudflare limits request body size on proxied traffic, and image layer uploads (`PATCH`/`PUT` of blobs) can exceed it. The limit depends on plan and is **unverified** here; check Cloudflare's current limits docs before documenting a number. Layers above the limit fail to push with a connection/413-style error. Mitigations: keep layers small, push from the Host itself (loopback), or use Traefik/FRP.
+- **Traefik** (ports 80/443, Let's Encrypt): no body limit imposed by a CDN; DNS record should be DNS-only (not proxied) (§9). Recommended for large images.
+- **FRP** (frps only): an FRP Tunnel can expose a port but terminates no TLS; pushing needs TLS to the registry, so use FRP only when TLS is handled elsewhere (ASSUMPTION; mostly not recommended). Yanto does not wire it; docs describe it.
+- Basic auth always on; the UI warns when a remote Hostname is not HTTPS-terminated.
+
+### 4.6 Registry users, UI, and state
+- `registry_settings(enabled, image_ref, image_digest, port=5000, gc_in_progress)`; `registry_users(name, hash_updated_at)` (hash lives only in the htpasswd file; ASSUMPTION: the file is source of truth for hashes, the table for metadata); `yanto-internal` credential encrypted in settings.
+- Permissions: Owner/`admin` only for enable/disable, users, delete, GC. Members with project `config` may read the repo list read-only (ASSUMPTION).
+
+### 4.7 Registry Credentials (external registries)
+- Entity: `registry_credentials(id, name, registry_host, username, secret_enc)`; `registry_host` normalized (`ghcr.io`, `docker.io`→ key `https://index.docker.io/v1/`, `host:port`). Linked to Projects (`project_registry_credentials`). Validate on save with a login probe: `GET https://<host>/v2/` and follow the `WWW-Authenticate` challenge (ASSUMPTION; failures reported but not blocking).
+- **Auth is passed per command via a temp `DOCKER_CONFIG` directory**, not by writing `/root/.docker/config.json` and not via `docker login`:
+  - Per Deployment (and per prune/pull action that needs auth) create `RUN/docker-<id>/` (mode 0700, on tmpfs so it never hits disk), write `config.json` containing only `{"auths": {"<host>": {"auth": "<base64(user:secret)>"}}}` (mode 0600), run `docker pull` / `docker compose pull|up|build` with `DOCKER_CONFIG` pointing there, then delete it in a drop-guard; startup sweeps stale `RUN/docker-*`.
+  - Justification: (1) **secrets management**: the secret exists on tmpfs only for the command's lifetime instead of persisting in plaintext base64 in root's home, which any later root process or backup would pick up; (2) **isolation**: Project A's pull cannot use Project B's credential, and manual `docker` use on the Host is unaffected; (3) **no global mutation**: concurrent Deployments cannot clobber each other's login state, which `docker login`/`logout` on a shared file would; (4) **auditability**: credential use is tied to a Deployment id.
+  - Trade-offs/risks: `config.json` still holds a base64 (reversible) secret during the command; mitigated by 0700 dir on tmpfs. Changing `DOCKER_CONFIG` also changes where the CLI looks for **plugins** (`cli-plugins`) and `buildx` state — if `docker compose` lives under root's `~/.docker/cli-plugins`, it would disappear (**unverified**; mitigated by symlinking `RUN/docker-<id>/cli-plugins` to the real plugin dir when it exists, and by the pre-flight `docker compose version` run under the same env). Credential helpers (`credsStore`) are intentionally not used.
+  - `docker login` is never run; no secret is passed on argv (`--password` would leak via `ps`).
+- Selection: for each image/compose service the registry host is derived from the reference (first component containing `.` or `:`, or `localhost`; otherwise Docker Hub). Only credentials linked to the Project **and** matching hosts are written.
+- Reveal: secret never revealed after creation (rotate only); `secrets` permission needed to create/rotate.
+
+### 4.8 Failure modes
+| Failure | Surfaces as |
+|---|---|
+| Port 5000 already in use at enable | Enable fails with owner of the listener (same host-listener scan as §1) |
+| htpasswd invalid (e.g. non-bcrypt line) | Registry exits at start; Yanto reads container exit + last log lines and shows them; file rewritten from `registry_users` metadata cannot recover hashes, so the UI offers "reset all users" |
+| Auth mismatch after user changes without restart | Browse shows 401 banner with "restart registry" action |
+| Push via Cloudflare fails on big layers | Documented caveat; Diagnostics note on the Hostname |
+| GC interrupted | Readonly flag recovered on restart; banner "Registry was left read-only; restore" |
+| Delete when delete disabled (hand-edited config) | `405`/error shown; config re-render action |
+
+### 4.9 Security notes
+- **Access control**: loopback bind + basic auth + HTTPS-only remote exposure; users are least-privilege-ish — htpasswd has no per-repo ACL, so every user can push/pull/delete everything (state in UI; token auth would need a separate service — out of scope).
+- **Secrets management**: bcrypt hashes only; internal credential encrypted; DOCKER_CONFIG on tmpfs.
+- **Transport security**: refuse to show remote-push instructions unless a TLS Hostname exists.
+- **Supply chain**: image pinned by digest; the registry content is operator-controlled, but any registry user can overwrite tags that a Project deploys — advise digest references.
+- **Availability**: GC window is write-unavailable by design.
+
+### 4.10 Acceptance criteria
+- [ ] Enabling creates config, htpasswd (with `yanto-internal`), volume, and a container bound only to `127.0.0.1:5000`; `curl` to `/v2/` without auth returns 401.
+- [ ] Adding a registry user rewrites the htpasswd atomically, restarts the container, and `docker login` with it succeeds; removing it denies access.
+- [ ] Catalog and tag lists page correctly beyond 100 tags.
+- [ ] Deleting a tag lists sibling tags first, deletes by digest, returns 202; blobs reclaimed only after GC.
+- [ ] GC dry-run output shown; real GC runs with pushes rejected and restores normal mode afterwards even if Yanto restarts mid-GC.
+- [ ] A Project with `127.0.0.1:5000/app:tag` deploys without any manual login.
+- [ ] Private GHCR image deploys using a Registry Credential; `config.json` exists only during the command; no `~/.docker/config.json` is created or modified.
+- [ ] `docker compose` still works under the temp `DOCKER_CONFIG` on a Host with plugins under `~/.docker/cli-plugins`.
+- [ ] Cloudflare size-limit caveat appears in the UI near Hostname creation for the registry, marked "limit not verified".
+
+---
+
+## 5. Cron Entries
+
+### 5.1 Behavior
+Yanto owns exactly one cron file, `/etc/cron.d/yanto` (D11). Entries are stored in SQLite (source of truth) and the whole file is regenerated and atomically replaced on every change. Other cron sources are shown **read-only**. Run history is provided by a wrapper (decision below).
+
+### 5.2 `/etc/cron.d` format rules (from cron(8)/crontab(5) as implemented by Debian cron; **unverified** in this session — check against the target distros, and against cronie on RHEL-like Hosts if ever supported)
+- Line: `m h dom mon dow user command`. The **user field is required** in `/etc/cron.d` (unlike per-user crontabs) and must be an existing account.
+- Environment lines `NAME=value` are allowed at the top; Yanto writes `SHELL=/bin/sh`, `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, and optionally `MAILTO=""` (setting `MAILTO` empty disables mail; configurable). No variable expansion between lines.
+- **Filename**: Debian ignores files in `/etc/cron.d` whose names contain characters other than letters, digits, underscore, hyphen (in particular **no dots**, so `yanto` is valid but `yanto.cron` and `yanto.bak` are silently ignored). Therefore any temp/backup file name must contain a dot.
+- **Ownership/mode**: owned by root, not writable by group/other; Yanto writes `0644 root:root`. Not a symlink (refuse if the existing path is a symlink).
+- **Trailing newline**: the last line must end with `\n` or cron may ignore it.
+- `%` in the command field is converted to newline by cron; literal `%` must be `\%`. No line continuations (`\` + newline is not supported). Commands are single-line.
+- Schedules: five fields or one of `@reboot @hourly @daily @weekly @monthly @yearly @annually @midnight` (macro support is **unverified** per cron implementation; Yanto allows `@reboot/@hourly/@daily/@weekly/@monthly/@yearly`).
+
+### 5.3 Entries, validation, and the generated file
+Entry: `{id, name, schedule, user, command, enabled, record (default true), overlap (allow|skip), timeout_s?, comment}`.
+- **Validation of schedule**: Yanto parses with its own validator (ranges: min 0–59, hour 0–23, dom 1–31, mon 1–12 or `jan–dec`, dow 0–7 or `sun–sat`; lists `,`, ranges `-`, steps `/`, `*`); rejects empty fields, steps of 0, descending ranges, and wrong field count; shows "next 5 run times" (computed in the Host's timezone; note cron's dom/dow OR semantics when both are restricted). `user` must resolve via `getpwnam`; the UI shows a dropdown of login-capable users plus `root`. `command` must be non-empty, single-line (no `\n`/`\r`), no NUL, ≤ 4096 bytes.
+- **Generated file** (header comment, "managed by Yanto, edits are overwritten"):
+  - Recorded entry (default): `<schedule> root /usr/local/bin/yanto cron-run <id>` (binary path = `current_exe`).
+  - Unrecorded entry (`record=false`): `<schedule> <user> <command with % escaped as \%>`.
+  - Disabled entries are emitted as `# disabled: <id>` comments, or omitted (comment form; ASSUMPTION so the file documents state).
+- `yanto cron-run <id>` is invoked by cron as **root** (that is why the user field is `root`), loads the entry from SQLite (opens the DB directly; WAL + busy timeout), then drops privileges for the child: `initgroups` + `setgid` + `setuid` to `entry.user`, `HOME`, `LOGNAME`, `USER`, `SHELL`, `PATH` set as cron would, then runs `/bin/sh -c <command>`. Because the command is read from the DB, the cron file never contains user-controlled text, which removes `%`-escaping and injection issues for recorded entries.
+- **Run history decision (resolves the ASSUMPTION)**: cron discards output unless wrapped (mail disabled), so Yanto records runs through `cron-run`: `cron_runs(entry_id, started_at, finished_at, exit_code, timed_out, output_tail)`; output captured combined, tail 64 KiB, UTF-8 lossy. Retention: last 50 runs and 30 days per entry (ASSUMPTION). `overlap=skip` uses `flock` on `RUN/cron-<id>.lock` and records a `skipped` run. `timeout_s` → SIGTERM then SIGKILL after 5 s. If Yanto's DB is unreadable, `cron-run` still executes the command? **No** — it exits 75 and logs to syslog (journal) since it cannot know the command (fail closed).
+- Rejected alternatives: keeping the user field as the real user and having `cron-run` talk to the daemon over a socket (more moving parts, needs a socket auth story); wrapping with `logger` (no structured history).
+
+### 5.4 Host side effects (exact)
+1. Render to a string; verify it ends with `\n`.
+2. Write to `/etc/.yanto-cron.tmp` (a dotted name, on the same filesystem, so cron never reads it), mode `0644`, owner root; `fsync`; `rename` over `/etc/cron.d/yanto`; `fsync` `/etc/cron.d`. Cron daemons re-scan on mtime change (Debian cron checks `/etc/cron.d` each minute; **unverified**), so no reload command is run.
+3. Store a SHA-256 of the rendered content in `settings`; on page load, compare with the file on disk: mismatch → banner "file edited outside Yanto" with "re-apply" (overwrite) — never silently merged.
+4. Read-only view (no writes): `/etc/crontab`, other regular files in `/etc/cron.d/` (excluding `yanto`), names in `/etc/cron.{hourly,daily,weekly,monthly}/`, and per-user spools (`/var/spool/cron/crontabs/*` on Debian, `/var/spool/cron/*` elsewhere; **ASSUMPTION** for paths). Raw text shown, 256 KiB cap per file, non-UTF-8 shown as "binary/unreadable". Never edited.
+
+### 5.5 Failure modes
+| Failure | UI |
+|---|---|
+| Invalid schedule/user/command | Form validation error at the field; nothing written |
+| Write fails (read-only FS, ENOSPC) | Entry save rolls back (DB transaction), banner with errno |
+| `/etc/cron.d/yanto` is a symlink or wrong owner | Refuse with explanation; offer "replace" only for Owner |
+| Cron daemon not installed/running (`systemctl is-active cron`/`crond`) | Page warning "cron service inactive: entries will not run" (check only) |
+| External edit detected | Drift banner (above) |
+| Entry's user deleted from Host | Run history shows `unknown user`; entry flagged invalid |
+| `cron-run` failure to open DB | Exit 75, journal line, run not recorded |
+
+### 5.6 Security notes
+- **Privilege / access control**: entries run commands as any chosen user including root, from a root-run service: creating/editing needs a dedicated permission (`admin` scope / Owner; Members cannot, ASSUMPTION). Audit logs the full command text (no secrets expected; UI warns not to put secrets in commands).
+- **Input validation**: single-line commands, NUL/newline rejection; recorded form eliminates cron-file injection; unrecorded form escapes `%`.
+- **Integrity**: atomic replace, perms checked each write, symlink refusal.
+- **Privilege drop correctness**: `initgroups`, `setgid` before `setuid`; refuse if the target UID resolves to 0 while the entry user is not `root`.
+
+### 5.7 Acceptance criteria
+- [ ] Creating an entry produces `/etc/cron.d/yanto` with mode 0644 root, trailing newline, valid environment header; cron runs it within a minute.
+- [ ] Invalid schedules (`61 * * * *`, `*/0 * * * *`, 4 fields) are rejected with field-level errors; the next-5-runs preview matches `cron` semantics on tested cases.
+- [ ] Temp file during write has a dotted name and is never executed by cron.
+- [ ] Recorded run stores exit code, duration, and output tail; `overlap=skip` prevents concurrent runs; timeouts kill the process group.
+- [ ] A command containing `%` runs correctly for both recorded and unrecorded entries.
+- [ ] Editing the file by hand triggers the drift banner; "re-apply" restores it.
+- [ ] Other cron files are visible but have no edit controls and are never written.
