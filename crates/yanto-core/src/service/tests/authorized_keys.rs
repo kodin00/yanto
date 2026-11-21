@@ -269,6 +269,7 @@ async fn list_reports_state_outside_keys_and_missing_user() {
         docker: core.docker.clone(),
         host_stats: core.host_stats.clone(),
         host_mgmt: core.host.ports(),
+        ingress: core.ingress.ports(),
         host: crate::deploy::HostPorts {
             command: core.commands.clone(),
             probe: core.probe.clone(),

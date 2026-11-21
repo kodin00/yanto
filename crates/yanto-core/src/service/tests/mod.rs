@@ -8,6 +8,7 @@ mod containers;
 mod cron;
 mod deployments;
 mod matrix;
+mod matrix_ingress;
 mod projects;
 mod system;
 mod tokens;

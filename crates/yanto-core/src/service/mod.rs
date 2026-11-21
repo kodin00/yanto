@@ -13,10 +13,14 @@ pub mod audit;
 pub mod auth;
 pub mod authorized_keys;
 pub mod backups;
+pub mod cloudflare;
 pub mod containers;
 pub mod cron;
+pub mod daemons;
 pub mod deploy_keys;
 pub mod deployments;
+pub mod frps;
+pub mod hostnames;
 pub mod projects;
 pub mod registry_credentials;
 pub mod system;
@@ -37,8 +41,8 @@ use crate::db::repo::users::UserRow;
 use crate::deploy::{Engine, HostPorts};
 use crate::error::CoreError;
 use crate::password::Passwords;
-use crate::ports::HostMgmtPorts;
 use crate::ports::{Clock, DockerPort, HostStatsPort};
+use crate::ports::{HostMgmtPorts, IngressPorts};
 use crate::ratelimit::FailureLimiter;
 use crate::secrets::Secrets;
 
@@ -71,6 +75,8 @@ pub struct ServiceDeps<'a> {
     pub host_stats: Arc<dyn HostStatsPort>,
     /// Host side of Cron Entries, Authorized Keys and Backups (M5).
     pub host_mgmt: HostMgmtPorts,
+    /// Host Daemons, Cloudflare, Traefik and frps (M7).
+    pub ingress: IngressPorts,
     pub host: HostPorts,
 }
 
@@ -137,6 +143,10 @@ pub struct Services {
     pub deployments: deployments::DeploymentService,
     pub deploy_keys: deploy_keys::DeployKeyService,
     pub registry_credentials: registry_credentials::RegistryCredentialService,
+    pub daemons: daemons::DaemonService,
+    pub cloudflare: cloudflare::CloudflareService,
+    pub hostnames: hostnames::HostnameService,
+    pub frps: frps::FrpService,
     engine: Arc<Engine>,
 }
 
@@ -157,6 +167,16 @@ impl Services {
             base_url: base_url.into(),
             limits: Arc::new(Limits::new()),
         };
+        let listeners = deps.host.probe.clone();
+        let inspector = daemons::DaemonInspector {
+            ports: deps.ingress.clone(),
+            settings: daemons::IngressSettings::from_config(cfg),
+        };
+        let cloudflare = cloudflare::CloudflareService::new(
+            ctx.clone(),
+            deps.ingress.clone(),
+            inspector.clone(),
+        );
         let engine = Engine::new(ctx.clone(), deps.host, cfg);
         let projects: Arc<dyn containers::ContainerProjects> =
             Arc::new(containers::SlugProjects::new(ctx.clone()));
@@ -192,6 +212,22 @@ impl Services {
             deployments: deployments::DeploymentService::new(ctx.clone(), engine.clone()),
             deploy_keys: deploy_keys::DeployKeyService::new(ctx.clone()),
             registry_credentials: registry_credentials::RegistryCredentialService::new(ctx.clone()),
+            daemons: daemons::DaemonService::new(ctx.clone(), inspector.clone()),
+            hostnames: hostnames::HostnameService::new(
+                ctx.clone(),
+                deps.ingress.clone(),
+                inspector.settings.clone(),
+                inspector.clone(),
+                cloudflare.clone(),
+            ),
+            frps: frps::FrpService::new(
+                ctx.clone(),
+                deps.ingress.clone(),
+                inspector.settings.clone(),
+                inspector.clone(),
+                listeners,
+            ),
+            cloudflare,
             engine,
             ctx,
         }
@@ -224,6 +260,10 @@ pub fn all_operations() -> Vec<&'static OpSpec> {
     v.extend(deployments::OPERATIONS);
     v.extend(deploy_keys::OPERATIONS);
     v.extend(registry_credentials::OPERATIONS);
+    v.extend(daemons::OPERATIONS);
+    v.extend(cloudflare::OPERATIONS);
+    v.extend(hostnames::OPERATIONS);
+    v.extend(frps::OPERATIONS);
     v.push(&audit::OP_AUDIT_LIST);
     v
 }

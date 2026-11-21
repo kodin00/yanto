@@ -93,6 +93,8 @@ pub struct TestCore {
     pub commands: Arc<FakeCommands>,
     pub probe: Arc<FakeHostProbe>,
     pub registry_auth: Arc<FakeRegistryAuth>,
+    /// Fakes behind the M7 ports (systemd, Cloudflare, Traefik files, frps, probes).
+    pub ingress: ingress::IngressFakes,
 }
 
 impl TestCore {
@@ -105,6 +107,9 @@ impl TestCore {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut config = Config::default();
         config.paths.data_dir = dir.path().to_path_buf();
+        config.ingress.traefik.dynamic_dir = dir.path().join("traefik/dynamic");
+        config.ingress.traefik.static_config = dir.path().join("traefik/traefik.yml");
+        config.frp.config_path = dir.path().join("frp/frps.toml");
         adjust(&mut config);
         let db = Db::open(&config.db_path()).await.expect("open db");
         let clock = Arc::new(FakeClock::new());
@@ -114,6 +119,7 @@ impl TestCore {
         let commands = FakeCommands::new();
         let probe = Arc::new(FakeHostProbe::default());
         let registry_auth = Arc::new(FakeRegistryAuth::default());
+        let ingress = ingress::IngressFakes::new(&config.ingress.traefik.dynamic_dir);
         let services = Services::new(ServiceDeps {
             db: db.clone(),
             config: &config,
@@ -123,6 +129,7 @@ impl TestCore {
             docker: docker.clone(),
             host_stats: host_stats.clone(),
             host_mgmt: host.ports(),
+            ingress: ingress.ports(),
             host: HostPorts {
                 command: commands.clone(),
                 probe: probe.clone(),
@@ -141,6 +148,7 @@ impl TestCore {
             commands,
             probe,
             registry_auth,
+            ingress,
         }
     }
 

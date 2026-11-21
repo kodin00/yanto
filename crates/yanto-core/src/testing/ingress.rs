@@ -601,6 +601,9 @@ impl IngressProbePort for FakeIngressProbe {
             .cloned()
             .unwrap_or(Err("connection refused".into()))
     }
+    async fn await_route(&self, port: u16, host: &str, _wait: u64) -> Result<u16, String> {
+        self.local_http(port, host, 0).await
+    }
     async fn public_head(&self, hostname: &str) -> Result<u16, String> {
         lock(&self.public)
             .get(hostname)
@@ -658,6 +661,91 @@ impl IngressFakes {
             frp_dashboard: self.frp_dashboard.clone(),
             probe: self.probe.clone(),
             registry: self.registry.clone(),
+        }
+    }
+}
+
+// ---- TestCore fixtures --------------------------------------------------------------------
+
+/// Cloudflare fixture ids.
+#[derive(Debug, Clone)]
+pub struct CfFixture {
+    pub client_id: String,
+    pub tunnel_id: String,
+    pub cf_tunnel_id: String,
+    pub zone_id: String,
+}
+
+pub const CF_ACCOUNT: &str = "0123456789abcdef0123456789abcdef";
+pub const CF_TOKEN: &str = "cf-test-token-value";
+
+impl super::TestCore {
+    /// A running Traefik with a static config that satisfies the prerequisite checklist.
+    pub fn enable_traefik(&self) {
+        let t = &self.config.ingress.traefik;
+        self.ingress.systemd.install(
+            "traefik",
+            true,
+            "/usr/local/bin/traefik --configFile=/x/traefik.yml",
+        );
+        self.ingress
+            .systemd
+            .set_version("/usr/local/bin/traefik", "Version: 3.fake");
+        self.ingress.traefik.set_static(
+            &t.static_config,
+            &format!(
+                "entryPoints:\n  websecure:\n    address: ':443'\nproviders:\n  file:\n    directory: {}\n    watch: true\ncertificatesResolvers:\n  {}:\n    acme:\n      email: a@b.c\n",
+                t.dynamic_dir.display(),
+                t.cert_resolver
+            ),
+        );
+    }
+
+    /// Declare a loopback port on a Project (creating the Project row when needed).
+    pub async fn ensure_port(&self, project: &str, host_port: u16) -> String {
+        self.ensure_project(project).await;
+        let id = format!("ppt_{project}_{host_port}");
+        sqlx::query(
+            "INSERT OR IGNORE INTO project_ports (id, project_id, label, host_port, container_port, created_at)
+             VALUES (?, ?, ?, ?, 80, 0)",
+        )
+        .bind(&id)
+        .bind(project)
+        .bind(format!("p{host_port}"))
+        .bind(i64::from(host_port))
+        .execute(self.db.writer())
+        .await
+        .expect("insert port");
+        id
+    }
+
+    /// A Cloudflare client, a zone `example.com` and an active tunnel, with `cloudflared` running.
+    pub async fn setup_cloudflare(&self) -> CfFixture {
+        use crate::actor::Actor;
+        self.ingress.cloudflare.accept_token(CF_TOKEN);
+        self.ingress.cloudflare.add_zone("zone-1", "example.com");
+        self.ingress
+            .systemd
+            .install("cloudflared", true, "/usr/bin/cloudflared tunnel run");
+        let cli = Actor::cli();
+        let client = self
+            .services
+            .cloudflare
+            .client_create(&cli, "main", CF_ACCOUNT, &Secret::new(CF_TOKEN))
+            .await
+            .expect("client");
+        let t = self
+            .services
+            .cloudflare
+            .tunnel_create(&cli, &client.id, "vps")
+            .await
+            .expect("tunnel")
+            .tunnel;
+        CfFixture {
+            client_id: client.id,
+            tunnel_id: t.id,
+            cf_tunnel_id: t.cf_tunnel_id,
+            zone_id: "zone-1".into(),
         }
     }
 }

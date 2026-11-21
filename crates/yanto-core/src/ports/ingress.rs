@@ -249,6 +249,9 @@ pub trait IngressProbePort: Send + Sync + 'static {
     async fn tcp_connect(&self, port: u16) -> bool;
     /// `GET http://127.0.0.1:<port>/` with the given `Host` header; the status code only.
     async fn local_http(&self, port: u16, host: &str, timeout_secs: u64) -> Result<u16, String>;
+    /// Poll `GET http://127.0.0.1:<port>/` with `Host: <host>` until the status is not 404 or
+    /// `wait_secs` pass; the last status (or error text). Used after a Traefik write.
+    async fn await_route(&self, port: u16, host: &str, wait_secs: u64) -> Result<u16, String>;
     /// `HEAD https://<hostname>/` (5 s); the status code, or the TLS/connect error text.
     async fn public_head(&self, hostname: &str) -> Result<u16, String>;
 }
