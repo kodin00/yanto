@@ -85,7 +85,7 @@ fn writes_a_0644_file_atomically_and_leaves_no_temp() {
     assert_eq!(m.mode() & 0o7777, 0o644);
     assert_eq!(m.uid(), me().0);
     assert!(
-        !fx.etc.join(".yanto-cron.tmp").exists(),
+        !fx.etc.join("cron.d/.yanto-cron.tmp").exists(),
         "temp file is gone"
     );
     assert_eq!(
@@ -97,6 +97,13 @@ fn writes_a_0644_file_atomically_and_leaves_no_temp() {
     // Rewriting replaces the content.
     c.write_managed("X=1\n", false).unwrap();
     assert_eq!(std::fs::read_to_string(&p).unwrap(), "X=1\n");
+
+    // Under the unit's ProtectSystem=strict only /etc/cron.d is writable: /etc itself is not.
+    std::fs::set_permissions(&fx.etc, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let r = c.write_managed("X=2\n", false);
+    std::fs::set_permissions(&fx.etc, std::fs::Permissions::from_mode(0o755)).unwrap();
+    r.unwrap();
+    assert_eq!(std::fs::read_to_string(&p).unwrap(), "X=2\n");
 }
 
 #[test]

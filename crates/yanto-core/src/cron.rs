@@ -10,7 +10,9 @@ use crate::error::{CoreError, ErrorKind, FieldError};
 
 /// Name of the one cron file Yanto owns (D11). No dot: Debian cron skips dotted names.
 pub const CRON_FILE_NAME: &str = "yanto";
-/// Dotted (so never read by cron) temp name used while writing, relative to the etc dir (5.4).
+/// Dotted (so never read by cron) temp name used while writing, inside `/etc/cron.d` (5.4): the
+/// unit's `ReadWritePaths` only covers that dir, and a rename from `/etc` would cross its bind
+/// mount.
 pub const CRON_TEMP_NAME: &str = ".yanto-cron.tmp";
 pub const DEFAULT_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 pub const MAX_COMMAND_BYTES: usize = 4096;
