@@ -33,3 +33,10 @@ code.link { display: block; overflow-wrap: anywhere; user-select: all; padding: 
 .toast { position: fixed; right: 1rem; bottom: 1rem; max-width: 24rem; }
 .toast-msg { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent); padding: .6rem .9rem; border-radius: 6px; }
 .toast-msg.error { border-left-color: var(--err); }
+textarea { font: inherit; font-family: ui-monospace, monospace; font-size: .9rem; padding: .4rem .6rem; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--fg); width: 100%; }
+pre { overflow-x: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: .75rem; }
+.log { min-height: 8rem; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .85rem; }
+.badge.success, .badge.running { color: var(--ok); } .badge.failed, .badge.cancelled, .badge.interrupted { color: var(--err); }
+.diff-add { color: var(--ok); } .diff-del { color: var(--err); }
+.ansi-1 { font-weight: 700; } .ansi-30, .ansi-90 { color: #777; } .ansi-31, .ansi-91 { color: var(--err); } .ansi-32, .ansi-92 { color: var(--ok); }
+.ansi-33, .ansi-93 { color: #b8860b; } .ansi-34, .ansi-94 { color: var(--accent); } .ansi-35, .ansi-95 { color: #a24fbf; } .ansi-36, .ansi-96 { color: #1b8a94; } .ansi-37, .ansi-97 { color: inherit; }

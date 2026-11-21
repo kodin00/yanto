@@ -1,0 +1,24 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>Projects</h1>
+{% if can_create %}<p><a href="/projects/new">New project</a></p>{% endif %}
+{% if projects.is_empty() %}
+<p class="muted">No projects yet.</p>
+{% else %}
+<table>
+  <thead><tr><th>Name</th><th>Source</th><th>Status</th><th>Ports</th><th>Last deployment</th></tr></thead>
+  <tbody>
+  {% for p in projects %}
+    <tr>
+      <td><a href="/projects/{{ p.id }}">{{ p.name }}</a><br><span class="muted"><code>{{ p.slug }}</code></span></td>
+      <td class="ua">{{ p.source }}</td>
+      <td><span class="badge {{ p.status_class }}">{{ p.status }}</span></td>
+      <td>{{ p.ports }}</td>
+      <td>{{ p.last }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

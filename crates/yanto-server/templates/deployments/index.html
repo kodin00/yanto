@@ -1,0 +1,32 @@
+{% extends "layout.html" %}
+
+{% block head %}<script src="/assets/js/deployments.js" defer></script>{% endblock %}
+{% block content %}
+<h1>Deployments</h1>
+<section class="card">
+  <h2>Queue</h2>
+  {% if active.is_empty() %}<p class="muted">Nothing queued or running.</p>{% else %}
+  <table>
+    <thead><tr><th>Deployment</th><th>Project</th><th>Status</th><th>Trigger</th><th>Queued</th></tr></thead>
+    <tbody>
+    {% for d in active %}
+      <tr><td><a href="/deployments/{{ d.id }}"><code>{{ d.id }}</code></a></td><td><a href="/projects/{{ d.project_id }}">{{ d.project_id }}</a></td>
+      <td><span class="badge {{ d.status }}" data-deployment-status="{{ d.id }}">{{ d.status }}</span></td><td>{{ d.trigger }}</td><td>{{ d.queued }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+<section class="card">
+  <h2>History</h2>
+  <table>
+    <thead><tr><th>Deployment</th><th>Project</th><th>Status</th><th>Trigger</th><th>Revision</th><th>Queued</th></tr></thead>
+    <tbody>
+    {% for d in recent %}
+      <tr><td><a href="/deployments/{{ d.id }}"><code>{{ d.id }}</code></a></td><td><a href="/projects/{{ d.project_id }}">{{ d.project_id }}</a></td>
+      <td><span class="badge {{ d.status }}">{{ d.status }}</span></td><td>{{ d.trigger }}</td><td class="ua">{{ d.revision }}</td><td>{{ d.queued }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

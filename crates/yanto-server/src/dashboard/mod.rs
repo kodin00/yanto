@@ -15,6 +15,7 @@ mod account;
 mod audit;
 mod auth;
 mod home;
+mod projects;
 mod session;
 mod tokens;
 mod users;
@@ -34,6 +35,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .merge(tokens::routes())
         .merge(account::routes())
         .merge(audit::routes())
+        .merge(projects::routes())
         .route_layer(from_fn_with_state(state.clone(), session::require_session));
     Router::new()
         .merge(auth::public_routes())

@@ -1,0 +1,37 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>Deploy keys</h1>
+<p class="muted">SSH keys Yanto uses to clone private repositories. Private keys are stored encrypted and never shown again.</p>
+{% if let Some(e) = error %}<p class="error" role="alert">{{ e }}</p>{% endif %}
+<table>
+  <thead><tr><th>Name</th><th>Type</th><th>Public key</th><th>Created</th><th></th></tr></thead>
+  <tbody>
+  {% for k in keys %}
+    <tr>
+      <td>{{ k.name }}</td><td>{{ k.key_type }}</td>
+      <td class="ua"><code>{{ k.public_key }}</code><br><span class="muted">{{ k.fingerprint }}</span></td>
+      <td>{{ k.created }}</td>
+      <td><button class="danger" hx-delete="/deploy-keys/{{ k.id }}" hx-confirm="Delete deploy key {{ k.name }}?">Delete</button></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<section class="card">
+  <h2>Generate a key</h2>
+  <form method="post" action="/deploy-keys" class="inline">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <label>Name <input name="name" required></label>
+    <button type="submit">Generate ed25519 key</button>
+  </form>
+</section>
+<section class="card">
+  <h2>Import a key</h2>
+  <form method="post" action="/deploy-keys/import" class="stack">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <label>Name <input name="name" required></label>
+    <label>Private key (OpenSSH, ed25519, no passphrase) <textarea name="private_key" rows="6" spellcheck="false" autocomplete="off" required></textarea></label>
+    <button type="submit">Import</button>
+  </form>
+</section>
+{% endblock %}
