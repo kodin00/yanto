@@ -10,3 +10,5 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+nix = { version = "0.32.0", features = ["user", "fs", "signal", "process"] }
+yanto-core.workspace = true
