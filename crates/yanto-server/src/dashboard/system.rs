@@ -2,9 +2,12 @@
 //! with preview. Volumes are never prune candidates.
 
 use askama::Template;
-use axum::extract::State;
+use std::convert::Infallible;
+
+use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use axum::{Form, Router};
 use serde::Deserialize;
@@ -21,6 +24,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/system", get(index))
         .route("/system/cleanup", post(cleanup))
+        .route("/system/logs/stream", get(logs_stream))
 }
 
 struct Kv(String, String);
@@ -66,6 +70,13 @@ struct SystemPage {
     groups: Vec<GroupView>,
     preview_error: Option<String>,
     confirm_phrase: &'static str,
+    app_logs: Vec<LogRow>,
+    last_seq: u64,
+}
+
+struct LogRow {
+    level: String,
+    text: String,
 }
 
 fn status_str(s: HealthStatus) -> &'static str {
@@ -136,6 +147,7 @@ async fn index(
     let err = |e: CoreError| DashError::new(e, &headers);
     let usage = svc.usage(actor).await.map_err(err)?;
     let health = svc.health(actor).await.map_err(err)?;
+    let app_logs = svc.logs(actor, None).await.map_err(err)?;
     let (groups, preview_error) = match svc.cleanup_preview(actor).await {
         Ok(p) => (p.groups.into_iter().map(group_view).collect(), None),
         Err(e) if matches!(e.kind, yanto_core::ErrorKind::Unavailable) => (
@@ -253,7 +265,55 @@ async fn index(
         groups,
         preview_error,
         confirm_phrase: CONFIRM_CONTAINERS,
+        last_seq: app_logs.last().map_or(0, |l| l.seq),
+        app_logs: app_logs
+            .into_iter()
+            .map(|l| LogRow {
+                level: l.level.to_ascii_lowercase(),
+                text: format!("{} {}", l.target, l.text),
+            })
+            .collect(),
     }))
+}
+
+#[derive(Deserialize)]
+struct LogsStreamParams {
+    /// Highest `seq` the page already shows; only newer lines are sent.
+    after: Option<u64>,
+}
+
+/// SSE: one JSON event (`{seq, ts, level, target, text}`) per new application log line.
+async fn logs_stream(
+    State(s): State<AppState>,
+    session: Session,
+    headers: HeaderMap,
+    Query(p): Query<LogsStreamParams>,
+) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>>, DashError> {
+    let after = p.after.unwrap_or(0);
+    let (backlog, rx) = s
+        .services
+        .system
+        .logs_stream(&session.0.actor, None)
+        .await
+        .map_err(|e| DashError::new(e, &headers))?;
+    let live = futures_util::stream::unfold(rx, |mut rx| async move {
+        loop {
+            match rx.recv().await {
+                Ok(l) => return Some((l, rx)),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    });
+    let lines = futures_util::StreamExt::chain(futures_util::stream::iter(backlog), live);
+    let events = futures_util::StreamExt::filter_map(lines, move |l| {
+        futures_util::future::ready((l.seq > after).then(|| {
+            Ok(Event::default()
+                .json_data(&l)
+                .unwrap_or_else(|_| Event::default().event("error").data("encode failed")))
+        }))
+    });
+    Ok(Sse::new(events).keep_alive(KeepAlive::default()))
 }
 
 #[derive(Deserialize)]

@@ -228,7 +228,7 @@ async fn rest_system_endpoints() {
 
     let h = read.get("/api/v1/health").await.value();
     assert_eq!(h["status"], "ok");
-    assert_eq!(h["checks"].as_array().unwrap().len(), 3);
+    assert_eq!(h["checks"].as_array().unwrap().len(), 4);
     let u = read.get("/api/v1/system/usage").await.value();
     assert_eq!(u["host"]["cpu_count"], 4);
     let p = read.get("/api/v1/system/cleanup/preview").await.value();
@@ -530,4 +530,54 @@ async fn ws_rejects_oversized_frames() {
     .await;
     assert!(ended.is_ok(), "connection closed");
     assert!(l.app.core.docker.exec_input().len() < 100 * 1024);
+}
+
+#[tokio::test]
+async fn app_logs_page_rest_and_stream_are_owner_only_and_mask_secrets() {
+    use std::time::Duration;
+    let tag = yanto_core::crypto::random_hex::<4>();
+    let buf = yanto_core::applog::LogBuffer::global();
+    buf.push(
+        1,
+        "INFO",
+        "yanto::test",
+        &format!("marker-{tag} <b>html</b> token=hunter2"),
+    );
+    let app = TestApp::new().await;
+    let c = app.owner_client().await;
+    let page = c.get("/system").await;
+    assert_eq!(page.status, StatusCode::OK);
+    let text = page.text();
+    assert!(text.contains("Application log") && text.contains("/assets/js/app-logs.js"));
+    assert!(text.contains(&format!("marker-{tag}")));
+    assert!(
+        text.contains("&lt;b&gt;html") || text.contains("&#60;b&#62;html"),
+        "escaped"
+    );
+    assert!(!text.contains("hunter2"), "secrets are masked when logged");
+
+    let owner = app.owner_user().await;
+    let admin = app
+        .client()
+        .with_bearer(&app.bearer(&owner, Scope::Read).await);
+    let rest = admin.get("/api/v1/system/logs?tail=500").await;
+    assert_eq!(
+        rest.header("content-type"),
+        Some("text/plain; charset=utf-8")
+    );
+    assert!(rest.text().contains(&format!("marker-{tag}")));
+    assert_eq!(
+        admin.get("/api/v1/system/logs?tail=abc").await.status,
+        StatusCode::BAD_REQUEST
+    );
+
+    // Members are refused before any stream opens.
+    let m = app.member_client("mia", &[]).await;
+    assert_eq!(
+        m.get("/system/logs/stream").await.status,
+        StatusCode::FORBIDDEN
+    );
+    // The Owner's stream stays open (it only ends when the client leaves).
+    let open = tokio::time::timeout(Duration::from_millis(400), c.get("/system/logs/stream")).await;
+    assert!(open.is_err(), "the follow stream does not end by itself");
 }

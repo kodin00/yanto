@@ -158,6 +158,7 @@ impl Services {
             base_url: base_url.into(),
             limits: Arc::new(Limits::new()),
         };
+        let compose_command = deps.host.command.clone();
         let engine = Engine::new(ctx.clone(), deps.host, cfg);
         let projects: Arc<dyn containers::ContainerProjects> =
             Arc::new(containers::SlugProjects::new(ctx.clone()));
@@ -167,7 +168,7 @@ impl Services {
             let c = container_service.clone();
             move || c.invalidate_cache()
         });
-        Self {
+        let services = Self {
             audit: audit::AuditService::new(ctx.clone()),
             auth: auth::AuthService::new(ctx.clone()),
             users: users::UserService::new(ctx.clone()),
@@ -197,7 +198,13 @@ impl Services {
             registry_credentials: registry_credentials::RegistryCredentialService::new(ctx.clone()),
             engine,
             ctx,
-        }
+        };
+        // Other areas add their own checks here (`system.register_health(...)`): Host Daemons
+        // (frps, cloudflared, Traefik) and the Hosted Registry arrive with their services.
+        services
+            .system
+            .register_health(Arc::new(system::ComposeHealth::new(compose_command)));
+        services
     }
 
     /// Shared context, for service modules in other crates' tests and the audit writer.

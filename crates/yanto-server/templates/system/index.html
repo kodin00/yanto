@@ -1,5 +1,7 @@
 {% extends "layout.html" %}
 
+{% block head %}<script src="/assets/js/app-logs.js" defer></script>{% endblock %}
+
 {% block content %}
 <h1>System</h1>
 
@@ -11,6 +13,13 @@
     {% for c in checks %}<tr><td>{{ c.name }}</td><td><span class="badge {{ c.status }}">{{ c.status }}</span></td><td>{{ c.detail }}</td></tr>{% endfor %}
     </tbody>
   </table>
+</section>
+
+<section class="card">
+  <h2>Application log</h2>
+  <p class="muted">The last 500 lines Yanto logged since it started; older history is <code>journalctl -u yanto</code>. Known secret patterns are masked. <label><input type="checkbox" id="follow"> Follow live</label> <span id="follow-state" class="muted"></span></p>
+  <pre id="app-log" class="logs" data-stream-url="/system/logs/stream" data-last-seq="{{ last_seq }}">{% for l in app_logs %}<span class="{{ l.level }}">{{ l.text }}
+</span>{% endfor %}</pre>
 </section>
 
 <section class="card">

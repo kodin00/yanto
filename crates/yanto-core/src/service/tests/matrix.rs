@@ -81,6 +81,8 @@ const GRID: &[(&str, &str)] = &[
     ),
     // M3 system. Owner-only; read-scope tokens of the Owner may read, only admin may prune.
     ("system_usage", "Y   N    Y   Y   Y   N   N   N   Y"),
+    ("system_logs", "Y   N    Y   Y   Y   N   N   N   Y"),
+    ("system_logs_stream", "Y   N    Y   Y   Y   N   N   N   Y"),
     (
         "system_cleanup_preview",
         "Y   N    Y   Y   Y   N   N   N   Y",
@@ -419,6 +421,8 @@ async fn invoke(f: &Fixture, op: &str, a: &Actor) -> Result<(), CoreError> {
         "container_restart" => s.containers.restart(a, &f.cid).await,
         "container_exec_session" => s.containers.exec_open(a, &f.cid, 80, 24).await.map(|_| ()),
         "system_usage" => s.system.usage(a).await.map(|_| ()),
+        "system_logs" => s.system.logs(a, None).await.map(|_| ()),
+        "system_logs_stream" => s.system.logs_stream(a, None).await.map(|_| ()),
         "system_cleanup_preview" => s.system.cleanup_preview(a).await.map(|_| ()),
         "system_cleanup" => s
             .system

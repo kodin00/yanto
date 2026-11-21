@@ -123,6 +123,7 @@ fn rest_routes(bob: &str, yb: &str, pb: &str) -> Vec<Rest> {
             json!({}),
             owner_read_up,
         ),
+        r(Method::GET, "/api/v1/system/logs", json!({}), owner_read_up),
         r(
             Method::GET,
             "/api/v1/system/cleanup/preview",

@@ -97,6 +97,7 @@ impl FakeCommands {
             "config --format json",
             Reply::stdout(r#"{"services":{"app":{"image":"nginx:alpine"}}}"#),
         );
+        me.on("compose version", Reply::stdout("v2.29.0\n"));
         me.on("config --services", Reply::stdout("app\n"));
         me.on("rev-parse HEAD", Reply::stdout(format!("{SHA}\n")));
         me.on("log -1 --pretty=%s", Reply::stdout("fake commit\n"));
