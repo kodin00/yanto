@@ -6,5 +6,14 @@
 //! One file per concern, one `pub mod` line per file below.
 
 mod clock;
+mod command;
+mod host_probe;
+mod registry_auth;
 
 pub use clock::{Clock, SystemClock};
+pub use command::{
+    CancellationToken, CommandOutput, CommandPort, CommandSpec, EXIT_CANCELLED, EXIT_TIMED_OUT,
+    LogSink, LogStream, NullSink,
+};
+pub use host_probe::{HostProbePort, Listener};
+pub use registry_auth::{AuthEntry, RegistryAuthPort};
