@@ -53,13 +53,13 @@ Legend: **Port** = keep the behavior, **Change** = keep it reshaped, **New** = n
 - [x] **Port** — Auth: first-Owner setup, login/logout, CSRF, sessions revocable server-side
 - [x] **Port** — Users: Owner + Members, invites and password resets (24h, single-use), per-Project permissions `deploy`, `runtime`, `config`, `secrets`, `backups`, `hostnames`, plus app views
 - [x] **Port** — `yanto owner-reset` CLI (replaces `npm run owner:reset`)
-- [ ] **Port** — Projects: Git- or image-backed CRUD, compose and `.env` preview/edit, Deploy Token reveal/rotate
-- [ ] **Change** — Projects declare loopback-published ports; Yanto detects port collisions
-- [ ] **Port** — Deployments: Git clone/pull or image pull → `docker compose up`, stored logs, live SSE log stream, stop, restart, rollback with preview, queue
-- [ ] **Port** — Webhooks: `POST /deploy?id=` with a bearer Deploy Token; GitHub push webhook
+- [x] **Port** — Projects: Git- or image-backed CRUD, compose and `.env` preview/edit, Deploy Token reveal/rotate
+- [x] **Change** — Projects declare loopback-published ports; Yanto detects port collisions
+- [x] **Port** — Deployments: Git clone/pull or image pull → `docker compose up`, stored logs, live SSE log stream, stop, restart, rollback with preview, queue
+- [x] **Port** — Webhooks: `POST /deploy?id=` with a bearer Deploy Token; GitHub push webhook
 - [ ] **Port** — Containers: list, start/stop/restart, logs + stream, exec terminal (WebSocket)
 - [ ] **Port** — System: host usage (CPU/mem/disk), Docker prune with preview, app logs, health
-- [ ] **Port** — Deploy Keys (per-Project SSH keys for cloning)
+- [x] **Port** — Deploy Keys (per-Project SSH keys for cloning)
 - [ ] **Change** — Backups: local + downloadable only (R2 dropped); Yanto's SQLite added
 - [ ] **Change** — Cloudflare: clients, zones, tunnels, DNS, Hostnames, diagnostics — runtime moves to the host `cloudflared`
 - [ ] **Change** — FRP: `frps` Host Daemon status, config, tunnel listing (frpc generation dropped)
@@ -70,7 +70,7 @@ Legend: **Port** = keep the behavior, **Change** = keep it reshaped, **New** = n
 ### New
 
 - [ ] Hosted Registry (`registry:2`): enable/disable, htpasswd users, repo/tag browse, tag delete, GC
-- [ ] Registry Credentials for pulling private external images
+- [x] Registry Credentials for pulling private external images
 - [ ] Cron Entries (`/etc/cron.d/yanto`)
 - [ ] Authorized Keys
 - [ ] Traefik Ingress Provider
