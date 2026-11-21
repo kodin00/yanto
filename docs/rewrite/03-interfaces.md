@@ -79,7 +79,7 @@ In-memory token buckets (ASSUMPTION: no DB persistence; limits reset on restart,
 |---|---|---|
 | `read` | — | Non-mutating reads; env reads are **masked**; no secret reveal; no exec; no log of secrets. Also `whoami`, MCP resources. |
 | `write` | `read` | Reversible/day-to-day mutations: `project_create/update`, env writes, `project_deploy`, `deployment_cancel`, `container_start`, `backup_create`, `hostname_*` create/retry/enable/disable, `cloudflare_tunnel_create`, DNS create/update, `cron_toggle`, `registry_user_create`, `project_ports_set`, `project_databases_set`, `frps_settings_update`. |
-| `admin` | `write` | Destructive, host-level, credential, and reveal operations: all `*_delete`, `project_stop/restart`, `project_rollback`, `container_stop/restart/exec`, `project_deploy_token_reveal/rotate`, credential create/update (Cloudflare, Registry Credential, Deploy Key), `cron_create/update`, `authorized_keys_add`, `registry_enable/disable`, `registry_gc`, `daemon_control`, `settings_update`, `system_cleanup`, `backup_restore`, `user_*`. |
+| `admin` | `write` | Destructive, host-level, credential, and reveal operations: all `*_delete`, `project_stop/restart`, `project_rollback`, `container_stop/restart/exec`, `project_deploy_token_reveal/rotate`, credential create/update (Cloudflare, Registry Credential, Deploy Key), `cron_create/update`, `authorized_keys_add`, `registry_enable/disable`, `registry_gc`, `daemon_control`, `settings_update`, `system_cleanup`, `backup_download`, `backup_restore`, `user_*`. |
 
 Rule: a token can never exceed what an Owner can do, and token **issuance, listing, and revocation are not available through any token** (REST/MCP); they are dashboard- or CLI-only (privilege-laundering guard, ASSUMPTION; legacy created tokens only via the Owner session too). Scope check happens in the service layer, not by hiding tools, but MCP additionally hides tools above the token scope from `tools/list` (legacy parity).
 
@@ -112,17 +112,17 @@ Every mutating operation writes one `audit_logs` row (doc 02) with actor type/la
 | Projects | `project.create`, `project.update`, `project.delete`, `project.ports_set`, `project.databases_set`, `project.env_write`, `project.env_read` (only unmasked reads; masked reads are not audited), `project.deploy_token_reveal`, `project.deploy_token_rotate`, `project.stop`, `project.restart` |
 | Deployments | `deployment.trigger`, `deployment.cancel`, `deployment.rollback`, `deployment.finish` (system) |
 | Containers | `container.start/stop/restart`, `container.exec` (command text recorded, truncated to 1 KiB, redacted of known secrets) |
-| Keys/creds | `deploy_key.create/import/delete`, `registry_credential.create/update/delete`, `authorized_key.add/delete` |
+| Keys/creds | `deploy_key.create/import/delete`, `registry_credential.create/update/delete`, `authorized_key.add/delete/force_change` |
 | Registry | `registry.enable/disable`, `registry_user.create/delete/password_set`, `registry.tag_delete`, `registry.gc` |
 | Cron | `cron.create/update/delete/toggle` (full command recorded) |
-| Cloudflare/ingress | `cloudflare_client.create/update/delete`, `cloudflare_tunnel.create/delete/activate`, `cloudflare_dns.create/update/delete`, `hostname.create/delete/retry/enable/disable`, `daemon.control` |
+| Cloudflare/ingress | `cloudflare_client.create/update/delete`, `cloudflare_tunnel.create/delete/activate/token_reveal`, `cloudflare_dns.create/update/delete`, `hostname.create/delete/retry/enable/disable`, `daemon.control` |
 | System | `settings.update`, `system.cleanup`, `backup.create/download/delete/restore`, `migration.apply`, `self_update` |
 
 Audit visibility: Owner sees all; a Member sees entries whose `project_id` is in their grants.
 
 ## b) Dashboard route map (htmx)
 
-Server-rendered HTML (Askama/Maud class engine, unverified). Full pages return the layout; **fragments** (`/_f/...`) return partials swapped by htmx. A page may also be requested with `HX-Request` and then returns the content block only (`hx-boost`). Static assets embedded under `/static/*` (hashed names, `Cache-Control: immutable`). Auth column: **pub** none, **S** any session, **M** Project access + permission, **O** Owner.
+Server-rendered HTML (Askama, per 01 §11). Full pages return the layout; **fragments** (`/_f/...`) return partials swapped by htmx. A page may also be requested with `HX-Request` and then returns the content block only (`hx-boost`). Static assets embedded under `/static/*` (hashed names, `Cache-Control: immutable`). Auth column: **pub** none, **S** any session, **M** Project access + permission, **O** Owner.
 
 | Route | Method | Kind | Auth | Service op |
 |---|---|---|---|---|
@@ -184,7 +184,7 @@ Server-rendered HTML (Askama/Maud class engine, unverified). Full pages return t
 | `/cloudflare` | GET | page (clients, tunnels, zones) | O | `cloudflare_clients_list` ... |
 | `/cloudflare/clients` | POST; `/{id}` PUT, DELETE; `/validate` POST | action | O | `cloudflare_client_*` |
 | `/cloudflare/clients/{id}/zones` | GET (`?refresh=1`) | fragment | O | `cloudflare_zones_list` |
-| `/cloudflare/tunnels` | GET, POST; `/{id}` DELETE; `/{id}/activate` POST | page/action | O | `cloudflare_tunnel_*` |
+| `/cloudflare/tunnels` | GET, POST; `/{id}` DELETE; `/{id}/activate` POST; `/{id}/token/reveal` POST (dashboard only, `Cache-Control: no-store`) | page/action | O | `cloudflare_tunnel_*` |
 | `/dns` | GET, POST; `/{recordId}` PUT, DELETE | page/action (per client + zone) | O | `cloudflare_dns_*` |
 | `/frp` | GET | page (frps status, config, live tunnel list) | O | `frps_overview` |
 | `/frp/settings` | PUT | action | O | `frps_settings_update` |
@@ -195,11 +195,11 @@ Server-rendered HTML (Askama/Maud class engine, unverified). Full pages return t
 | `/system/cleanup` | POST | action | O | `system_cleanup` |
 | `/system/logs/stream` | GET | **SSE** (Yanto app log tail) | O | `system_logs_stream` |
 | `/users` | GET, POST; `/{id}/access` PUT; `/{id}/status` PATCH; `/{id}/reset-link` POST; `/{id}` DELETE | page/action | O | `user_*` |
-| `/settings` | GET, POST | page/action (runtime, SSH user, Traefik paths) | O | `settings_read`, `settings_update` |
+| `/settings` | GET, POST | page/action (runtime settings; host paths from `config.toml` shown read-only) | O | `settings_read`, `settings_update` |
 | `/settings/api-tokens` | GET, POST; `/{id}` DELETE | page/action (token shown once) | O | `api_token_list/create/revoke` |
 | `/settings/sessions` | GET; `/{id}` DELETE | page/action | S | `session_list`, `session_revoke` |
 | `/settings/password` | POST | action | S | `password_change` |
-| `/health` | GET | JSON `{ok}` minimal, no checks detail | pub | `health` (details only via `/api/v1/health`) |
+| `/healthz` | GET | `ok`, minimal, no checks detail | pub | `health` (details only via `/api/v1/health`) |
 | `/deploy` | POST | webhook | Deploy Token | `project_deploy` (trigger `deploy_token`) |
 | `/webhooks/github` | POST | webhook | HMAC | `project_deploy` (trigger `github`) |
 
@@ -219,7 +219,7 @@ Bearer-only. JSON in/out (`Content-Type: application/json`, body cap 1 MiB; env/
 | `system_cleanup` | POST | `/system/cleanup` | admin | Run protected prune. |
 | `audit_list` | GET | `/audit?project_id=&limit=&cursor=` | read | Audit entries. |
 | `settings_read` | GET | `/settings` | read | Non-secret settings snapshot. |
-| `settings_update` | PATCH | `/settings` | admin | Update runtime/SSH-user/Traefik settings. |
+| `settings_update` | PATCH | `/settings` | admin | Update runtime settings (02 §4.5). Host paths (SSH user, Traefik, `frps`) are `config.toml` and read-only here. |
 | `project_list` | GET | `/projects` | read | Projects with container counts. |
 | `project_get` | GET | `/projects/{id}` | read | One Project (no secrets). |
 | `project_create` | POST | `/projects` | write | Create Git/image Project; **reveals** Deploy Token once. |
@@ -257,11 +257,11 @@ Bearer-only. JSON in/out (`Content-Type: application/json`, body cap 1 MiB; env/
 | `backups_list` | GET | `/backups?project_id=` | read | |
 | `backup_targets_list` | GET | `/backups/targets` | read | Declared DBs/volumes eligible. |
 | `backup_create` | POST | `/backups` | write | `{kind, project_id?, database_id?}`; `yanto_sqlite` allowed. |
-| `backup_download` | GET | `/backups/{id}/download` | read | Streams file. |
+| `backup_download` | GET | `/backups/{id}/download` | admin | Streams file (Backups hold customer data; the Yanto DB archive holds `app.key`). |
 | `backup_delete` | DELETE | `/backups/{id}` | admin | |
 | `backup_restore` | POST | `/backups/{id}/restore` | admin | Restore a DB dump into its declared service (ASSUMPTION: restore parity with legacy `postgres-targets/.../restore`). |
 | `hostnames_list` | GET | `/hostnames?project_id=` | read | |
-| `hostname_create` | POST | `/hostnames` | write | `{project_id, project_port_id, hostname, ingress_provider, tunnel_id?, zone_id?, manage_dns, scheme, no_tls_verify}`. |
+| `hostname_create` | POST | `/hostnames` | write | `{project_id, project_port_id, hostname, ingress_provider, tunnel_id?, zone_id?, manage_dns}`; registry target (`target_kind='registry'`) is Owner/`admin` only. |
 | `hostname_delete` | DELETE | `/hostnames/{id}` | admin | Returns warnings (DNS cleanup). |
 | `hostname_retry` | POST | `/hostnames/{id}/retry` | write | Re-run publish. |
 | `hostname_enable` / `hostname_disable` | POST | `/hostnames/{id}/enable` / `/disable` | write | |
@@ -313,7 +313,7 @@ Bearer-only. JSON in/out (`Content-Type: application/json`, body cap 1 MiB; env/
 | `cloudflare_dns_update` | PATCH | `/cloudflare/dns/{id}` | write | |
 | `cloudflare_dns_delete` | DELETE | `/cloudflare/dns/{id}` | admin | |
 | `frps_overview` | GET | `/frp` | read | Daemon status, config, live proxies/clients (dashboard API). |
-| `frps_settings_update` | PATCH | `/frp/settings` | write | `public_host`, dashboard creds. |
+| `frps_settings_update` | PATCH | `/frp/settings` | write | `public_host` and the `frps.toml` fields Yanto owns (04 §8.4); applying them restarts `frps` (needs confirmation, 04 §8.4). |
 | `user_list` | GET | `/users` | admin | |
 | `user_create` | POST | `/users` | admin | Creates Member; **reveals** invite URL once. |
 | `user_access_update` | PUT | `/users/{id}/access` | admin | |
@@ -321,7 +321,7 @@ Bearer-only. JSON in/out (`Content-Type: application/json`, body cap 1 MiB; env/
 | `user_reset_link` | POST | `/users/{id}/reset-link` | admin | **Reveals** reset URL once; kills sessions. |
 | `user_delete` | DELETE | `/users/{id}` | admin | |
 
-Not in REST by design: login/logout/setup, `api_token_*`, `session_*` (dashboard/CLI only; a.5). Webhook endpoints (`/deploy`, `/webhooks/github`) are outside `/api/v1` (a.6).
+Not in REST by design: login/logout/setup, `api_token_*`, `session_*`, `cloudflare_tunnel_token_reveal` (dashboard/CLI only; a.5). Webhook endpoints (`/deploy`, `/webhooks/github`) are outside `/api/v1` (a.6).
 
 ## d) MCP
 
@@ -432,23 +432,24 @@ Deliberately **not** exposed over MCP (risk area: access control; an LLM-driven 
 
 Prompt-injection note (risk area: input validation): deployment/container logs and env previews returned to an LLM client are untrusted data; tool results label them as such in the text block, and masked env values are never unmasked by MCP.
 
-## e) CLI (brief; the install doc owns details)
+## e) CLI (names only; [05 §10](05-install-and-ops.md) owns flags and details)
 
 Binary `yanto`. The CLI runs on the Host as root, opens the same SQLite DB and calls the same service layer in-process (ASSUMPTION; avoids needing a token for local admin). Every command that mutates writes audit with `actor_type='cli'`.
 
 | Command | Purpose |
 |---|---|
 | `yanto serve` | Run the dashboard/REST/MCP server (systemd `ExecStart`). |
-| `yanto install` | Interactive wizard, every prompt has a flag, `--non-interactive` (D19). Creates `data_dir`, secret key file, systemd unit, setup code. |
+| `yanto install` / `yanto uninstall` | Interactive wizard (every prompt has a flag, `--non-interactive`, D19) / removal. `install` creates the data dir, `keys/app.key`, systemd unit, setup code. |
 | `yanto self-update` | Download release binary, verify SHA256, DB backup, swap, restart (D19). |
 | `yanto owner-reset` | Reset the Owner password and print a one-time reset link; deletes the Owner's sessions (replaces `npm run owner:reset`). |
-| `yanto setup-code [--regenerate]` | Show/regenerate the one-time setup code while no Owner exists. |
-| `yanto token create --name --scope read\|write\|admin [--expires]` / `token list` / `token revoke <id>` | API Token management (CLI/dashboard only). Secret printed once. |
+| `yanto setup-code` | Issue a fresh one-time setup code while no Owner exists. |
+| `yanto token create\|list\|revoke` | API Token management (CLI/dashboard only). Secret printed once. |
 | `yanto mcp` | MCP over stdio (token via `YANTO_API_TOKEN_FILE`). |
-| `yanto backup project <slug> [--kind volumes\|postgres\|mysql]` / `yanto backup yanto` | Create Backups; this is what scheduled Cron Entries call (D14). Exits non-zero on failure. |
-| `yanto deploy <slug> [--ref]` | Enqueue a Deployment locally and optionally `--wait`/`--follow` logs (ASSUMPTION). |
-| `yanto doctor` | Checks DB integrity, migrations, secret key presence/perms, Docker, Host Daemons, ports, disk. |
-| `yanto migrate --check` | Report pending migrations. |
+| `yanto backup project <slug>` / `yanto backup yanto` / `backup list` / `backup prune` | Create and prune Backups; `backup project|yanto` is what scheduled Cron Entries call (D14). Exits non-zero on failure. |
+| `yanto restore yanto <archive>` | Restore the Yanto DB Backup with the service stopped (04 §7.6). |
+| `yanto deploy <slug> [--ref]` | Enqueue a Deployment locally; optional `--wait`/`--follow` (ASSUMPTION). |
+| `yanto doctor` | Checks DB integrity, migrations, `app.key` presence/perms, Docker, Host Daemons, ports, disk. |
+| `yanto db status` / `yanto db migrate` | Report or apply migrations without serving. |
 | `yanto version` | Version, build, SQLite version. |
 
 ## Open questions / risks

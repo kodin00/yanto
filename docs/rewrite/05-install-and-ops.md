@@ -359,21 +359,23 @@ Binary `yanto` (`yanto-cli`, clap derive). Global: `--config <path>` (`YANTO_CON
 | `yanto uninstall` | Remove Yanto (§8) | yes | no |
 | `yanto self-update` | Update the binary from GitHub Releases (§7) | yes | no (restarts it) |
 | `yanto owner-reset` | Revoke the Owner's sessions and print a one-time reset URL (24 h) | yes (DB) | no |
-| `yanto setup-code` | Issue a new one-time setup code while no Owner exists (ASSUMPTION: new) | yes (DB) | no |
-| `yanto backup project <slug> [--volumes\|--db]` | Back up a Project's volumes and/or declared DB (D14) | yes | no |
-| `yanto backup yanto` | SQLite online backup of Yanto's own DB | yes | no |
+| `yanto setup-code` | Issue a new one-time setup code (revokes the old) while no Owner exists (ASSUMPTION: new) | yes (DB) | no |
+| `yanto backup project <slug> (--volumes\|--db <service>) [--stop-project] [--keep-last N] [--keep-days D]` | Back up a Project's volumes or one declared DB service (D14, 04 §7.5) | yes | no |
+| `yanto backup yanto [--keep-last N] [--keep-days D]` | Online backup of Yanto's own DB, bundled with `keys/app.key` (D22) | yes | no |
 | `yanto backup list [--project <slug>]` | List Backups | yes | no |
-| `yanto backup prune --keep <n> [--project <slug>]` | Delete older Backups | yes | no |
-| `yanto mcp` | MCP over stdio; services run in-process; auth via `YANTO_API_TOKEN` (01 §4.1) | yes (DB) | no (Deployments wait queued if `serve` is down) |
-| `yanto token create\|list\|revoke` | Manage API Tokens from the shell (ASSUMPTION: new) | yes (DB) | no |
+| `yanto backup prune [--keep-last N] [--keep-days D] [--project <slug>]` | Delete older scheduled Backups | yes | no |
+| `yanto restore yanto <archive>` | Restore the Yanto DB archive with the service stopped (04 §7.6) | yes | no (must be stopped) |
+| `yanto deploy <slug> [--ref <ref>] [--wait]` | Enqueue a Deployment locally (ASSUMPTION: new) | yes (DB) | no (waits queued if `serve` is down) |
+| `yanto mcp` | MCP over stdio; services run in-process; auth via `YANTO_API_TOKEN_FILE` (or `YANTO_API_TOKEN`; never argv; 01 §4.1, 03 §d) | yes (DB) | no (Deployments wait queued if `serve` is down) |
+| `yanto token create\|list\|revoke` | Manage API Tokens from the shell (ASSUMPTION: new); `create --name <n> --scope read\|write\|admin [--expires <d>]` | yes (DB) | no |
 | `yanto doctor` | Run prereq + Host Daemon + path checks (ASSUMPTION: new) | yes | no |
 | `yanto db migrate` / `yanto db status` | Apply or show migrations without serving (ASSUMPTION) | yes | no |
 | `yanto completions <shell>` | Print shell completions (`clap_complete`, **unverified**) | no | no |
 | `yanto version` | Print version, git commit, target triple, build date | no | no |
 
-Exit codes (ASSUMPTION): `0` success, `1` runtime error, `2` usage error (clap default), `3` prerequisite check failed (`install`, `doctor`).
+Exit codes (ASSUMPTION): `0` success, `1` runtime error, `2` usage error (clap default), `3` prerequisite check failed (`install`, `doctor`), `75` busy (backup lock held).
 
-`yanto backup …` is designed for use inside Cron Entries (`/etc/cron.d/yanto`): non-interactive, single-line output, non-zero exit on failure, takes a file lock so overlapping runs exit `0` with a skip notice (ASSUMPTION).
+`yanto backup …` is designed for use inside Cron Entries (`/etc/cron.d/yanto`): non-interactive, single-line output, non-zero exit on failure, takes a file lock so overlapping runs exit `75` ("busy", 04 §7.5; ASSUMPTION).
 
 ## 11. Open questions and risks
 
