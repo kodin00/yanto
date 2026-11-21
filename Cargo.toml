@@ -1,0 +1,44 @@
+[workspace]
+resolver = "3"
+members = ["crates/yanto-core", "crates/yanto-host", "crates/yanto-server", "crates/yanto-cli"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99"
+license = "UNLICENSED"
+publish = false
+
+[workspace.dependencies]
+yanto-core = { path = "crates/yanto-core" }
+yanto-host = { path = "crates/yanto-host" }
+yanto-server = { path = "crates/yanto-server" }
+
+anyhow = "1.0.104"
+askama = "0.16.1"
+axum = "0.8.9"
+clap = { version = "4.6.9", features = ["derive", "env"] }
+http-body-util = "0.1.5"
+rust-embed = "8.14.0"
+serde = { version = "1.0.229", features = ["derive"] }
+sqlx = { version = "0.9.1", default-features = false, features = ["sqlite", "runtime-tokio", "migrate", "macros"] }
+tempfile = "3.27.0"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+toml = "1.2.2"
+tower = { version = "0.5.3", features = ["util"] }
+tower-http = { version = "0.7.1", features = ["trace"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+opt-level = 3
