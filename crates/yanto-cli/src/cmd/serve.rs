@@ -34,6 +34,18 @@ async fn serve(config: yanto_core::Config) -> anyhow::Result<()> {
         Err(err) => tracing::warn!(error = %err, "backup recovery failed"),
     }
 
+    // A registry left read-only by an interrupted garbage collection goes back to normal (04 4.3).
+    let registry = rt.services.registry.clone();
+    tokio::spawn(async move {
+        match registry.recover().await {
+            Ok(true) => tracing::warn!(
+                "restored the Hosted Registry after an interrupted garbage collection"
+            ),
+            Ok(false) => {}
+            Err(err) => tracing::warn!(error = %err, "Hosted Registry recovery failed"),
+        }
+    });
+
     let purge = tokio::spawn(purge_loop(rt.services.clone()));
     // Stale per-command registry auth directories from a crashed process.
     rt.registry_auth.sweep();
