@@ -393,6 +393,8 @@ fn sample_args() -> BTreeMap<&'static str, Value> {
         ),
         ("yanto_frps_overview", json!({})),
         ("yanto_frps_settings_update", json!({"bind_port":7000})),
+        ("yanto_daemons_status", json!({})),
+        ("yanto_traefik_status", json!({})),
     ] {
         m.insert(k, v);
     }
