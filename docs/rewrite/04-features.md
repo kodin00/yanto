@@ -552,7 +552,7 @@ Settings: `frp.unit` (default `frps`), `frp.config_path` (auto-detected, overrid
 - Restart: `systemctl restart <unit>` (also `start`, `stop`), then poll up to 10 s for `ActiveState=active` and a dashboard answer. On failure, show `systemctl status <unit> --no-pager -n 20` output and `journalctl -u <unit> -n 50`, and offer "restore previous config" from the `.bak` (restart again).
 - Proxy listing from the dashboard/admin API at `http://<webServer.addr>:<webServer.port>` with HTTP Basic auth when user/password are set:
   - `GET /api/proxy/{type}` for `tcp`, `udp`, `http`, `https` (also `stcp`, `xtcp`, `sudp`: **unverified** list). Grounded: the route exists as `/api/proxy/{type}`; each entry carries `name`, `conf` (TCP includes the resolved remote port), `status` (`online`/`offline`), today's traffic in/out, current connections, last start/close time, and the owning user/client id. Exact JSON field names are **unverified**; confirm against the pinned frps version.
-  - `GET /api/serverinfo` for version, uptime, client/proxy counts, totals (**unverified** path, not returned by the docs lookup; used by legacy via the dashboard — check legacy `frp.ts`).
+  - `GET /api/serverinfo` for version, uptime, client/proxy counts, totals (path used by legacy `frp.ts`; not returned by the Context7 lookup, so response shape is **unverified**). Legacy also calls `/api/clients` (connected frpc clients; shape unverified) — keep as an optional column.
   - Aggregate into one table (proxy name, type, remote port, status, traffic, connections, client). Poll when the page is visible (every 5 s via htmx), 2 s request timeout.
 - Yanto stores no per-tunnel state (frpc generation dropped).
 
@@ -746,6 +746,6 @@ Append-only record of who did what, through which interface, to which entity (po
 3. `cron-run` as root dropping privileges: more code on a root path (§5.3); alternative is a daemon socket.
 4. Docker CLI plugin discovery under a temp `DOCKER_CONFIG` (§4.7); bollard exec resize API name per pinned version (§2.2).
 5. Compose `config --format json` output stability for port derivation (§1.1).
-6. frps `/api/serverinfo` path and `frps verify` existence (§8).
+6. frps `/api/serverinfo` response shape and `frps verify` existence (§8).
 7. Lingering exec processes after terminal close (§2.2).
 8. Rollback does not version compose/env edits (§1.1).
