@@ -142,6 +142,8 @@ pub struct DeployConfig {
     /// Duration string such as `30s`, `15m`, `1h`.
     pub command_timeout: String,
     pub log_max_bytes: u64,
+    /// Finished Deployments kept per Project.
+    pub retention_per_project: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
@@ -257,6 +259,7 @@ impl Default for DeployConfig {
             max_concurrent: 2,
             command_timeout: "1h".into(),
             log_max_bytes: 500_000,
+            retention_per_project: 50,
         }
     }
 }

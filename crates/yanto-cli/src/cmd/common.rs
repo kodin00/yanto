@@ -42,10 +42,12 @@ pub fn load_config(path: &Path) -> anyhow::Result<Config> {
 }
 
 /// Open the database and build the services. New host-side adapters (`yanto-host`) are wired in here.
-pub async fn open(config: Config) -> anyhow::Result<Runtime> {
+pub async fn open(mut config: Config) -> anyhow::Result<Runtime> {
     let db = Db::open(&config.db_path())
         .await
         .context("opening database")?;
+    // Runtime settings stored in the database override config.toml (read at startup).
+    yanto_core::service::settings::apply_overrides(&db, &mut config).await;
     let secrets = Secrets::load_or_create(&config.paths.data_dir).context("loading app.key")?;
     let registry_auth = Arc::new(RunDirRegistryAuth::new(run_dir(&config)));
     let services = Services::new(ServiceDeps {

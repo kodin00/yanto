@@ -100,6 +100,8 @@ const GRID: &[(&str, &str)] = &[
     ("cron_delete", "Y   N    N   N   Y   N   N   N   Y"),
     ("cron_reapply", "Y   N    N   N   Y   N   N   N   Y"),
     ("cron_run", "Y   N    N   N   N   N   N   N   Y"),
+    ("settings_read", "Y   N    Y   Y   Y   N   N   N   Y"),
+    ("settings_update", "Y   N    N   N   Y   N   N   N   Y"),
     ("authorized_keys_list", "Y   N    Y   Y   Y   N   N   N   Y"),
     ("authorized_keys_add", "Y   N    N   N   Y   N   N   N   Y"),
     (
@@ -565,6 +567,15 @@ async fn invoke(f: &Fixture, op: &str, a: &Actor) -> Result<(), CoreError> {
         "cron_delete" => s.cron.delete(a, "crn_missing").await,
         "cron_reapply" => s.cron.reapply(a, false).await,
         "cron_run" => s.cron.run_entry(a, "crn_missing").await.map(|_| ()),
+        "settings_read" => s.settings.read(a).await.map(|_| ()),
+        "settings_update" => s
+            .settings
+            .update(
+                a,
+                &[("deploy.max_concurrent".to_owned(), serde_json::json!(3))].into(),
+            )
+            .await
+            .map(|_| ()),
         "authorized_keys_list" => s.authorized_keys.list(a).await.map(|_| ()),
         "authorized_keys_add" => s
             .authorized_keys

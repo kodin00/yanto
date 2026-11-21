@@ -12,6 +12,7 @@ mod matrix;
 mod matrix_ingress;
 mod projects;
 mod registry;
+mod settings;
 mod system;
 mod tokens;
 mod users;
