@@ -135,7 +135,7 @@ pub async fn list(
     if f.status.is_some() {
         sql.push_str(" AND status = ?");
     }
-    sql.push_str(" ORDER BY queued_at DESC, id DESC LIMIT ?");
+    sql.push_str(" ORDER BY queued_at DESC, rowid DESC LIMIT ?");
     let mut q = sqlx::query_as::<_, DeploymentRow>(sqlx::AssertSqlSafe(sql));
     if let Some(v) = &f.visible_projects {
         for p in v {
@@ -163,7 +163,7 @@ pub async fn claim_next(
             SELECT d.id FROM deployments d
             WHERE d.status = 'queued'
               AND NOT EXISTS (SELECT 1 FROM deployments r WHERE r.project_id = d.project_id AND r.status = 'running')
-            ORDER BY d.queued_at, d.id LIMIT 1)
+            ORDER BY d.queued_at, d.rowid LIMIT 1)
          RETURNING {COLS}"
     )))
     .bind(now)
@@ -270,7 +270,7 @@ pub async fn successes(
 ) -> Result<Vec<DeploymentRow>, CoreError> {
     sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM deployments WHERE project_id = ? AND status = 'success'
-         ORDER BY queued_at DESC, id DESC LIMIT ?"
+         ORDER BY queued_at DESC, rowid DESC LIMIT ?"
     )))
     .bind(project_id)
     .bind(limit)
@@ -289,7 +289,7 @@ pub async fn prune(
         "DELETE FROM deployments WHERE project_id = ? AND status NOT IN ('queued', 'running')
            AND id NOT IN (
              SELECT id FROM deployments WHERE project_id = ? AND status NOT IN ('queued', 'running')
-             ORDER BY queued_at DESC, id DESC LIMIT ?)",
+             ORDER BY queued_at DESC, rowid DESC LIMIT ?)",
     )
     .bind(project_id)
     .bind(project_id)

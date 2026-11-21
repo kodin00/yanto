@@ -257,3 +257,29 @@ pub async fn delete_port(conn: &mut SqliteConnection, id: &str) -> Result<(), Co
         .map(|_| ())
         .map_err(db_err)
 }
+
+pub async fn update_port(
+    conn: &mut SqliteConnection,
+    id: &str,
+    label: &str,
+    compose_service: Option<&str>,
+    container_port: i64,
+) -> Result<(), CoreError> {
+    sqlx::query(
+        "UPDATE project_ports SET label = ?, compose_service = ?, container_port = ? WHERE id = ?",
+    )
+    .bind(label)
+    .bind(compose_service)
+    .bind(container_port)
+    .bind(id)
+    .execute(conn)
+    .await
+    .map(|_| ())
+    .map_err(|e| {
+        if is_unique_violation(&e) {
+            CoreError::conflict("port label is already used in this project")
+        } else {
+            db_err(e)
+        }
+    })
+}
