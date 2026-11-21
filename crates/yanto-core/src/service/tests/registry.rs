@@ -565,3 +565,131 @@ async fn public_host_is_validated_and_stored() {
             .is_none()
     );
 }
+
+// ---- Projects deploying from the Hosted Registry (04 4.4) ----
+
+use super::projects::{git_input, image_input};
+use crate::deploy::worker;
+use crate::service::deployments::DeployRequest;
+
+async fn deploy_and_run(core: &TestCore, project: &str) -> (String, String) {
+    let id = core
+        .services
+        .deployments
+        .deploy(&cli(), project, &DeployRequest::default())
+        .await
+        .unwrap()
+        .deployment
+        .id;
+    let eng = core.services.engine();
+    while worker::run_once(eng.clone()).await {}
+    let status = core
+        .services
+        .deployments
+        .get(&cli(), &id)
+        .await
+        .unwrap()
+        .status;
+    let log = core
+        .services
+        .deployments
+        .logs(&cli(), &id, None)
+        .await
+        .unwrap();
+    (status, log)
+}
+
+#[tokio::test]
+async fn an_image_on_the_hosted_registry_gets_the_internal_credential_for_the_pull() {
+    let core = enabled_core().await;
+    let p = core
+        .services
+        .projects
+        .create(&cli(), &image_input("Local", "127.0.0.1:5055/team/app:1"))
+        .await
+        .unwrap()
+        .project;
+    let (status, log) = deploy_and_run(&core, &p.id).await;
+    assert_eq!(status, "success", "{log}");
+    let created = core.registry_auth.created();
+    assert_eq!(created.len(), 1);
+    assert_eq!(
+        created[0].1,
+        [
+            "127.0.0.1:5055:yanto-internal",
+            "localhost:5055:yanto-internal"
+        ]
+    );
+    assert!(core.registry_auth.live().is_empty());
+    let pulls = core.commands.matching("pull 127.0.0.1:5055/team/app:1");
+    let env: std::collections::BTreeMap<_, _> = pulls[0].spec.env.iter().cloned().collect();
+    assert!(env.contains_key("DOCKER_CONFIG"));
+    let secrets = core.registry_auth.secrets_seen();
+    assert!(!secrets.is_empty());
+    assert!(
+        secrets.iter().all(|s| !log.contains(s.as_str())),
+        "internal password stays out of logs"
+    );
+    // No `docker login` anywhere.
+    assert!(core.commands.calls().iter().all(|c| !c.contains("login")));
+}
+
+#[tokio::test]
+async fn other_images_get_no_hosted_registry_credential() {
+    let core = enabled_core().await;
+    let p = core
+        .services
+        .projects
+        .create(&cli(), &image_input("Other", "nginx:alpine"))
+        .await
+        .unwrap()
+        .project;
+    let (status, log) = deploy_and_run(&core, &p.id).await;
+    assert_eq!(status, "success", "{log}");
+    assert!(core.registry_auth.created().is_empty());
+}
+
+#[tokio::test]
+async fn a_git_project_whose_compose_names_the_registry_gets_the_credential_after_the_clone() {
+    let core = enabled_core().await;
+    let mut input = git_input("Repo", "git@github.com:org/repo.git");
+    input.compose_content = Some("services:\n  app:\n    image: 127.0.0.1:5055/app:1\n".into());
+    let p = core
+        .services
+        .projects
+        .create(&cli(), &input)
+        .await
+        .unwrap()
+        .project;
+    let (status, log) = deploy_and_run(&core, &p.id).await;
+    assert_eq!(status, "success", "{log}");
+    assert_eq!(core.registry_auth.created().len(), 1);
+    assert!(!core.commands.matching("compose -p").is_empty());
+    assert!(
+        core.commands
+            .calls()
+            .iter()
+            .any(|c| c.contains("pull --ignore-buildable"))
+    );
+    assert!(core.registry_auth.live().is_empty());
+}
+
+#[tokio::test]
+async fn pulling_from_a_disabled_hosted_registry_fails_with_a_hint() {
+    let core = TestCore::new().await;
+    let p = core
+        .services
+        .projects
+        .create(&cli(), &image_input("Local", "127.0.0.1:5000/app:1"))
+        .await
+        .unwrap()
+        .project;
+    core.commands.on(
+        "pull 127.0.0.1:5000/app:1",
+        Reply::fail(1, "connection refused"),
+    );
+    let (status, log) = deploy_and_run(&core, &p.id).await;
+    assert_eq!(status, "failed");
+    assert!(log.contains("Hosted Registry, which is disabled"), "{log}");
+    assert!(core.registry_auth.created().is_empty());
+}

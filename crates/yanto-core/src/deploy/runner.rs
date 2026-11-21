@@ -19,6 +19,7 @@ use crate::db::repo::deployments::{self, DeploymentRow};
 use crate::db::repo::projects::{self, PortRow, ProjectRow};
 use crate::db::repo::{db_err, deploy_keys, registry_credentials};
 use crate::error::CoreError;
+use crate::hosted_registry;
 use crate::ports::{
     AuthEntry, CancellationToken, CommandOutput, CommandSpec, EXIT_CANCELLED, LogSink,
 };
@@ -161,6 +162,18 @@ async fn build_redactor(eng: &Engine, p: &ProjectRow, dep: &DeploymentRow) -> Re
                 .open("registry_credentials", "secret_enc", &c.id, &c.secret_enc)
     {
         secrets.push(s.expose().to_owned());
+    }
+    if let Ok(mut conn) = eng.ctx.db.reader().acquire().await
+        && let Ok(rs) = crate::db::repo::registry::settings(&mut conn).await
+        && let Some(enc) = rs.internal_password_enc.as_deref()
+        && let Ok(pw) = eng.ctx.secrets.open(
+            "hosted_registry_settings",
+            "internal_password_enc",
+            "1",
+            enc,
+        )
+    {
+        secrets.push(pw.expose().to_owned());
     }
     if let Ok(dir) = files::project_dir(&eng.data_dir, &p.slug)
         && let Ok(Some(text)) = files::read_optional(&dir.join(&p.env_file))
@@ -342,12 +355,19 @@ impl Run {
         .await?;
 
         // Registry auth first, so every later docker command can use it.
-        let _guard = self.registry_auth().await?;
+        let _guard = self.registry_auth(false).await?;
+        let mut _clone_guard = None;
 
         if p.is_git() {
             let (sha, message) = self.git_phase().await?;
             self.persist_commit(sha.as_deref(), message.as_deref())
                 .await?;
+            // The compose file only exists now: a Git Project that pulls from the Hosted Registry
+            // gets the internal credential too (04 4.4). Recreating the directory is safe, both
+            // guards remove the same scope.
+            if self.hosted_entries(true).await?.is_some() {
+                _clone_guard = self.registry_auth(true).await?;
+            }
         }
 
         self.config_files().await?;
@@ -355,7 +375,7 @@ impl Run {
         let rollback = self.dep.rollback_from_deployment_id.is_some();
         if !p.is_git() {
             self.image_phase(rollback).await?;
-        } else if p.registry_credential_id.is_some() {
+        } else if p.registry_credential_id.is_some() || _clone_guard.is_some() {
             self.run(
                 self.compose(&["pull", "--ignore-buildable"], false)
                     .timeout(PULL_TIMEOUT),
@@ -380,43 +400,118 @@ impl Run {
         Ok(())
     }
 
-    async fn registry_auth(&mut self) -> Step<Option<RegGuard>> {
-        let Some(cid) = self.project.registry_credential_id.clone() else {
-            return Ok(None);
-        };
-        let cred = {
+    /// Auth entries for the Hosted Registry's internal user when this Project pulls from it
+    /// (04 4.4): an image Project whose reference names `127.0.0.1:<port>`, or (`scan`) a Git
+    /// Project whose compose file does. `None` when the registry is disabled or unused.
+    async fn hosted_entries(&self, scan: bool) -> Step<Option<Vec<AuthEntry>>> {
+        let s = {
             let mut conn = self.eng.ctx.db.reader().acquire().await.map_err(db_err)?;
-            registry_credentials::get(&mut conn, &cid).await?
+            crate::db::repo::registry::settings(&mut conn).await?
         };
-        let Some(c) = cred else {
-            return Err(StepError::failed(
-                "the Project's registry credential no longer exists",
-            ));
+        if !s.enabled {
+            return Ok(None);
+        }
+        let port = u16::try_from(s.listen_port).unwrap_or(hosted_registry::DEFAULT_PORT);
+        let p = &self.project;
+        let uses = if p.is_git() {
+            scan && {
+                let text = match &p.compose_content {
+                    Some(c) => Some(c.clone()),
+                    None => files::resolve_in(&self.dir, &p.compose_path)
+                        .ok()
+                        .and_then(|f| files::read_optional(&f).ok().flatten()),
+                };
+                text.is_some_and(|t| {
+                    t.contains(&format!("127.0.0.1:{port}/"))
+                        || t.contains(&format!("localhost:{port}/"))
+                })
+            }
+        } else {
+            p.image_ref
+                .as_deref()
+                .is_some_and(|i| hosted_registry::is_local_ref(i, port))
         };
-        let secret = self
-            .eng
-            .ctx
-            .secrets
-            .open("registry_credentials", "secret_enc", &c.id, &c.secret_enc)
-            .map_err(|_| {
-                StepError::failed("the registry credential cannot be decrypted; re-enter it")
+        if !uses {
+            return Ok(None);
+        }
+        let secret = s
+            .internal_password_enc
+            .as_deref()
+            .and_then(|e| {
+                self.eng
+                    .ctx
+                    .secrets
+                    .open("hosted_registry_settings", "internal_password_enc", "1", e)
+                    .ok()
+            })
+            .ok_or_else(|| {
+                StepError::failed(
+                    "the Hosted Registry credential is missing; re-enable the registry",
+                )
             })?;
-        let entry = AuthEntry {
-            registry_key: compose::auth_key(&c.registry_host),
-            username: c.username.clone(),
-            secret,
-        };
-        let dir = self.eng.host.registry_auth.create(&self.dep.id, &[entry])?;
+        Ok(Some(
+            [format!("127.0.0.1:{port}"), format!("localhost:{port}")]
+                .into_iter()
+                .map(|registry_key| AuthEntry {
+                    registry_key,
+                    username: hosted_registry::INTERNAL_USER.to_owned(),
+                    secret: secret.clone(),
+                })
+                .collect(),
+        ))
+    }
+
+    async fn registry_auth(&mut self, scan: bool) -> Step<Option<RegGuard>> {
+        let mut entries: Vec<AuthEntry> = Vec::new();
+        let mut notes = Vec::new();
+        if let Some(cid) = self.project.registry_credential_id.clone() {
+            let cred = {
+                let mut conn = self.eng.ctx.db.reader().acquire().await.map_err(db_err)?;
+                registry_credentials::get(&mut conn, &cid).await?
+            };
+            let Some(c) = cred else {
+                return Err(StepError::failed(
+                    "the Project's registry credential no longer exists",
+                ));
+            };
+            let secret = self
+                .eng
+                .ctx
+                .secrets
+                .open("registry_credentials", "secret_enc", &c.id, &c.secret_enc)
+                .map_err(|_| {
+                    StepError::failed("the registry credential cannot be decrypted; re-enter it")
+                })?;
+            entries.push(AuthEntry {
+                registry_key: compose::auth_key(&c.registry_host),
+                username: c.username.clone(),
+                secret,
+            });
+            notes.push(format!("Using registry credential for {}", c.registry_host));
+        }
+        if let Some(hosted) = self.hosted_entries(scan).await? {
+            // A Project credential for the same key wins; never write the key twice.
+            for e in hosted {
+                if !entries.iter().any(|x| x.registry_key == e.registry_key) {
+                    entries.push(e);
+                }
+            }
+            notes.push("Using the Hosted Registry credential for pulls from it".to_owned());
+        }
+        if entries.is_empty() {
+            return Ok(None);
+        }
+        let dir = self.eng.host.registry_auth.create(&self.dep.id, &entries)?;
         let guard = RegGuard {
             eng: self.eng.clone(),
             scope: self.dep.id.clone(),
         };
+        self.docker_env.retain(|(k, _)| k != "DOCKER_CONFIG");
         self.docker_env
             .push(("DOCKER_CONFIG".to_owned(), dir.display().to_string()));
-        self.note(&format!(
-            "Using registry credential for {}",
-            c.registry_host
-        ));
+        for n in notes {
+            self.note(&n);
+        }
         Ok(Some(guard))
     }
 
@@ -651,23 +746,49 @@ impl Run {
             let Some(digest) = self.dep.target_ref.clone() else {
                 return Err(StepError::failed("rollback has no image digest to restore"));
             };
-            self.run(
-                self.docker(&["pull", &digest]).timeout(PULL_TIMEOUT),
-                &format!("image pull for {}", compose::registry_host(&image)),
-            )
-            .await?;
+            let pulled = self
+                .run(
+                    self.docker(&["pull", &digest]).timeout(PULL_TIMEOUT),
+                    &format!("image pull for {}", compose::registry_host(&image)),
+                )
+                .await;
+            if pulled.is_err() {
+                self.hosted_registry_hint(&image).await;
+            }
+            pulled?;
             if !image.contains('@') {
                 self.run(self.docker(&["tag", &digest, &image]), "docker tag")
                     .await?;
             }
             return Ok(());
         }
-        self.run(
-            self.docker(&["pull", &image]).timeout(PULL_TIMEOUT),
-            &format!("image pull from {}", compose::registry_host(&image)),
-        )
-        .await?;
-        Ok(())
+        let pulled = self
+            .run(
+                self.docker(&["pull", &image]).timeout(PULL_TIMEOUT),
+                &format!("image pull from {}", compose::registry_host(&image)),
+            )
+            .await;
+        if pulled.is_err() {
+            self.hosted_registry_hint(&image).await;
+        }
+        pulled.map(|_| ())
+    }
+
+    /// A failed pull from the Hosted Registry's address while it is disabled gets a hint in the
+    /// log (04 4.4); the pull itself decides success, so an unrelated local registry still works.
+    async fn hosted_registry_hint(&self, image: &str) {
+        let Ok(mut conn) = self.eng.ctx.db.reader().acquire().await else {
+            return;
+        };
+        let Ok(s) = crate::db::repo::registry::settings(&mut conn).await else {
+            return;
+        };
+        let port = u16::try_from(s.listen_port).unwrap_or(hosted_registry::DEFAULT_PORT);
+        if !s.enabled && hosted_registry::is_local_ref(image, port) {
+            self.note(&format!(
+                "{image} points at the Hosted Registry, which is disabled: enable it on the Registry page and deploy again."
+            ));
+        }
     }
 
     async fn ports_phase(&self) -> Step<()> {
