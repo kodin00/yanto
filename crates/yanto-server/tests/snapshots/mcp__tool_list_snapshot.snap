@@ -34,6 +34,13 @@ yanto_deployment_get | deployment_get | read | Read | false | false
 yanto_deployment_logs | deployment_logs | read | Read | false | false
 yanto_deployments_list | deployments_list | read | Read | false | false
 yanto_health | health | read | Read | false | false
+yanto_hostname_create | hostname_create | write | Write | false | true
+yanto_hostname_delete | hostname_delete | admin | Destructive | true | true
+yanto_hostname_disable | hostname_disable | write | Write | false | true
+yanto_hostname_enable | hostname_enable | write | Write | false | true
+yanto_hostname_retry | hostname_retry | write | Write | false | true
+yanto_hostnames_diagnostics | hostnames_diagnostics | read | Read | false | true
+yanto_hostnames_list | hostnames_list | read | Read | false | false
 yanto_project_compose_read | project_compose_read | read | Read | false | false
 yanto_project_create | project_create | write | Write | false | false
 yanto_project_delete | project_delete | admin | Destructive | true | false

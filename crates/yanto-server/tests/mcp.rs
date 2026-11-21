@@ -342,6 +342,16 @@ fn sample_args() -> BTreeMap<&'static str, Value> {
             json!({"public_key":"ssh-ed25519 AAAA"}),
         ),
         ("yanto_authorized_keys_delete", id.clone()),
+        ("yanto_hostnames_list", json!({})),
+        (
+            "yanto_hostname_create",
+            json!({"project_id":"prj_x","project_port_id":"ppt_x","hostname":"app.example.com","ingress_provider":"traefik"}),
+        ),
+        ("yanto_hostname_retry", id.clone()),
+        ("yanto_hostname_enable", id.clone()),
+        ("yanto_hostname_disable", id.clone()),
+        ("yanto_hostname_delete", id.clone()),
+        ("yanto_hostnames_diagnostics", json!({})),
     ] {
         m.insert(k, v);
     }

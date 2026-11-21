@@ -6,6 +6,7 @@ mod backups;
 mod containers;
 mod cron;
 mod deployments;
+mod hostnames;
 mod keys;
 mod projects;
 mod registry;
@@ -24,6 +25,7 @@ pub fn register(set: &mut ToolSet) {
     registry::register(set);
     cron::register(set);
     authorized_keys::register(set);
+    hostnames::register(set);
 }
 
 /// `Some(None)` for an explicit JSON `null` (clear), `Some(Some(v))` for a value, `None` when absent.
