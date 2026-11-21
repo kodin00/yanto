@@ -5,6 +5,7 @@ pub mod crypto;
 pub mod db;
 pub mod error;
 pub mod ports;
+pub mod secrets;
 
 pub use config::Config;
 pub use db::Db;
