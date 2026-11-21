@@ -27,8 +27,10 @@ tokio.workspace = true
 tower = { workspace = true, optional = true }
 tower-http.workspace = true
 tracing.workspace = true
-futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["alloc", "sink"] }
 
 [dev-dependencies]
+sqlx.workspace = true
+tokio-tungstenite = "0.30.0"
 # Enables the `testing` feature for this crate's own unit and integration tests.
 yanto-server = { path = ".", features = ["testing"] }
