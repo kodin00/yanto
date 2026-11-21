@@ -329,7 +329,13 @@ impl DeploymentService {
             .await?
             .ok_or_else(|| CoreError::not_found("project not found"))?;
         if let Some(q) = deployments::queued_for(&mut tx, &new.project_id).await? {
-            if new.rollback.is_some() {
+            // Only a plain trigger may coalesce into the queued row (04 1.3); a ref, an env
+            // payload or a rollback would otherwise be accepted and then silently dropped.
+            if new.rollback.is_some()
+                || new.target_ref.is_some()
+                || new.pending_env.is_some()
+                || new.trigger == "rollback"
+            {
                 return Err(CoreError::conflict(
                     "a deployment is already queued for this project; cancel it first",
                 ));

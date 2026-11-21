@@ -247,6 +247,15 @@ async fn one_running_one_queued_and_the_third_trigger_reuses_the_queued_one() {
         .unwrap();
     assert!(!second.reused && third.reused);
     assert_eq!(second.deployment.id, third.deployment.id);
+    // A trigger carrying a payload is refused instead of being folded in and dropped.
+    let with_env = DeployRequest {
+        env: Some(crate::secrets::Secret::new("A=1\n".to_owned())),
+        ..DeployRequest::default()
+    };
+    assert_eq!(
+        kind(d.deploy(&c.owner, &p.id, &with_env).await),
+        ErrorKind::Conflict
+    );
     // While the first runs, the queued one cannot be claimed.
     let mut tx = c.core.db.begin_write().await.unwrap();
     assert!(
