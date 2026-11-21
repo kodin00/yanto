@@ -21,13 +21,13 @@
 
 <section class="card">
   <h2>Push commands</h2>
-  {% if let Some(h) = public_host %}
+  {% if let Some(h) = hostnames.first() %}
   <pre>docker login {{ h }}
 docker tag app {{ h }}/app:1
 docker push {{ h }}/app:1</pre>
   <p class="muted">Projects on this Host still reference <code>{{ image_host }}/app:1</code>, the same image.</p>
   {% else %}
-  <p>Set the public hostname on the <a href="/registry">registry page</a> once an HTTPS hostname forwards to the registry, and the commands appear here. Until then, push from the Host itself using <code>{{ image_host }}</code>.</p>
+  <p>No HTTPS hostname forwards to the registry yet, so no push commands are shown. Create a Hostname with the target <strong>Hosted Registry</strong> on the <a href="/hostnames">Hostnames page</a>; the commands appear here once it exists and is enabled. Until then, push from the Host itself using <code>{{ image_host }}</code>.</p>
   {% endif %}
 </section>
 {% endblock %}

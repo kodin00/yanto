@@ -249,6 +249,27 @@ async fn dashboard_page_users_browser_and_guidance() {
         )
         .await;
     assert_eq!(host.status, StatusCode::SEE_OTHER);
+    // Commands need a registry Hostname (M7), not just the display-only public host.
+    let before = owner.get("/registry/remote-push").await.text();
+    assert!(!before.contains("docker login"), "no Hostname yet");
+    assert!(before.contains("/hostnames"));
+    app.core.enable_traefik();
+    app.core
+        .services
+        .hostnames
+        .create(
+            &yanto_core::actor::Actor::cli(),
+            &yanto_core::service::hostnames::HostnameInput {
+                target: yanto_core::service::hostnames::TargetInput::Registry,
+                hostname: "registry.example.com".into(),
+                ingress_provider: "traefik".into(),
+                tunnel_id: None,
+                zone_id: None,
+                manage_dns: false,
+            },
+        )
+        .await
+        .expect("registry Hostname while the registry is enabled");
     assert!(
         owner
             .get("/registry/remote-push")

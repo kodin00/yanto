@@ -20,13 +20,13 @@ Operations (all Owner-only): `registry_status|users_list|repos_list|tags_list|ta
 - **Tag delete** is split into `registry_tag_delete_preview` (digest and sibling tags) and `registry_tag_delete`; the sibling scan stops after 5000 tags.
 - **Dashboard paths.** Repository names with `/` are one percent-encoded path segment (`/registry/repos/team%2Fapp/tags`). The user password change is `PUT /registry/users/{id}` on the dashboard and `PUT /registry/users/{id}/password` on REST.
 - **Internal credential for pulls.** An image Project whose `image_ref` host is `127.0.0.1:<port>` gets `yanto-internal` (keys `127.0.0.1:<port>` and `localhost:<port>`) in the per-command `DOCKER_CONFIG`. A Git Project gets it after the clone when its compose file names the host (a second auth directory with the same scope). A Project credential for the same key wins. A failed pull of such an image while the registry is disabled logs a hint; the pull itself decides success, so an unrelated local registry on the same port still works.
-- **Remote-push guidance** is a static page (`/registry/remote-push`) plus the display-only `public_host` setting. The "refuse to show instructions unless a TLS Hostname exists" rule needs M7's `hostnames` table; until then the push commands appear only once `public_host` is set, and Hostname creation (`target_kind='registry'`) and its Cloudflare caveat banner are M7's.
+- **Remote-push guidance** is a static page (`/registry/remote-push`) plus the display-only `public_host` setting. Since the M7 merge the push commands appear only while an enabled Hostname with `target_kind=registry` exists (the first one is used); `public_host` alone no longer shows them. Hostname creation and the registry target are M7's (`SettingsRegistryTarget`).
 - **Port rules.** `listen_port` is chosen at enable (1024-65535) and refused when it equals Yanto's own port, a declared Project port or a TCP listener on the Host. Changing it later means disable, enable, and updating image references.
 - **Nav.** The active-link test is now `path == href || path starts_with href + "/"`, so `/registry` and `/registry-credentials` do not highlight together.
 
 ## Not done in M6
 
-- The M7-owned Hostname for the registry and its UI banner; checks that a Project port differs from the Hosted Registry port beyond the live listener scan (M2 follow-up).
+- The Cloudflare caveat banner on registry Hostname creation (not added by M7 either); checks that a Project port differs from the Hosted Registry port beyond the live listener scan (M2 follow-up).
 - CLI commands for the registry; MCP tools (M8).
 - Stop-the-world GC fallback (stop container, run in a one-off container) is documented in 04 4.3 but not implemented.
 

@@ -693,7 +693,8 @@ struct RemotePushPage {
     ctx: PageCtx,
     image_host: String,
     port: u16,
-    public_host: Option<String>,
+    /// Enabled Hostnames that target the Hosted Registry (M7); the push commands use the first.
+    hostnames: Vec<String>,
     enabled: bool,
 }
 
@@ -708,11 +709,21 @@ async fn remote_push(
         .status(&session.0.actor)
         .await
         .map_err(|e| DashError::new(e, &headers))?;
+    let hostnames = s
+        .services
+        .hostnames
+        .list(&session.0.actor, None)
+        .await
+        .map_err(|e| DashError::new(e, &headers))?
+        .into_iter()
+        .filter(|h| h.target_kind == "registry" && h.enabled)
+        .map(|h| h.hostname)
+        .collect();
     Ok(render(&RemotePushPage {
         ctx: PageCtx::new(&session, "Registry: remote push", "/registry"),
         image_host: st.image_host,
         port: st.listen_port,
-        public_host: st.public_host,
+        hostnames,
         enabled: st.enabled,
     }))
 }
