@@ -31,6 +31,8 @@ pub struct CoreError {
     pub kind: ErrorKind,
     pub message: String,
     pub source: Option<Box<dyn StdError + Send + Sync>>,
+    /// Set for `RateLimited`: seconds until the caller may retry (`Retry-After`).
+    pub retry_after_secs: Option<u64>,
 }
 
 impl CoreError {
@@ -39,7 +41,41 @@ impl CoreError {
             kind,
             message: message.into(),
             source: None,
+            retry_after_secs: None,
         }
+    }
+
+    pub fn validation(field: impl Into<String>, message: impl Into<String>) -> Self {
+        let message = message.into();
+        Self::new(
+            ErrorKind::Validation(vec![FieldError {
+                field: field.into(),
+                message: message.clone(),
+            }]),
+            message,
+        )
+    }
+
+    pub fn unauthenticated(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Unauthenticated, message)
+    }
+
+    pub fn forbidden(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Forbidden, message)
+    }
+
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::NotFound, message)
+    }
+
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Conflict, message)
+    }
+
+    pub fn rate_limited(retry_after_secs: u64) -> Self {
+        let mut e = Self::new(ErrorKind::RateLimited, "too many attempts, try again later");
+        e.retry_after_secs = Some(retry_after_secs);
+        e
     }
 
     pub fn with_source(mut self, source: impl StdError + Send + Sync + 'static) -> Self {
@@ -79,6 +115,13 @@ impl StdError for CoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rate_limited_carries_retry_after() {
+        let e = CoreError::rate_limited(30);
+        assert_eq!(e.kind, ErrorKind::RateLimited);
+        assert_eq!(e.retry_after_secs, Some(30));
+    }
 
     #[test]
     fn display_uses_message_not_source() {
