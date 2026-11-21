@@ -455,7 +455,7 @@ Storage: `DATA/backups/` (0700), files 0600, named `<owner>-<kind>-<UTC timestam
 **Volume archive**
 - Enumerate volumes: Engine `list_volumes` filtered by label `com.docker.compose.project=<folder_name>` (bind mounts are not backed up; the UI says so).
 - Optional "stop Project during backup" (default off; warning that unstopped volumes are crash-consistent only; prefer DB dumps for databases): `docker compose -p <name> stop` before, `start` after (guaranteed by drop-guard).
-- For each volume: create a throwaway container from the helper image: `Cmd: ["tar","-C","/data","-cf","-","."]`, `HostConfig.Binds: ["<volume>:/data:ro"]`, `AutoRemove`, no network (`NetworkMode: none`), labels `yanto.managed=backup-helper`. Attach logs; Yanto reads stdout (the tar stream) and compresses it with zstd in-process, writing to a temp file `DATA/backups/.<name>.partial`; stderr is collected for errors. Archive layout: one archive per Project containing a top-level directory per volume (tar built by streaming each volume's tar into a combined container-less writer, ASSUMPTION), or one file per volume (simpler; **decision**: one `.tar.zst` per volume, grouped under a Backup Set id in the UI).
+- For each volume: create a throwaway container from the helper image: `Cmd: ["tar","-C","/data","-cf","-","."]`, `HostConfig.Binds: ["<volume>:/data:ro"]`, `AutoRemove`, no network (`NetworkMode: none`), labels `yanto.managed=backup-helper`. Attach logs; Yanto reads stdout (the tar stream) and compresses it with zstd in-process, writing to a temp file `DATA/backups/.<name>.partial`; stderr is collected for errors. Archive layout (decision): one `.tar.zst` per volume, grouped under a Backup Set id in the UI.
 - Success: container exit code 0, then `rename` partial → final, compute SHA-256 while writing. Failure: delete partial, mark `failed` with the stderr tail.
 - Compression level 3 default (ASSUMPTION), configurable.
 
@@ -518,3 +518,234 @@ Restores are explicit, confirmed, and always take a `pre-restore` backup of the 
 - [ ] Restore of a SQL dump into an empty DB succeeds; a corrupted file fails the checksum before any change.
 - [ ] Download works with `backups` permission, is audited, and shows the SHA-256.
 - [ ] Interrupted backups are cleaned on restart.
+
+---
+
+## 8. FRP (frps only)
+
+### 8.1 Behavior
+Yanto drives the Host's `frps` (ADR 0006, D15, D17): status check, config read/write of a defined field subset, proxy listing through frps's dashboard API, and restart via systemd. It never installs `frps`, never writes `frpc` configs, and never creates proxies (clients register them).
+
+### 8.2 Inputs / state
+Settings: `frp.unit` (default `frps`), `frp.config_path` (auto-detected, overridable), `frp.binary` (default from `ExecStart`). No FRP secrets are duplicated in SQLite: the dashboard credentials and auth token are read from `frps.toml` at call time (single source of truth).
+
+### 8.3 Check (read-only)
+- Installed: `systemctl show <unit> -p LoadState,ActiveState,SubState,FragmentPath,MainPID,ExecStart --no-pager`; `LoadState=not-found` → "not installed" with operator instructions (install frp from its official releases, create the unit; Yanto shows a sample unit but never writes it).
+- Version: run the binary from `ExecStart` with `--version` (flag existence **unverified**; fall back to the dashboard serverinfo response).
+- Config path: parse `-c <path>` / `--config <path>` / `--config=<path>` from `ExecStart`; else `/etc/frp/frps.toml` (**ASSUMPTION** default).
+- Statuses: not installed / installed-inactive / running / running-without-dashboard (no `webServer.port` in config) / dashboard-unreachable.
+
+### 8.4 Config read/write
+- Format: TOML (frp's current format; `frps.toml` with `bindPort`, `webServer.*`, `auth.*`, `allowPorts` confirmed in frp docs via Context7).
+- **Fields Yanto owns** (edited via the form; all other keys, tables, and comments are preserved by a comment-preserving TOML editor, e.g. `toml_edit` — crate choice is an implementation decision):
+  | Key | Notes |
+  |---|---|
+  | `bindAddr`, `bindPort` | port 1–65535; must not collide with Host listeners (other than frps itself) |
+  | `auth.method`, `auth.token` | Yanto may generate a token (32 random bytes, hex); shown to `secrets` holders on demand since `frpc` clients need it; stored only in the file |
+  | `webServer.addr`, `webServer.port`, `webServer.user`, `webServer.password` | docs: dashboard enabled by setting `webServer.port`; default addr `127.0.0.1`; user/password optional. Yanto defaults to `127.0.0.1` and **requires** user+password when it enables the dashboard (ASSUMPTION policy) |
+  | `allowPorts` | list of `{start,end}` / `{single}` entries (documented shape) restricting remote ports |
+- Not owned (shown read-only as raw TOML): `vhostHTTPPort`, `vhostHTTPSPort`, `quicBindPort`, transport/log/plugins, etc.
+- **Write procedure**: read file → parse (reject if invalid TOML) → apply changes → validate (ports in range, `allowPorts` ranges ordered, no duplicate singles, no overlap with `bindPort`/`webServer.port`) → write `frps.toml.yanto.bak` of the old content (0600) → write temp `<dir>/.frps.toml.yanto.tmp` with the original mode/owner → `fsync` → `rename` → `fsync` dir. Optional syntax validation by the frp binary (`frps verify -c <file>`) is **unverified**; Yanto skips it if the subcommand is unavailable.
+- Applying requires a restart (frps reads config at start; hot-reload for frps is **unverified**). The UI shows "pending restart" until the restart succeeds; config is saved even if the restart is deferred.
+
+### 8.5 Restart and listing
+- Restart: `systemctl restart <unit>` (also `start`, `stop`), then poll up to 10 s for `ActiveState=active` and a dashboard answer. On failure, show `systemctl status <unit> --no-pager -n 20` output and `journalctl -u <unit> -n 50`, and offer "restore previous config" from the `.bak` (restart again).
+- Proxy listing from the dashboard/admin API at `http://<webServer.addr>:<webServer.port>` with HTTP Basic auth when user/password are set:
+  - `GET /api/proxy/{type}` for `tcp`, `udp`, `http`, `https` (also `stcp`, `xtcp`, `sudp`: **unverified** list). Grounded: the route exists as `/api/proxy/{type}`; each entry carries `name`, `conf` (TCP includes the resolved remote port), `status` (`online`/`offline`), today's traffic in/out, current connections, last start/close time, and the owning user/client id. Exact JSON field names are **unverified**; confirm against the pinned frps version.
+  - `GET /api/serverinfo` for version, uptime, client/proxy counts, totals (**unverified** path, not returned by the docs lookup; used by legacy via the dashboard — check legacy `frp.ts`).
+  - Aggregate into one table (proxy name, type, remote port, status, traffic, connections, client). Poll when the page is visible (every 5 s via htmx), 2 s request timeout.
+- Yanto stores no per-tunnel state (frpc generation dropped).
+
+### 8.6 Failure modes
+| Failure | UI |
+|---|---|
+| frps not installed | Panel with install instructions; other actions disabled |
+| Dashboard not enabled/unreachable | Status "running (no dashboard)", with "enable dashboard" form that edits `webServer.*` and offers restart |
+| Dashboard 401 | "Dashboard credentials in frps.toml do not match" (no password echo) |
+| Invalid TOML in file | Read-only error with parse position; writes blocked |
+| Restart fails | Output of `systemctl status`/journal, "restore previous config" |
+| Port conflict at save | Field error naming the listener |
+
+### 8.7 Security notes
+- **Access control / network exposure**: dashboard bound to loopback by default; if the operator sets a non-loopback `webServer.addr`, the UI flags it as exposed. `allowPorts` is the main control against clients opening arbitrary Host ports — UI warns if absent (ASSUMPTION: empty `allowPorts` = unrestricted per frp docs semantics; **unverified** wording).
+- **Secrets management**: `auth.token` and dashboard password live only in `frps.toml` (0600 recommended; Yanto warns if world-readable); redacted in logs, audit metadata, and diffs (diff view masks them).
+- **Integrity**: backup + atomic write; restart is the only apply mechanism.
+- Privileged actions (`systemctl`) run as root; unit name validated `^[A-Za-z0-9@._-]+$` before use.
+
+### 8.8 Acceptance criteria
+- [ ] Panel shows installed/active state, version, config path derived from the unit.
+- [ ] Editing owned fields preserves comments and unrelated keys byte-for-byte (diff test).
+- [ ] Invalid port/`allowPorts` rejected before write; `.bak` created on write; failed restart offers restore and restore works.
+- [ ] Proxy list shows online/offline proxies of `tcp`, `udp`, `http`, `https` with traffic and connection counts.
+- [ ] No secret value appears in UI diffs, logs, or Audit.
+- [ ] Missing `frps` never causes an error outside the FRP page and never triggers an install.
+
+---
+
+## 9. Hostnames and Ingress Providers
+
+### 9.1 Behavior (ADR 0008, D16)
+A **Hostname** maps a public name to a declared loopback port of a Project (§1), or to the Hosted Registry (§4.5), through one **Ingress Provider**: Cloudflare Tunnel or Traefik. Both can be configured simultaneously; each Hostname belongs to exactly one provider. Cloudflare DNS management is independent of the provider.
+
+`hostnames(id, hostname, project_id?, target_kind [project|registry], port_id?, provider [cloudflare|traefik], provider_ref, dns_record_id?, status [pending|active|error|disabled], last_error, created_at)`. Target URL is always `http://127.0.0.1:<host_port>`. Hostname validation: lowercase LDH labels `^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`, ≤ 253 chars, unique across providers, no wildcards in v1 (ASSUMPTION), and (Cloudflare) must be inside a zone reachable by the selected client. Permission: `hostnames` on the Project; provider/client/tunnel setup: Owner/`admin`.
+
+**Reconcile model**: SQLite is the desired state; applying a provider means regenerating its *entire* config from the DB and pushing it idempotently (Cloudflare `PUT` of the full ingress list; Traefik full rewrite of `yanto.yml`). A reconcile runs on Hostname create/update/delete, when a Project's declared ports change, and via a manual "Re-sync". Drift (remote differs from DB) is shown, not silently accepted.
+
+### 9.2 Cloudflare Tunnel (remote-managed)
+
+**Entities**: `cloudflare_clients(id, name, api_token_enc, account_id)` (a "client" = API token + account id; legacy term kept), `cloudflare_tunnels(id, client_id, cf_tunnel_id, name, created_at)`. Token scope required (ASSUMPTION; verify in Cloudflare docs): Account → Cloudflare Tunnel: Edit; Zone → DNS: Edit; Zone → Zone: Read.
+
+**API calls** (base `https://api.cloudflare.com/client/v4`; paths and bodies as used by legacy `cloudflare.ts`):
+| Purpose | Call |
+|---|---|
+| Validate client | `GET /accounts/{account_id}/cfd_tunnel?per_page=1`, `GET /zones?account.id={account_id}&per_page=50` |
+| Create tunnel | `POST /accounts/{account_id}/cfd_tunnel` body `{ "name": "<name>", "config_src": "cloudflare" }` (remote-managed) |
+| Get connector token | `GET /accounts/{account_id}/cfd_tunnel/{tunnel_id}/token` |
+| Push ingress | `PUT /accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations` body `{ "config": { "ingress": [ { "hostname": "<h>", "service": "http://127.0.0.1:<port>" }, …, { "service": "http_status:404" } ] } }` |
+| Tunnel health | `GET /accounts/{account_id}/cfd_tunnel/{tunnel_id}` (status field; allowed values **unverified**) |
+| Delete tunnel | `DELETE /accounts/{account_id}/cfd_tunnel/{tunnel_id}` (behavior with live connections **unverified**; UI first tells the operator to stop the host `cloudflared`) |
+| DNS | `GET/POST /zones/{zone_id}/dns_records`, `PUT/DELETE /zones/{zone_id}/dns_records/{id}` |
+The final catch-all rule `http_status:404` is required by `cloudflared` ingress (last rule must be a catch-all; confirmed in cloudflared docs). Hostname rules use the `hostname` + `service` keys (confirmed). Legacy `noTLSVerify` is dropped (targets are plain HTTP on loopback).
+
+**DNS for a Cloudflare Hostname**: `CNAME <hostname> → <cf_tunnel_id>.cfargotunnel.com`, `proxied: true` (legacy). Lookup existing record by `type=CNAME&name=<hostname>`; create or update; store `dns_record_id`. Records Yanto creates carry a comment `managed-by=yanto` where the API supports it (ASSUMPTION).
+
+**Host `cloudflared` (a Host Daemon; never auto-run)**:
+- Check: `cloudflared --version`; `systemctl is-active <unit>` (setting `cloudflared.unit`, default `cloudflared`, ASSUMPTION that `service install` creates it); status mapping like §8.3; connector connectivity from the tunnel `GET` above.
+- If the binary or unit is missing, or the tunnel has no connection, the UI shows instructions. The connector command is produced on demand: `cloudflared service install <TOKEN>` (root). Cloudflared docs confirm that, given a token, `service install` writes it to a token file and runs `tunnel run --token-file …`; on Linux it starts the service. Yanto **never executes this**, never stores the token (it fetches it from the API at click time), displays it once on a reveal action (permission `secrets`/admin, audited `tunnel.token.reveal`), masks it in all logs, and the page sets `Cache-Control: no-store`.
+- Multiple tunnels per Host are not supported in v1: one host `cloudflared` runs one tunnel token (ASSUMPTION; simplifies the check). The UI selects the active tunnel.
+
+**Diagnostics** (read-only, per Hostname and per tunnel; each check returns pass/warn/fail + hint):
+1. API token valid and scope sufficient (the validate calls above).
+2. Tunnel exists; status from API; host `cloudflared` active.
+3. Ingress drift: `GET …/configurations` compared with DB-derived ingress.
+4. Target port declared and listening on `127.0.0.1` (TCP connect, 1 s).
+5. Local HTTP probe: `GET http://127.0.0.1:<port>/` with `Host: <hostname>`, 3 s; reports status code only.
+6. DNS record exists, type CNAME, content equals `<tunnel>.cfargotunnel.com`, proxied true.
+7. Public probe `HEAD https://<hostname>/` (opt-in button, 5 s): reports status/TLS errors.
+Each check is independent and never mutates.
+
+**Failure modes**: invalid/insufficient token → client page error naming the HTTP status and Cloudflare error message (token never echoed); ingress `PUT` rejected → Hostname `error` with the API message, DB retained for retry; DNS conflict (existing non-CNAME record) → refused with the existing record shown, no overwrite without confirmation; tunnel API succeeds but connector offline → Hostname `active` with warning "connector not connected"; rate limit (429) → retry with backoff (3 tries) then error.
+
+**Security notes**: **secrets management**: API token and tunnel token handling above; **least privilege**: scope guidance, one client per account; **exposure**: Hostname creation exposes a Project publicly — requires `hostnames`, audited, and the UI states that Cloudflare Access/WAF are the operator's responsibility; **integrity**: full-list `PUT` means a manual dashboard edit of the ingress will be overwritten (documented; drift check shows it first).
+
+### 9.3 Traefik
+
+**Host Daemon check** (read-only): `traefik version` (binary name/path configurable, `traefik.binary`), `systemctl is-active <unit>` (`traefik.unit`, default `traefik`), unit file path via `systemctl show`. Not installed → instructions only.
+
+**Operator prerequisites (Yanto verifies where possible, never writes)** — static configuration (Traefik reads static config at start; shapes from Traefik docs):
+```yaml
+entryPoints:
+  web:       { address: ":80" }
+  websecure: { address: ":443" }
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: <operator email>
+      storage: /etc/traefik/acme.json
+      httpChallenge: { entryPoint: web }
+```
+- File provider with `directory` (loads all files in it) and `watch: true` (hot reload on change) — documented. ACME `httpChallenge.entryPoint` must be reachable by Let's Encrypt on port 80 — documented. Port 80/443 reachability and a public A/AAAA record are required.
+- Yanto settings: `traefik.dynamic_dir` (default `/etc/traefik/dynamic`), `traefik.cert_resolver` (default `letsencrypt`), `traefik.entrypoint` (default `websecure`), `traefik.static_config` (default `/etc/traefik/traefik.yml`, optional).
+- **Prerequisite check** (best effort): parse the static config if present (YAML/TOML) and report a checklist: file provider directory equals `dynamic_dir`, `watch: true`, the named entry point and certificate resolver exist. If static config is passed by CLI flags/env only, status is "unverifiable" (not a failure). Also checks the directory exists and is writable.
+- HTTP→HTTPS redirect is an operator choice at the `web` entry point (Traefik supports entry-point redirections; exact key set **unverified**, not generated by Yanto).
+
+**Dynamic file** `<dynamic_dir>/yanto.yml` (only file Yanto writes; header `# Managed by Yanto. Manual edits are overwritten.`):
+```yaml
+http:
+  routers:
+    yanto-<hostname-slug>:
+      rule: Host(`app.example.com`)
+      entryPoints: [websecure]
+      service: yanto-<hostname-slug>
+      tls:
+        certResolver: letsencrypt
+  services:
+    yanto-<hostname-slug>:
+      loadBalancer:
+        servers:
+          - url: http://127.0.0.1:8080
+```
+Shape (routers with `rule`/`entryPoints`/`service`/`tls.certResolver`; services with `loadBalancer.servers[].url`) is documented in Traefik's file-provider and ACME docs. Router/service names are derived as `yanto-` + hostname with dots→`-` (collision-checked); hostnames are validated before they are put inside the backtick rule (injection guard); YAML is generated from a typed struct, not string concatenation.
+- **Atomic write**: build string → parse it back and check invariants (every router references an existing service; URLs are `http://127.0.0.1:<declared port>`) → write temp file in the *parent* of the dynamic dir (`/etc/traefik/.yanto.yml.tmp`), so Traefik's directory watcher never sees a partial or stray file (ASSUMPTION: same filesystem) → `fsync` → `rename` to `yanto.yml` (mode 0644 root) → `fsync` dir. Previous content kept as `<dir>/../yanto.yml.bak`.
+- **Hot reload**: none to trigger when `watch: true`. If the check finds `watch` false/unknown, Yanto shows "restart Traefik to apply" and offers `systemctl restart <unit>` (explicit button; Traefik reload-by-signal **unverified**).
+- **Post-write verification** (best effort): wait up to 10 s, then probe `GET http://127.0.0.1:80/` with `Host: <hostname>` expecting a non-`404` router match (404 = router not loaded), and show `journalctl -u <unit> -n 30` when failing. Certificate issuance is asynchronous: status `active` + "certificate pending" until `HEAD https://<hostname>/` succeeds with a valid certificate (opt-in check).
+- If the file is invalid, Traefik's behavior is to log an error and (ASSUMPTION) keep its previous config; Yanto surfaces the journal tail.
+- **DNS** (optional, Cloudflare client selected): `A`/`AAAA <hostname> → <host_public_ip>` (operator setting `host.public_ip[_v6]`; Yanto does not call external IP-discovery services), `proxied: false` by default because HTTP-01 validation and Traefik-terminated TLS assume direct reachability (behavior behind Cloudflare proxy for HTTP-01 **unverified**). Without a client, the UI shows the record to create manually.
+
+**Failure modes**: prerequisite missing → provider "not ready" banner with the failed checklist item, Hostname creation disabled for that provider; write permission denied → error with path; reconcile mismatch after reload (404) → Hostname `error` with journal tail; ACME failure (port 80 blocked/DNS wrong) → shown as "certificate pending/failed" with a pointer to `journalctl -u traefik` (Yanto cannot read Traefik's ACME state; `acme.json` is never read or written).
+
+**Security notes**: **input validation** (hostname/rule injection, typed YAML); **secrets**: Yanto never reads `acme.json`; **exposure**: ports 80/443 are operator-owned; Hostname creation publicly exposes a loopback port; routers use `websecure` + TLS only (no plaintext router generated); **integrity**: atomic write, `.bak`, drift detection via stored SHA-256.
+
+### 9.4 DNS records management (provider-independent)
+Zones list per client, record list/create/update/delete (`GET/POST/PUT/DELETE /zones/{zone_id}/dns_records`, legacy-grounded; `per_page=200` listing). Records bound to a Hostname are marked "managed" and edit/delete there is routed through the Hostname (deleting a Hostname removes its DNS record only if Yanto created it). Operators with `admin` can edit any record; Members cannot. Changes audited with record name/type/content (no tokens).
+
+### 9.5 Acceptance criteria
+- [ ] Create a client; validation passes with a correct token and fails with a clear message for a wrong token without echoing it.
+- [ ] Create tunnel (`config_src: "cloudflare"`); the page shows install instructions and the `cloudflared service install <TOKEN>` command only after an audited reveal; Yanto never runs it and never persists the token.
+- [ ] Adding a Cloudflare Hostname for a declared port updates the full ingress (with the catch-all `http_status:404` last) and creates the proxied CNAME; removing it reverses both.
+- [ ] Diagnostics identify each seeded fault: stopped host `cloudflared`, ingress drift, closed local port, wrong DNS target.
+- [ ] A Hostname cannot target an undeclared or non-loopback port.
+- [ ] Traefik provider check reports missing prerequisites correctly (no file provider, missing resolver, `watch` false) and blocks Hostname creation when not ready.
+- [ ] Adding a Traefik Hostname writes `yanto.yml` atomically; Traefik serves the route within seconds without restart (with `watch: true`); no stray files appear in the dynamic dir during the write.
+- [ ] Hostnames containing backticks, spaces, or uppercase are rejected/normalized before any file or API write.
+- [ ] Both providers can coexist with distinct Hostnames; a hostname cannot be added twice.
+- [ ] DNS A record for a Traefik Hostname is created only when a client and `host.public_ip` are configured.
+
+---
+
+## 10. Audit log
+
+### 10.1 Behavior
+Append-only record of who did what, through which interface, to which entity (port of legacy `audit_logs`, extended). Every mutating operation in every adapter (dashboard, REST, MCP, CLI, webhooks, cron-run) writes one entry from the service layer (ADR 0005), so coverage is independent of the interface.
+
+### 10.2 Schema (`audit_log`)
+`id` (ULID/uuid-v7, ASSUMPTION), `ts` (UTC, ms), `actor_type` (`owner|member|api_token|webhook|cli|system`), `actor_id`, `actor_label` (username / token name / `github`), `source` (`ui|rest|mcp|webhook|cli|cron|system`), `ip` (nullable), `action` (dot namespaced, e.g. `deployment.start`, `registry.gc`, `authkeys.add`, `container.exec.start`, `backup.download`), `entity_type`, `entity_id`, `project_id` (nullable; stored as plain text, **not** a cascading FK, so entries survive Project deletion), `outcome` (`ok|denied|error`), `metadata` (JSON, redacted), `request_id`, `prev_hash`, `hash`.
+- **Tamper evidence** (proposal): `hash = SHA-256(prev_hash || canonical_json(row without hash))`, forming a chain verified by `yanto audit verify`. The chain detects edits/deletions in the middle, not truncation at the tail (mirror each entry as a structured `tracing` line to journald, target `audit`, to cover this — ASSUMPTION).
+- **Append-only enforcement**: SQLite triggers `BEFORE UPDATE` and `BEFORE DELETE` on `audit_log` call `RAISE(ABORT, …)`. The only deletion path is `yanto audit prune --before <date>` (admin, CLI, audited itself) which drops the delete trigger, deletes, re-creates it in one transaction.
+
+### 10.3 What is and is not recorded
+- Recorded: create/update/delete of Projects, Deploy Key/Token reveal/rotate, Deployments (start, cancel, finish) with trigger, webhook accepts and rejects, container actions, exec session start/end, prune, registry enable/users/delete/GC, Registry Credential create/rotate/delete (name and host only), cron entry changes with command text, authorized key add/remove (fingerprint, label), backups (create/delete/download/restore), FRP config diffs (secrets masked) and restarts, Cloudflare client/tunnel/Hostname/DNS changes, Traefik writes, login/logout/failed login/lockout, account and API Token lifecycle, settings changes, secret reveals, `denied` authorization failures.
+- Never recorded: secret values (tokens, passwords, keys, `.env` contents), request bodies, terminal content, backup contents. Metadata passes through a typed redaction layer: fields are allow-listed per action, not free-form maps (the legacy free-form metadata is not carried over).
+- **Fail-closed set**: for actions in the sensitive list (secret reveals, exec session start, authorized key changes, cron entry changes, token creation, backup download/restore, registry user changes, Hostname exposure) the operation is refused if the audit insert fails. All other actions log the failure via `tracing::error!` and continue (legacy "never throws" behavior, applied selectively).
+
+### 10.4 Reading
+- UI/REST/MCP: keyset-paginated list (`?limit≤500&before=<id>`), filters `project_id`, `actor`, `action` prefix, `outcome`, time range. Owner sees all; Members see only entries whose `project_id` is in their granted Projects (and never system-level entries). `GET /api/v1/audit` needs `read` scope plus the same filtering; export (`.csv`, `.jsonl`) needs `admin`.
+- Retention: default keep forever; optional `audit.retention_days` applied by the prune routine run daily (ASSUMPTION, default off).
+
+### 10.5 Failure modes
+| Failure | Surfaces as |
+|---|---|
+| Insert fails for a fail-closed action | Operation refused with "audit log unavailable" |
+| Insert fails otherwise | Operation proceeds; `/health` shows `audit: degraded`; journal error |
+| Chain verification fails | `yanto audit verify` exit 1 with first bad id; banner on the Audit page |
+| Disk full | Same as insert failure; health warns at <10% free (see §7.4) |
+
+### 10.6 Security notes
+- **Logging & monitoring / non-repudiation**: authenticated actor on every entry; request id correlates with journal logs.
+- **Data protection**: IP addresses are personal data under UU PDP; keep, but allow `audit.store_ip=false`; exports are `admin` only and audited.
+- **Integrity**: triggers + hash chain + journald mirror (defense in depth against SQLite edit by a root attacker is limited — root can drop triggers; the journald mirror and chain make that detectable, not impossible).
+
+### 10.7 Acceptance criteria
+- [ ] Every mutating action listed in 10.3 produces exactly one entry via each of UI, REST, and MCP, with the right `source` and actor.
+- [ ] `UPDATE`/`DELETE` on `audit_log` fail at the SQLite level; `audit prune` works and is itself audited.
+- [ ] `yanto audit verify` passes on an untouched log and reports the first altered row after a manual edit.
+- [ ] No secret/PII fixtures (tokens, passwords, key bodies, env values) appear in any entry (tested with canary values).
+- [ ] A Member sees only entries for their Projects; Owner sees all; export requires `admin`.
+- [ ] Deleting a Project keeps its audit entries.
+- [ ] With the audit DB made read-only, a secret reveal is refused while a container list still works.
+
+---
+
+## Open questions and risks (consolidated)
+1. Master key location and backup of the secrets envelope (affects §7 restore on a new Host).
+2. `registry:2` tag semantics and in-container config path (§4.2); Cloudflare request-body limit (§4.5, unverified).
+3. `cron-run` as root dropping privileges: more code on a root path (§5.3); alternative is a daemon socket.
+4. Docker CLI plugin discovery under a temp `DOCKER_CONFIG` (§4.7); bollard exec resize API name per pinned version (§2.2).
+5. Compose `config --format json` output stability for port derivation (§1.1).
+6. frps `/api/serverinfo` path and `frps verify` existence (§8).
+7. Lingering exec processes after terminal close (§2.2).
+8. Rollback does not version compose/env edits (§1.1).
