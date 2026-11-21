@@ -190,4 +190,60 @@ mod tests {
             .await;
         assert!(write.is_err());
     }
+
+    async fn exec(db: &Db, sql: &'static str) -> Result<(), sqlx::Error> {
+        sqlx::query(sql).execute(db.writer()).await.map(|_| ())
+    }
+
+    const OWNER: &str = "INSERT INTO users (id, username, role, status, password_hash, created_at, updated_at) VALUES ('usr_o', 'owner', 'owner', 'active', 'h', 0, 0)";
+
+    #[tokio::test]
+    async fn identity_schema_enforces_single_immutable_owner() {
+        let (_dir, db) = temp_db().await;
+        exec(&db, OWNER).await.unwrap();
+        // A second Owner, a duplicate username (NOCASE), and an active user without a password all fail.
+        assert!(exec(&db, "INSERT INTO users (id, username, role, status, password_hash, created_at, updated_at) VALUES ('usr_2', 'o2', 'owner', 'active', 'h', 0, 0)").await.is_err());
+        assert!(exec(&db, "INSERT INTO users (id, username, role, status, created_at, updated_at) VALUES ('usr_3', 'OWNER', 'member', 'invited', 0, 0)").await.is_err());
+        assert!(exec(&db, "INSERT INTO users (id, username, role, status, created_at, updated_at) VALUES ('usr_4', 'm', 'member', 'active', 0, 0)").await.is_err());
+        // The Owner cannot be deleted, disabled, or demoted.
+        assert!(
+            exec(&db, "DELETE FROM users WHERE id = 'usr_o'")
+                .await
+                .is_err()
+        );
+        assert!(
+            exec(
+                &db,
+                "UPDATE users SET status = 'disabled' WHERE id = 'usr_o'"
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            exec(&db, "UPDATE users SET role = 'member' WHERE id = 'usr_o'")
+                .await
+                .is_err()
+        );
+        // The Owner has no access rows.
+        assert!(exec(&db, "INSERT INTO user_project_access (user_id, project_id, created_at, updated_at) VALUES ('usr_o', 'prj_1', 0, 0)").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn access_permissions_are_checked_and_cascade() {
+        let (_dir, db) = temp_db().await;
+        exec(&db, OWNER).await.unwrap();
+        exec(&db, "INSERT INTO users (id, username, role, status, created_at, updated_at) VALUES ('usr_m', 'm', 'member', 'invited', 0, 0)").await.unwrap();
+        exec(&db, "INSERT INTO user_project_access (user_id, project_id, created_at, updated_at) VALUES ('usr_m', 'prj_1', 0, 0)").await.unwrap();
+        exec(&db, "INSERT INTO user_project_permissions (user_id, project_id, permission) VALUES ('usr_m', 'prj_1', 'deploy')").await.unwrap();
+        assert!(exec(&db, "INSERT INTO user_project_permissions (user_id, project_id, permission) VALUES ('usr_m', 'prj_1', 'tasks')").await.is_err());
+        assert!(exec(&db, "INSERT INTO user_project_permissions (user_id, project_id, permission) VALUES ('usr_m', 'prj_2', 'deploy')").await.is_err(), "permission needs an access row");
+        exec(&db, "DELETE FROM users WHERE id = 'usr_m'")
+            .await
+            .unwrap();
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_project_permissions")
+            .fetch_one(db.reader())
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
+    }
 }
