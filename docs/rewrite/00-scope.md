@@ -71,8 +71,8 @@ Legend: **Port** = keep the behavior, **Change** = keep it reshaped, **New** = n
 
 - [ ] Hosted Registry (`registry:2`): enable/disable, htpasswd users, repo/tag browse, tag delete, GC
 - [ ] Registry Credentials for pulling private external images
-- [ ] Cron Entries (`/etc/cron.d/yanto`)
-- [ ] Authorized Keys
+- [x] Cron Entries (`/etc/cron.d/yanto`)
+- [x] Authorized Keys
 - [ ] Traefik Ingress Provider
 - [ ] `/api/v1` REST API with API Tokens
 - [ ] `yanto install` interactive wizard and `yanto self-update`
