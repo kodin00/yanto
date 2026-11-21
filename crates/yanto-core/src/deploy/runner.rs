@@ -98,14 +98,17 @@ pub async fn execute(eng: Arc<Engine>, dep: DeploymentRow, cancel: CancellationT
     let id = dep.id.clone();
     let project = match load_project(&eng, &dep.project_id).await {
         Ok(Some(p)) => p,
-        _ => {
-            finalize(
-                &eng,
-                &dep,
-                None,
-                Err(StepError::failed("project no longer exists")),
-            )
-            .await;
+        other => {
+            let why = match other {
+                Err(e) => {
+                    tracing::error!(error = %e, deployment = %id, "cannot load the project");
+                    "the project could not be loaded"
+                }
+                _ => "project no longer exists",
+            };
+            finalize(&eng, &dep, None, Err(StepError::failed(why))).await;
+            // The worker registered a cancel token for this id; never leave it behind.
+            eng.unregister_cancel(&id);
             return;
         }
     };

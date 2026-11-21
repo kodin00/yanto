@@ -1137,6 +1137,25 @@ async fn log_stream_replays_resumes_without_gaps_and_closes_on_done() {
 }
 
 #[tokio::test]
+async fn a_deployment_whose_project_vanished_releases_its_cancel_token() {
+    let c = ctx().await;
+    let p = c.image_project("Gone").await.project;
+    let id = c.deploy(&p.id).await;
+    let mut row = {
+        let mut conn = c.core.db.reader().acquire().await.unwrap();
+        crate::db::repo::deployments::get(&mut conn, &id)
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    row.project_id = "prj_gone".into();
+    let eng = c.core.services.engine();
+    let token = eng.register_cancel(&id);
+    crate::deploy::runner::execute(eng.clone(), row, token).await;
+    assert!(!eng.cancel(&id), "token unregistered on the early return");
+}
+
+#[tokio::test]
 async fn stored_logs_are_capped_with_a_truncation_marker() {
     let core = TestCore::with_config(|c| c.deploy.log_max_bytes = 600).await;
     let u = core.setup_owner().await;
