@@ -146,7 +146,7 @@ Outermost → innermost:
 - Expiry: `OnInactivity` (default 7 days — ASSUMPTION) with absolute cap (30 days — ASSUMPTION), enforced in `load`. Note from docs: reads are not activity; only modification extends expiry, so the middleware must `save` periodically (touch `last_seen`).
 - Cookie: `HttpOnly`, `SameSite=Lax`, `Secure` when `server.public_url` is `https://` (legacy `cookieSecure` behavior), cookie name `yanto_session`. Session id rotated on login (fixation) and on privilege change.
 - Passwords: **argon2id** (crate **unverified**), per-user salt; legacy scrypt/bcrypt shapes are not carried over (ADR 0004). Login rate limiting: in-memory per-IP+username limiter with backoff (ASSUMPTION; no crate chosen). Constant-time compare via `subtle` (**unverified**).
-- First Owner: `POST /setup` is enabled only while no Owner exists and requires the one-time **setup code** (hash stored in `settings`, consumed atomically with Owner creation, written by `yanto install`; also regenerable via `yanto owner-reset --new-setup-code` — ASSUMPTION on flag name; see doc 05).
+- First Owner: `POST /setup` is enabled only while no Owner exists and requires the one-time **setup code** (hash stored in `settings`, consumed atomically with Owner creation, written by `yanto install`; re-issuable with `yanto setup-code` while no Owner exists; see doc 05).
 
 ### 5.3 CSRF (dashboard only)
 
@@ -279,7 +279,8 @@ pub struct HostnameBinding { pub hostname: Hostname, pub target_port: u16 /* 127
 `/etc/yanto/config.toml`, `root:root 0600`, written by `yanto install` (doc 05), read at startup via `serde` + `toml` (**unverified**). Override path with `--config` / `YANTO_CONFIG`. Env overrides: `YANTO_<SECTION>__<KEY>` only for a documented few (bind, port, log level) — ASSUMPTION. Config is **static bootstrap**; operator-editable runtime settings (Cloudflare accounts, SSH user, app URL, command timeouts) live in the DB `settings` table and the dashboard, as in legacy.
 
 ```toml
-# illustrative — no secrets here except none; secrets live in the data dir/DB
+# illustrative — no secrets in this file; they live in the data dir and DB
+config_version = 1
 [server]
 bind = "127.0.0.1"
 port = 9197
