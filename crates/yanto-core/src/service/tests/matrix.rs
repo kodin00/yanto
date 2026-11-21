@@ -273,6 +273,7 @@ const GRID: &[(&str, &str)] = &[
         "Y   N    N   N   Y   N   N   N   Y",
     ),
     ("hostnames_list", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    ("hostnames_options", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
     (
         "hostnames_diagnostics",
         "Y   Y    Y   Y   Y   Y   Y   Y   Y",

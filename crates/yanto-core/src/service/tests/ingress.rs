@@ -367,10 +367,19 @@ async fn hostname_validation_and_targets() {
         kind(s.create(&cli, &cf_input(&f, &port, "a.other.org")).await),
         ErrorKind::Validation(_)
     ));
-    let mut no_tunnel = cf_input(&f, &port, "a.example.com");
-    no_tunnel.tunnel_id = None;
+    // Without a tunnel and without an active one there is nowhere to publish.
+    let bare = TestCore::new().await;
+    let bp = bare.ensure_port("prj_1", 18080).await;
     assert!(matches!(
-        kind(s.create(&cli, &no_tunnel).await),
+        kind(
+            bare.services
+                .hostnames
+                .create(
+                    &cli,
+                    &input("prj_1", &bp, "a.example.com", "cloudflare_tunnel")
+                )
+                .await
+        ),
         ErrorKind::Validation(_)
     ));
     // Nothing reached the provider for any rejected input.
@@ -391,6 +400,32 @@ async fn hostname_validation_and_targets() {
         .create(&cli, &input("prj_1", &port, "a.example.com", "traefik"))
         .await;
     assert_eq!(kind(dup), ErrorKind::Conflict);
+}
+
+#[tokio::test]
+async fn options_and_the_default_tunnel() {
+    let core = TestCore::new().await;
+    let f = core.setup_cloudflare().await;
+    let port = core.ensure_port("prj_1", 18080).await;
+    let cli = Actor::cli();
+    let o = core.services.hostnames.options(&cli).await.unwrap();
+    assert_eq!(o.tunnel.as_ref().unwrap().id, f.tunnel_id);
+    assert_eq!(o.zones.len(), 1);
+    assert!(!o.traefik_ready && !o.public_ip_set);
+    // A Member (not even with the permission) can read the options; no tunnel id is needed.
+    let m = core
+        .create_member("mia", &[("prj_1", &[Permission::Hostnames])])
+        .await;
+    let ma = core.session_actor(&m).await;
+    assert!(core.services.hostnames.options(&ma).await.is_ok());
+    let mut i = input("prj_1", &port, "m.example.com", "cloudflare_tunnel");
+    i.zone_id = Some(f.zone_id.clone());
+    let out = core.services.hostnames.create(&ma, &i).await.unwrap();
+    assert_eq!(
+        out.hostname.tunnel_id.as_deref(),
+        Some(f.tunnel_id.as_str())
+    );
+    assert_eq!(out.hostname.sync_status, "active");
 }
 
 #[tokio::test]

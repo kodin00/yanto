@@ -152,6 +152,7 @@ pub(crate) async fn invoke(core: &TestCore, op: &str, a: &Actor) -> Option<Resul
             .await
             .map(|_| ()),
         "hostnames_list" => s.hostnames.list(a, None).await.map(|_| ()),
+        "hostnames_options" => s.hostnames.options(a).await.map(|_| ()),
         "hostnames_diagnostics" => s.hostnames.diagnostics(a, None, false).await.map(|_| ()),
         "hostname_create" => {
             core.enable_traefik();

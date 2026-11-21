@@ -60,6 +60,10 @@ pub const OP_HOSTNAMES_DIAGNOSTICS: OpSpec =
 pub const OP_HOSTNAMES_RESYNC: OpSpec =
     OpSpec::new("hostnames_resync", Access::Owner, Scope::Write);
 pub const OP_TRAEFIK_STATUS: OpSpec = OpSpec::new("traefik_status", Access::Owner, Scope::Read);
+/// What a Member may choose when creating a Hostname (the Owner configured it): readiness of each
+/// provider, the active tunnel, and the zones of its client.
+pub const OP_HOSTNAMES_OPTIONS: OpSpec =
+    OpSpec::new("hostnames_options", Access::Authenticated, Scope::Read);
 pub const OP_HOSTNAMES_PUBLIC_IP_SET: OpSpec =
     OpSpec::new("hostnames_public_ip_set", Access::Owner, Scope::Admin);
 
@@ -75,6 +79,7 @@ pub const OPERATIONS: &[&OpSpec] = &[
     &OP_HOSTNAMES_RESYNC,
     &OP_TRAEFIK_STATUS,
     &OP_HOSTNAMES_PUBLIC_IP_SET,
+    &OP_HOSTNAMES_OPTIONS,
 ];
 
 const TRAEFIK_HASH_KEY: &str = "traefik.file_sha256";
@@ -244,6 +249,22 @@ pub struct TraefikStatus {
     pub prerequisites: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct HostnameOptions {
+    pub traefik_ready: bool,
+    pub traefik_reason: Option<String>,
+    /// The tunnel bound to the Host `cloudflared`; used when a Hostname names no tunnel.
+    pub tunnel: Option<ActiveTunnel>,
+    pub zones: Vec<super::cloudflare::ZoneDto>,
+    pub public_ip_set: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ActiveTunnel {
+    pub id: String,
+    pub name: String,
+}
+
 #[derive(Clone)]
 pub struct HostnameService {
     ctx: Ctx,
@@ -352,6 +373,33 @@ impl HostnameService {
             .collect())
     }
 
+    /// Provider readiness, the active tunnel and its zones (from the cache; no API calls).
+    pub async fn options(&self, actor: &Actor) -> Result<HostnameOptions, CoreError> {
+        actor.authorize(&OP_HOSTNAMES_OPTIONS, None)?;
+        let t = self.traefik_status_inner().await?;
+        let mut conn = self.reader().await?;
+        let tunnel = repo::tunnel_active(&mut conn).await?;
+        let zones = match &tunnel {
+            Some(t) => repo::zones_for_client(&mut conn, &t.client_id)
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            None => Vec::new(),
+        };
+        let (v4, v6) = CloudflareService::public_ips(&mut conn).await?;
+        Ok(HostnameOptions {
+            traefik_ready: t.ready,
+            traefik_reason: t.not_ready_reason,
+            tunnel: tunnel.map(|t| ActiveTunnel {
+                id: t.id,
+                name: t.name,
+            }),
+            zones,
+            public_ip_set: v4.is_some() || v6.is_some(),
+        })
+    }
+
     // ---- create --------------------------------------------------------------------------
 
     pub async fn create(
@@ -420,17 +468,20 @@ impl HostnameService {
         let mut zone_id = input.zone_id.clone().filter(|z| !z.is_empty());
         match provider {
             Provider::CloudflareTunnel => {
-                let t = input
-                    .tunnel_id
-                    .clone()
-                    .filter(|t| !t.is_empty())
-                    .ok_or_else(|| {
-                        CoreError::validation(
-                            "tunnel_id",
-                            "choose a tunnel for a Cloudflare Hostname",
-                        )
-                    })?;
                 let mut conn = self.reader().await?;
+                let t = match input.tunnel_id.clone().filter(|t| !t.is_empty()) {
+                    Some(t) => t,
+                    // No tunnel named: use the one bound to the Host cloudflared.
+                    None => repo::tunnel_active(&mut conn)
+                        .await?
+                        .map(|t| t.id)
+                        .ok_or_else(|| {
+                            CoreError::validation(
+                                "tunnel_id",
+                                "no active Cloudflare tunnel; the Owner must create one first",
+                            )
+                        })?,
+                };
                 let tunnel = repo::tunnel_get(&mut conn, &t)
                     .await?
                     .ok_or_else(|| CoreError::validation("tunnel_id", "tunnel not found"))?;
