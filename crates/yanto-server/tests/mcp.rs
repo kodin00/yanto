@@ -693,3 +693,147 @@ async fn mutations_are_audited_on_the_mcp_channel() {
     assert_eq!(e.channel, "mcp");
     assert_eq!(e.actor_type, "api_token");
 }
+
+#[tokio::test]
+async fn ingress_and_host_tools_follow_scope_confirm_and_ownership() {
+    let app = TestApp::new().await;
+    let owner = app.owner_user().await;
+    let read = app.bearer(&owner, Scope::Read).await;
+    let write = app.bearer(&owner, Scope::Write).await;
+    let admin = app.bearer(&owner, Scope::Admin).await;
+
+    // Read tools are open to a read token; every mutating one is not.
+    for tool in [
+        "yanto_hostnames_list",
+        "yanto_cloudflare_clients_list",
+        "yanto_frps_overview",
+        "yanto_daemons_status",
+        "yanto_traefik_status",
+        "yanto_system_logs",
+    ] {
+        let r = call(&app, &read, tool, json!({})).await;
+        assert_eq!(error_code(&r), None, "{tool}: {r}");
+    }
+    for (tool, args) in [
+        ("yanto_hostname_retry", json!({"id": "x"})),
+        (
+            "yanto_cloudflare_dns_create",
+            json!({"client_id":"x","zone_id":"z","record_type":"A","name":"a.example.com","content":"192.0.2.1"}),
+        ),
+        ("yanto_frps_settings_update", json!({"bind_port": 7000})),
+        (
+            "yanto_project_databases_set",
+            json!({"id":"prj_x","databases":[]}),
+        ),
+    ] {
+        let r = call(&app, &read, tool, args).await;
+        assert_eq!(error_code(&r), Some("forbidden"), "{tool}");
+    }
+
+    // Admin-scope tools: a write token is refused even with confirm, an admin token needs confirm.
+    for (tool, args) in [
+        ("yanto_hostname_delete", json!({"id": "x"})),
+        ("yanto_cloudflare_client_delete", json!({"id": "x"})),
+        ("yanto_cloudflare_tunnel_delete", json!({"id": "x"})),
+        (
+            "yanto_cloudflare_dns_delete",
+            json!({"client_id":"x","zone_id":"z","record_id":"r"}),
+        ),
+        ("yanto_backup_restore", json!({"id": "x"})),
+    ] {
+        let mut confirmed = args.clone();
+        confirmed["confirm"] = json!(true);
+        let r = call(&app, &write, tool, confirmed.clone()).await;
+        assert_eq!(
+            error_code(&r),
+            Some("forbidden"),
+            "{tool} with a write token"
+        );
+        let r = call(&app, &admin, tool, args).await;
+        assert_eq!(error_code(&r), Some("confirmation_required"), "{tool}");
+        let r = call(&app, &admin, tool, confirmed).await;
+        assert_eq!(
+            error_code(&r),
+            Some("not_found"),
+            "{tool} reaches the service"
+        );
+    }
+
+    // frps settings restart the daemon to take effect: write scope, but confirm is mandatory.
+    let r = call(
+        &app,
+        &write,
+        "yanto_frps_settings_update",
+        json!({"bind_port": 7000}),
+    )
+    .await;
+    assert_eq!(error_code(&r), Some("confirmation_required"));
+
+    // Host Daemon control is not offered at all.
+    assert!(
+        ToolSet::standard()
+            .iter()
+            .all(|t| t.name != "yanto_daemon_control" && t.op != "daemon_control")
+    );
+
+    // A Member with a Hostnames grant reaches only the Hostname tools of that Project.
+    let r = call(
+        &app,
+        &admin,
+        "yanto_project_create",
+        json!({"name":"Alpha","image_ref":"nginx:alpine"}),
+    )
+    .await;
+    let a = r["structuredContent"]["project"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let r = call(
+        &app,
+        &admin,
+        "yanto_project_create",
+        json!({"name":"Bravo","image_ref":"nginx:alpine"}),
+    )
+    .await;
+    let b = r["structuredContent"]["project"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let grants = [(a.as_str(), &[Permission::Hostnames][..])];
+    let alice = app.core.create_member("alice", &grants).await;
+    let token = app.bearer(&alice, Scope::Admin).await;
+    let r = call(
+        &app,
+        &token,
+        "yanto_hostnames_list",
+        json!({"project_id": a}),
+    )
+    .await;
+    assert_eq!(error_code(&r), None, "{r}");
+    let r = call(
+        &app,
+        &token,
+        "yanto_hostnames_list",
+        json!({"project_id": b}),
+    )
+    .await;
+    assert_eq!(error_code(&r), Some("not_found"));
+    let create = |p: &str| json!({"project_id": p, "project_port_id": "ppt_x", "hostname": "app.example.com", "ingress_provider": "traefik"});
+    let r = call(&app, &token, "yanto_hostname_create", create(&b)).await;
+    assert_eq!(error_code(&r), Some("not_found"));
+    for (tool, args) in [
+        ("yanto_cloudflare_clients_list", json!({})),
+        ("yanto_frps_overview", json!({})),
+        ("yanto_daemons_status", json!({})),
+        ("yanto_traefik_status", json!({})),
+        ("yanto_system_logs", json!({})),
+        (
+            "yanto_project_databases_set",
+            json!({"id": a, "databases": [], "confirm": true}),
+        ),
+        ("yanto_backup_restore", json!({"id": "x", "confirm": true})),
+    ] {
+        let r = call(&app, &token, tool, args).await;
+        assert_eq!(error_code(&r), Some("forbidden"), "{tool} for a Member");
+    }
+}
