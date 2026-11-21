@@ -256,6 +256,13 @@ impl ContainerService {
         }
     }
 
+    /// Use a different container-to-Project mapping (M2 wires its `projects.slug` lookup here
+    /// or in `Services::new`; tests use it to model Projects).
+    pub fn with_projects(mut self, projects: Arc<dyn ContainerProjects>) -> Self {
+        self.projects = projects;
+        self
+    }
+
     /// Override the post-hangup lingering check delay (tests).
     pub fn with_linger_check(mut self, d: Duration) -> Self {
         self.linger_check = d;
