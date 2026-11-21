@@ -35,5 +35,5 @@ Operations (all Owner-only): `registry_status|users_list|repos_list|tags_list|ta
 - Cloudflare request-body limits for layer uploads (OQ-5): the page says "not verified" and gives no number.
 - Behavior under a real remote client over HTTPS (no Traefik/Cloudflare was involved); a large-image push was not tested.
 - Pushes are rejected while GC runs in read-only mode: the config is rendered with `storage.maintenance.readonly.enabled`, but the smoke test does not race a push against it.
-- `registry:2` as shipped on 2026-11 (Distribution 2.x per the pulled image in the smoke run on OrbStack); other daemons and a later major were not exercised.
+- Which Distribution version `registry:2` resolves to: the smoke run (OrbStack, Docker 29.4) worked with `registry serve <config>` and `registry garbage-collect <config>`, but the version was not recorded and other daemons were not exercised.
 - htpasswd `$2y$` hashes from the `bcrypt` crate are accepted by the registry (verified in the smoke test: login succeeds, wrong password and a removed user are refused).
