@@ -346,6 +346,10 @@ impl ProjectService {
         Self { ctx, eng }
     }
 
+    pub(super) fn ctx(&self) -> &Ctx {
+        &self.ctx
+    }
+
     async fn dto(
         &self,
         conn: &mut sqlx::SqliteConnection,

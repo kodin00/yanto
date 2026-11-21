@@ -17,6 +17,7 @@ pub mod containers;
 pub mod cron;
 pub mod deploy_keys;
 pub mod deployments;
+pub mod project_databases;
 pub mod projects;
 pub mod registry_credentials;
 pub mod system;
@@ -221,6 +222,7 @@ pub fn all_operations() -> Vec<&'static OpSpec> {
     v.extend(authorized_keys::OPERATIONS);
     v.extend(backups::OPERATIONS);
     v.extend(projects::OPERATIONS);
+    v.extend(project_databases::OPERATIONS);
     v.extend(deployments::OPERATIONS);
     v.extend(deploy_keys::OPERATIONS);
     v.extend(registry_credentials::OPERATIONS);

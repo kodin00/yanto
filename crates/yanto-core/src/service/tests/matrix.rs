@@ -116,6 +116,7 @@ const GRID: &[(&str, &str)] = &[
     ),
     ("backup_delete", "Y   N    N   N   Y   N   N   N   Y"),
     ("backup_delete_yanto", "Y   N    N   N   Y   N   N   N   Y"),
+    ("backup_restore", "Y   N    N   N   Y   N   N   N   Y"),
     ("backup_prune", "Y   N    N   N   N   N   N   N   Y"),
     // M2. Member = alice with only `deploy` on prj_1. Project-scoped rows use prj_1 for the
     // spec check; the per-permission cells (404 without access, 403 with the wrong permission)
@@ -139,6 +140,8 @@ const GRID: &[(&str, &str)] = &[
     ),
     ("project_ports_list", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
     ("project_ports_set", "Y   N    N   Y   Y   N   N   N   Y"),
+    ("project_databases_list", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    ("project_databases_set", "Y   N    N   Y   Y   N   N   N   Y"),
     (
         "project_deploy_token_reveal",
         "Y   N    N   N   Y   N   N   N   Y",
@@ -464,6 +467,11 @@ async fn invoke(f: &Fixture, op: &str, a: &Actor) -> Result<(), CoreError> {
         "backup_download_yanto" => s.backups.download(a, &f.yanto_backup).await.map(|_| ()),
         "backup_delete" => s.backups.delete(a, &f.project_backup).await,
         "backup_delete_yanto" => s.backups.delete(a, &f.yanto_backup).await,
+        "backup_restore" => s
+            .backups
+            .restore(a, "bak_missing", Default::default())
+            .await
+            .map(|_| ()),
         "backup_prune" => s.backups.prune(a, Retention::default()).await.map(|_| ()),
         other if invoke_m2(f, other, a).await.is_some() => {
             invoke_m2(f, other, a).await.expect("checked")
@@ -643,6 +651,8 @@ async fn invoke_m2(f: &Fixture, op: &str, a: &Actor) -> Option<Result<(), CoreEr
             .map(|_| ()),
         "project_ports_list" => s.projects.ports_list(a, p).await.map(|_| ()),
         "project_ports_set" => s.projects.ports_set(a, p, &[]).await.map(|_| ()),
+        "project_databases_list" => s.projects.databases_list(a, p).await.map(|_| ()),
+        "project_databases_set" => s.projects.databases_set(a, p, &[]).await.map(|_| ()),
         "project_deploy_token_reveal" => s.projects.deploy_token_reveal(a, p).await.map(|_| ()),
         "project_deploy_token_rotate" => s.projects.deploy_token_rotate(a, p).await.map(|_| ()),
         "project_stop" => s.projects.stop(a, p).await.map(|_| ()),

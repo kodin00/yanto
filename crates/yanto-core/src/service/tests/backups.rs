@@ -7,7 +7,9 @@ use crate::ErrorKind;
 use crate::actor::{Actor, Permission};
 use crate::backup::{self, BackupKind, Trigger, Verify};
 use crate::db::repo::backups::{self as repo, NewBackup};
-use crate::service::backups::{BUSY_MESSAGE, Retention};
+use crate::ports::RestoreMode;
+use crate::service::backups::{BUSY_MESSAGE, RestoreOptions, Retention};
+use crate::service::project_databases::DatabaseInput;
 use crate::testing::TestCore;
 
 fn with_key(core: &TestCore) -> [u8; 32] {
@@ -513,20 +515,76 @@ async fn interrupted_backups_are_recovered_on_startup() {
     );
 }
 
+/// A Project row with a chosen slug.
+async fn project(core: &TestCore, id: &str, slug: &str) {
+    core.ensure_project(id).await;
+    sqlx::query("UPDATE projects SET slug = ?, name = ? WHERE id = ?")
+        .bind(slug)
+        .bind(format!("Project {slug}"))
+        .bind(id)
+        .execute(core.db.writer())
+        .await
+        .unwrap();
+}
+
+fn pg(service: &str) -> DatabaseInput {
+    DatabaseInput {
+        engine: "postgres".into(),
+        compose_service: service.into(),
+        ..Default::default()
+    }
+}
+
 #[tokio::test]
-async fn generic_project_framework_with_a_fake_port() {
+async fn project_database_backup_uses_the_declaration_and_the_framework() {
     let core = TestCore::new().await;
     let a = Actor::cli();
     let s = &core.services.backups;
-    let b = s
-        .run_project_for_test(&a, "prj_1", "blog", BackupKind::ProjectPostgres, Some("db"))
+    project(&core, "prj_1", "blog").await;
+    // Undeclared service: refused before any work.
+    let e = s
+        .create_project(&a, "prj_1", BackupKind::ProjectPostgres, Some("db"), false)
+        .await;
+    assert!(matches!(kind(e), ErrorKind::Validation(_)));
+    core.services
+        .projects
+        .databases_set(
+            &a,
+            "prj_1",
+            &[DatabaseInput {
+                database: Some("app".into()),
+                user_env: Some("DB_USER".into()),
+                ..pg("db")
+            }],
+        )
         .await
         .unwrap();
+    // The declared engine must match the requested kind.
+    assert!(matches!(
+        kind(
+            s.create_project(&a, "prj_1", BackupKind::ProjectMysql, Some("db"), false)
+                .await
+        ),
+        ErrorKind::Validation(_)
+    ));
+    let b = s
+        .create_project(&a, "prj_1", BackupKind::ProjectPostgres, Some("db"), false)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
     assert!(b.filename.ends_with("-postgres.sql.zst") && !b.sensitive);
+    assert_eq!(b.project_id.as_deref(), Some("prj_1"));
+    assert!(b.database_id.is_some());
     let req = core.host.project_backups.calls().pop().unwrap();
     assert_eq!(
         (req.project_slug.as_str(), req.target.as_deref()),
         ("blog", Some("db"))
+    );
+    let d = req.db.unwrap();
+    assert_eq!(
+        (d.database.as_deref(), d.user_env.as_deref()),
+        (Some("app"), Some("DB_USER"))
     );
     let path = core
         .dir
@@ -544,7 +602,7 @@ async fn generic_project_framework_with_a_fake_port() {
         ));
     core.clock.advance(Duration::from_secs(1));
     let e = s
-        .run_project_for_test(&a, "prj_1", "blog", BackupKind::ProjectPostgres, Some("db"))
+        .create_project(&a, "prj_1", BackupKind::ProjectPostgres, Some("db"), false)
         .await;
     assert_eq!(kind(e), ErrorKind::Unavailable);
     let list = s.list(&a).await.unwrap();
@@ -559,38 +617,66 @@ async fn generic_project_framework_with_a_fake_port() {
         2,
         "one archive and its sidecar only: {files:?}"
     );
+    // Deleting the declaration keeps the backup row (database_id is set to NULL).
+    core.services
+        .projects
+        .databases_set(&a, "prj_1", &[])
+        .await
+        .unwrap();
+    let list = s.list(&a).await.unwrap();
+    assert!(
+        list.iter()
+            .any(|x| x.id == b.id && x.database_id.is_none())
+    );
+}
+
+#[tokio::test]
+async fn project_volume_backups_make_one_archive_per_volume() {
+    let core = TestCore::new().await;
+    let a = Actor::cli();
+    let s = &core.services.backups;
+    project(&core, "prj_1", "blog").await;
+    let e = s
+        .create_project(&a, "prj_1", BackupKind::ProjectVolumes, None, false)
+        .await;
+    assert!(
+        matches!(kind(e), ErrorKind::Validation(_)),
+        "no volumes is a clear error"
+    );
+    core.host.project_backups.set_volumes(&["blog_data", "blog_uploads"]);
+    let both = s
+        .create_project(&a, "prj_1", BackupKind::ProjectVolumes, None, true)
+        .await
+        .unwrap();
+    assert_eq!(both.len(), 2);
+    let calls = core.host.project_backups.calls();
+    assert_eq!(
+        calls
+            .iter()
+            .map(|c| (c.target.clone().unwrap(), c.stop_project))
+            .collect::<Vec<_>>(),
+        vec![("blog_data".into(), true), ("blog_uploads".into(), true)]
+    );
     // Slugs and targets that could escape the directory are refused.
-    for (slug, target) in [("../x", None), ("ok", Some("a/b"))] {
+    for target in ["a/b", "..", ".hidden"] {
         assert!(matches!(
             kind(
-                s.run_project_for_test(&a, "prj_1", slug, BackupKind::ProjectVolumes, target)
+                s.create_project(&a, "prj_1", BackupKind::ProjectVolumes, Some(target), false)
                     .await
             ),
             ErrorKind::Validation(_)
         ));
     }
-}
-
-#[tokio::test]
-async fn project_backups_are_unavailable_until_m2_merges() {
-    let core = TestCore::new().await;
-    let r = core
-        .services
-        .backups
-        .create_project(
-            &Actor::cli(),
-            "prj_1",
-            BackupKind::ProjectVolumes,
-            None,
-            false,
-        )
-        .await;
-    assert_eq!(kind(r), ErrorKind::Unavailable);
+    assert_eq!(
+        kind(
+            s.create_project(&a, "prj_404", BackupKind::ProjectVolumes, Some("v"), false)
+                .await
+        ),
+        ErrorKind::NotFound
+    );
     assert!(matches!(
         kind(
-            core.services
-                .backups
-                .create_project(&Actor::cli(), "prj_1", BackupKind::YantoSqlite, None, false)
+            s.create_project(&a, "prj_1", BackupKind::YantoSqlite, None, false)
                 .await
         ),
         ErrorKind::Validation(_)
@@ -598,13 +684,232 @@ async fn project_backups_are_unavailable_until_m2_merges() {
 }
 
 #[tokio::test]
-#[ignore = "TODO(M2-merge): needs Projects and project_databases to exist"]
-async fn project_volume_and_database_backups_end_to_end() {
-    // After M2 merges: create a Project with a Postgres service, then expect
-    // `create_project(owner, id, ProjectPostgres, Some("db"), false)` to produce a `.sql.zst`
-    // via the real ProjectBackupPort, `project_slug` to resolve the slug, retention per
-    // (project, kind, target) series, and `backups` permission Members to list/download it.
-    todo!("implement once M2 is merged");
+async fn targets_list_volumes_and_databases_per_visible_project() {
+    let core = TestCore::new().await;
+    let owner = core.setup_owner().await;
+    let o = core.session_actor(&owner).await;
+    project(&core, "prj_1", "blog").await;
+    project(&core, "prj_2", "shop").await;
+    core.host.project_backups.set_volumes(&["blog_data"]);
+    core.services
+        .projects
+        .databases_set(&o, "prj_1", &[pg("db")])
+        .await
+        .unwrap();
+    let m = core
+        .create_member("mia", &[("prj_1", &[Permission::Backups]), ("prj_2", &[])])
+        .await;
+    let ma = core.session_actor(&m).await;
+    let all = core.services.backups.targets(&o).await.unwrap();
+    assert!(all.iter().any(|t| t.kind == BackupKind::YantoSqlite));
+    assert!(
+        all.iter()
+            .any(|t| t.target.as_deref() == Some("db") && t.kind == BackupKind::ProjectPostgres)
+    );
+    let mine = core.services.backups.targets(&ma).await.unwrap();
+    assert!(mine.iter().all(|t| t.project_id.as_deref() == Some("prj_1")));
+    assert_eq!(mine.len(), 2, "one volume and one database: {mine:?}");
+}
+
+#[tokio::test]
+async fn project_series_are_pruned_per_target_and_pre_restore_keeps_three() {
+    let core = TestCore::new().await;
+    let a = Actor::cli();
+    let s = &core.services.backups;
+    project(&core, "prj_1", "blog").await;
+    core.services
+        .projects
+        .databases_set(&a, "prj_1", &[pg("db"), pg("db2")])
+        .await
+        .unwrap();
+    let keep = Some(Retention {
+        keep_last: Some(2),
+        keep_days: None,
+    });
+    for _ in 0..4 {
+        for svc in ["db", "db2"] {
+            core.clock.advance(Duration::from_secs(1));
+            s.create_project_with(
+                &a,
+                "prj_1",
+                BackupKind::ProjectPostgres,
+                Some(svc),
+                false,
+                Trigger::Cron,
+                keep,
+            )
+            .await
+            .unwrap();
+        }
+    }
+    core.clock.advance(Duration::from_secs(1));
+    s.create_project(&a, "prj_1", BackupKind::ProjectPostgres, Some("db"), false)
+        .await
+        .unwrap();
+    let rows = s.list(&a).await.unwrap();
+    let count = |t: &str| rows.iter().filter(|r| r.trigger == t).count();
+    assert_eq!(count("cron"), 4, "two per declared database");
+    assert_eq!(count("manual"), 1, "manual backups are never pruned");
+    // `yanto backup prune` covers Project series too.
+    let n = s
+        .prune(
+            &a,
+            Retention {
+                keep_last: Some(1),
+                keep_days: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(n, 2);
+}
+
+#[tokio::test]
+async fn restore_volume_into_a_new_volume_then_in_place_and_database() {
+    let core = TestCore::new().await;
+    let owner = core.setup_owner().await;
+    let o = core.session_actor(&owner).await;
+    let s = &core.services.backups;
+    project(&core, "prj_1", "blog").await;
+    core.host.project_backups.set_volumes(&["blog_data"]);
+    core.services
+        .projects
+        .databases_set(&o, "prj_1", &[pg("db")])
+        .await
+        .unwrap();
+    let vol = s
+        .create_project(&o, "prj_1", BackupKind::ProjectVolumes, None, false)
+        .await
+        .unwrap()
+        .remove(0);
+    core.clock.advance(Duration::from_secs(1));
+    let dump = s
+        .create_project(&o, "prj_1", BackupKind::ProjectPostgres, Some("db"), false)
+        .await
+        .unwrap()
+        .remove(0);
+
+    // Default: a new volume, no pre-restore backup, no confirmation needed.
+    let out = s
+        .restore(&o, &vol.id, RestoreOptions::default())
+        .await
+        .unwrap();
+    let nv = out.new_volume.unwrap();
+    assert!(nv.starts_with("blog_data-restore-") && out.pre_restore.is_none());
+    let (req, bytes) = core.host.project_backups.restores().pop().unwrap();
+    assert_eq!(req.mode, RestoreMode::NewVolume(nv));
+    assert_eq!(bytes, b"fake-archive");
+
+    // In place and database restores need the Project name and take a pre-restore backup first.
+    for id in [&vol.id, &dump.id] {
+        let e = s
+            .restore(
+                &o,
+                id,
+                RestoreOptions {
+                    in_place: true,
+                    confirm_name: Some("wrong".into()),
+                },
+            )
+            .await;
+        assert!(matches!(kind(e), ErrorKind::Validation(_)));
+    }
+    let before = core.host.project_backups.restores().len();
+    core.clock.advance(Duration::from_secs(1));
+    let ok = s
+        .restore(
+            &o,
+            &vol.id,
+            RestoreOptions {
+                in_place: true,
+                confirm_name: Some("Project blog".into()),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(ok.pre_restore.unwrap().trigger, "pre_restore");
+    core.clock.advance(Duration::from_secs(1));
+    s.restore(
+        &o,
+        &dump.id,
+        RestoreOptions {
+            in_place: false,
+            confirm_name: Some("Project blog".into()),
+        },
+    )
+    .await
+    .unwrap();
+    let restores = core.host.project_backups.restores();
+    assert_eq!(restores.len(), before + 2);
+    assert_eq!(restores[before].0.mode, RestoreMode::InPlace);
+    assert_eq!(restores[before + 1].0.kind, BackupKind::ProjectPostgres);
+    assert_eq!(restores[before + 1].0.db.as_ref().unwrap().compose_service, "db");
+    assert_eq!(audit_count(&core, "backup.restore", "ok").await, 3);
+
+    // A pre-restore failure aborts before anything is restored.
+    core.clock.advance(Duration::from_secs(1));
+    core.host
+        .project_backups
+        .fail_next(crate::error::CoreError::new(ErrorKind::Unavailable, "dump failed"));
+    let n = core.host.project_backups.restores().len();
+    let e = s
+        .restore(
+            &o,
+            &dump.id,
+            RestoreOptions {
+                in_place: true,
+                confirm_name: Some("Project blog".into()),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(e.message.contains("nothing was restored"), "{}", e.message);
+    assert_eq!(core.host.project_backups.restores().len(), n);
+
+    // A modified file is refused by checksum before the port is called.
+    let path = core
+        .dir
+        .path()
+        .join("backups/projects/blog")
+        .join(&dump.filename);
+    std::fs::write(&path, b"tampered").unwrap();
+    core.clock.advance(Duration::from_secs(1));
+    let e = s
+        .restore(&o, &dump.id, RestoreOptions { in_place: true, confirm_name: Some("Project blog".into()) })
+        .await
+        .unwrap_err();
+    assert!(e.message.contains("checksum mismatch"), "{}", e.message);
+    assert_eq!(core.host.project_backups.restores().len(), n);
+
+    // Members cannot restore; the Yanto database is CLI-only.
+    let m = core.create_member("mia", &[("prj_1", &[Permission::Backups])]).await;
+    let ma = core.session_actor(&m).await;
+    assert_eq!(
+        kind(s.restore(&ma, &vol.id, RestoreOptions::default()).await),
+        ErrorKind::Forbidden
+    );
+}
+
+#[tokio::test]
+async fn members_with_backups_manage_only_their_projects_backups() {
+    let core = TestCore::new().await;
+    core.setup_owner().await;
+    project(&core, "prj_1", "blog").await;
+    core.host.project_backups.set_volumes(&["blog_data"]);
+    let m = core
+        .create_member("mia", &[("prj_1", &[Permission::Backups])])
+        .await;
+    let ma = core.session_actor(&m).await;
+    let s = &core.services.backups;
+    let b = s
+        .create_project(&ma, "prj_1", BackupKind::ProjectVolumes, None, false)
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(s.list(&ma).await.unwrap().len(), 1);
+    // Downloading needs an admin-scope session: a session actor has it.
+    s.download(&ma, &b.id).await.unwrap();
+    s.delete(&ma, &b.id).await.unwrap();
 }
 
 #[tokio::test]
