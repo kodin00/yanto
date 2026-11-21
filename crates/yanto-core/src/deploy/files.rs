@@ -92,6 +92,10 @@ pub fn write_atomic(path: &Path, content: &str, mode: u32) -> Result<(), CoreErr
 }
 
 /// A file relative to a Project directory, rejecting escapes.
+///
+/// Besides the lexical checks, the existing part of the path is resolved on disk: a Git
+/// checkout is attacker-controlled content, so `docker-compose.yml -> /etc/shadow` or a
+/// symlinked parent directory must not let Yanto (root) read or write outside `dir`.
 pub fn resolve_in(dir: &Path, relative: &str) -> Result<PathBuf, CoreError> {
     if relative.starts_with('/') || relative.split('/').any(|c| c == "..") {
         return Err(CoreError::validation(
@@ -99,7 +103,38 @@ pub fn resolve_in(dir: &Path, relative: &str) -> Result<PathBuf, CoreError> {
             "path escapes the project directory",
         ));
     }
-    Ok(dir.join(relative))
+    let path = dir.join(relative);
+    ensure_contained(dir, &path)?;
+    Ok(path)
+}
+
+/// Fails when the deepest existing ancestor of `path` (symlinks followed) is outside `dir`, or
+/// when a dangling symlink sits on the way. A `dir` that does not exist yet holds nothing.
+fn ensure_contained(dir: &Path, path: &Path) -> Result<(), CoreError> {
+    let escape = || {
+        CoreError::validation(
+            "path",
+            "path escapes the project directory through a symlink",
+        )
+    };
+    let Ok(root) = std::fs::canonicalize(dir) else {
+        return Ok(());
+    };
+    let mut cur = path.to_path_buf();
+    loop {
+        match std::fs::canonicalize(&cur) {
+            Ok(real) if real.starts_with(&root) => return Ok(()),
+            Ok(_) => return Err(escape()),
+            Err(_) => {
+                if std::fs::symlink_metadata(&cur).is_ok_and(|m| m.file_type().is_symlink()) {
+                    return Err(escape());
+                }
+                if !cur.pop() || !cur.starts_with(dir) {
+                    return Ok(());
+                }
+            }
+        }
+    }
 }
 
 pub fn read_optional(path: &Path) -> Result<Option<String>, CoreError> {
@@ -189,6 +224,31 @@ mod tests {
         assert!(!dir.exists());
         assert!(project_dir(d.path(), "../etc").is_err());
         assert!(resolve_in(&dir, "../x").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_in_rejects_symlink_escapes() {
+        use std::os::unix::fs::symlink;
+        let d = tempfile::tempdir().unwrap();
+        let outside = d.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.yml"), "x").unwrap();
+        let dir = ensure_project_dir(d.path(), "app").unwrap();
+        // A file inside, a not-yet-existing file, and a symlink that stays inside are fine.
+        std::fs::write(dir.join("compose.yml"), "x").unwrap();
+        symlink(dir.join("compose.yml"), dir.join("inner.yml")).unwrap();
+        assert!(resolve_in(&dir, "compose.yml").is_ok());
+        assert!(resolve_in(&dir, "inner.yml").is_ok());
+        assert!(resolve_in(&dir, "new/dir/.env").is_ok());
+        // A checkout planting links to the Host must not be followed.
+        symlink(outside.join("secret.yml"), dir.join("docker-compose.yml")).unwrap();
+        symlink(&outside, dir.join("conf")).unwrap();
+        symlink(d.path().join("missing"), dir.join("dangling")).unwrap();
+        assert!(resolve_in(&dir, "docker-compose.yml").is_err());
+        assert!(resolve_in(&dir, "conf/secret.yml").is_err());
+        assert!(resolve_in(&dir, "conf/new/.env").is_err());
+        assert!(resolve_in(&dir, "dangling/.env").is_err());
     }
 
     #[test]
