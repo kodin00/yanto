@@ -154,16 +154,46 @@ pub async fn latest_success(
     .map_err(db_err)
 }
 
-/// A scheduled series: `trigger = 'cron'` rows of `kind` with no Project, newest first.
-pub async fn cron_series(
+/// One retention series: rows of the same kind for the same Project and target (a declared
+/// database, or a volume recorded in `note`). `None` fields match `NULL`.
+#[derive(Debug, Clone, PartialEq, Eq, FromRow)]
+pub struct SeriesKey {
+    pub kind: String,
+    pub project_id: Option<String>,
+    pub database_id: Option<String>,
+    pub note: Option<String>,
+}
+
+/// Successful rows of `series` made by `trigger` (`cron` or `pre_restore`), newest first.
+pub async fn series(
     conn: &mut SqliteConnection,
-    kind: &str,
+    key: &SeriesKey,
+    trigger: &str,
 ) -> Result<Vec<BackupRow>, CoreError> {
     sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{SELECT} WHERE kind = ? AND trigger = 'cron' AND project_id IS NULL AND status = 'success'
-         ORDER BY created_at DESC, id DESC"
+        "{SELECT} WHERE kind = ? AND project_id IS ? AND database_id IS ? AND note IS ?
+         AND trigger = ? AND status = 'success' ORDER BY created_at DESC, id DESC"
     )))
-    .bind(kind)
+    .bind(&key.kind)
+    .bind(&key.project_id)
+    .bind(&key.database_id)
+    .bind(&key.note)
+    .bind(trigger)
+    .fetch_all(conn)
+    .await
+    .map_err(db_err)
+}
+
+/// Every series that has successful rows made by `trigger`.
+pub async fn series_keys(
+    conn: &mut SqliteConnection,
+    trigger: &str,
+) -> Result<Vec<SeriesKey>, CoreError> {
+    sqlx::query_as(
+        "SELECT DISTINCT kind, project_id, database_id, note FROM backups
+         WHERE trigger = ? AND status = 'success'",
+    )
+    .bind(trigger)
     .fetch_all(conn)
     .await
     .map_err(db_err)

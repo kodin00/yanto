@@ -1,7 +1,7 @@
 -- Local, downloadable Backups (02 4.4, D14). Prefix: `bak`.
 --
--- `project_id` and `database_id` have no FK yet: `projects` / `project_databases` belong to M2.
--- TODO(M2-merge): rebuild with `ON DELETE SET NULL` FKs in a follow-up 05xx migration.
+-- `project_id` and `database_id` get their `ON DELETE SET NULL` FKs in 0550 (`projects` and
+-- `project_databases` belong to M2).
 CREATE TABLE backups (
     id             TEXT    NOT NULL PRIMARY KEY,
     project_id     TEXT,
