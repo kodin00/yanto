@@ -1,0 +1,23 @@
+[package]
+name = "yanto-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "yanto"
+path = "src/main.rs"
+
+[dependencies]
+yanto-core.workspace = true
+yanto-server.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

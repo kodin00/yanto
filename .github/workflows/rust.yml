@@ -1,0 +1,81 @@
+name: rust
+
+on:
+  push:
+    branches: ["rewrite/rust", "m*"]
+  pull_request:
+    branches: ["rewrite/rust", "m*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
+        with:
+          install_args: rust
+      - run: mise run fmt
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
+        with:
+          install_args: rust
+      - run: mise run clippy
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
+        with:
+          install_args: rust
+      - run: mise run test
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
+        with:
+          install_args: rust cargo:cargo-audit
+      - run: mise run audit
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: jdx/mise-action@v4
+        with:
+          install_args: gitleaks
+      - run: mise run secrets
+
+  musl-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install musl toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: jdx/mise-action@v4
+        with:
+          install_args: rust
+      - run: mise run build
+      - name: Assert static binary and smoke-run
+        run: |
+          bin=target/x86_64-unknown-linux-musl/release/yanto
+          file "$bin"
+          if ldd "$bin" 2>&1 | grep -qv -e 'not a dynamic executable' -e 'statically linked'; then
+            echo "binary is dynamically linked" >&2
+            exit 1
+          fi
+          "$bin" version

@@ -1,0 +1,7 @@
+:root { color-scheme: light dark; --fg: #1b1f24; --bg: #f6f7f9; --accent: #2457d6; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e6e8eb; --bg: #14171b; --accent: #7aa2ff; } }
+* { box-sizing: border-box; }
+body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+.topbar { padding: .75rem 1.5rem; border-bottom: 1px solid color-mix(in srgb, var(--fg) 15%, transparent); }
+.brand { font-weight: 700; color: var(--accent); text-decoration: none; }
+.content { max-width: 60rem; margin: 0 auto; padding: 1.5rem; }

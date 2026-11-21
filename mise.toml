@@ -1,0 +1,37 @@
+[tools]
+rust = { version = "1.99.0", components = "rustfmt,clippy", targets = "x86_64-unknown-linux-musl,aarch64-unknown-linux-musl" }
+"cargo:sqlx-cli" = "0.9.0"
+"cargo:cargo-audit" = "0.22.2"
+gitleaks = "8.30.1"
+
+[tasks.fmt]
+description = "Check formatting"
+run = "cargo fmt --all --check"
+
+[tasks.clippy]
+description = "Lint with warnings denied"
+run = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+
+[tasks.test]
+description = "Run all tests (no Docker)"
+run = "cargo test --workspace --locked"
+
+[tasks.audit]
+description = "Check dependencies for known advisories"
+run = "cargo audit"
+
+[tasks.secrets]
+description = "Scan the repository for committed secrets"
+run = "gitleaks detect --source . --redact"
+
+[tasks.build]
+description = "Static musl release build (run on Linux with musl-tools)"
+run = "cargo build --release --locked --target x86_64-unknown-linux-musl -p yanto-cli"
+
+[tasks.dev]
+description = "Run the server against ./dev-data"
+run = "cargo run -p yanto-cli -- serve --config ./dev/config.toml"
+
+[tasks.ci]
+description = "Everything CI runs"
+depends = ["fmt", "clippy", "test", "audit", "secrets"]
