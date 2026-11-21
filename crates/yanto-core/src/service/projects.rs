@@ -757,19 +757,28 @@ impl ProjectService {
         actor.authorize(&OP_PROJECT_DELETE, None)?;
         let row = {
             let mut conn = self.ctx.db.reader().acquire().await.map_err(db_err)?;
-            let row = load(&mut conn, id).await?;
-            if dep_repo::running_for(&mut conn, id).await?.is_some() {
-                return Err(CoreError::conflict(
-                    "a deployment is running; cancel it before deleting the project",
-                ));
-            }
-            row
+            load(&mut conn, id).await?
         };
         if opts.delete_volumes && opts.confirm_slug.as_deref() != Some(row.slug.as_str()) {
             return Err(CoreError::validation(
                 "confirm_slug",
                 "type the project slug to confirm deleting its volumes",
             ));
+        }
+        // Check and clear the queue in one write transaction *before* `compose down`: a queued
+        // Deployment claimed during the (up to 5 min) `down` would bring the stack back up
+        // while its volumes are being removed, and the delete would then fail half-done.
+        {
+            let mut tx = self.ctx.db.begin_write().await?;
+            if dep_repo::running_for(&mut tx, id).await?.is_some() {
+                return Err(CoreError::conflict(
+                    "a deployment is running; cancel it before deleting the project",
+                ));
+            }
+            if let Some(q) = dep_repo::queued_for(&mut tx, id).await? {
+                dep_repo::cancel_queued(&mut tx, &q.id, self.ctx.now()).await?;
+            }
+            tx.commit().await.map_err(db_err)?;
         }
         if opts.stop_containers {
             let mut args = vec![
