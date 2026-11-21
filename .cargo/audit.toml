@@ -1,0 +1,17 @@
+# cargo-audit policy. Risk area: dependency / supply-chain management.
+#
+# Both ignores below are for `rsa` and its dependency `crypto-bigint`, which
+# appear in Cargo.lock only because the `sqlx` facade crate lists the optional
+# `sqlx-mysql` driver (which pulls `rsa`) in the lockfile. Yanto enables the
+# `sqlite` driver only. `cargo tree -i rsa --target all` and
+# `cargo tree -i sqlx-mysql --target all` both report "nothing to print": the
+# crates are never compiled or linked, so the Marvin timing attack
+# (RUSTSEC-2023-0071) and the crypto-bigint timing issues (RUSTSEC-2026-0387)
+# are unreachable. No fixed rsa release is compatible with sqlx-mysql 0.9.
+# Re-check on every sqlx upgrade; remove these entries once sqlx stops locking
+# the unused driver.
+[advisories]
+ignore = [
+  "RUSTSEC-2023-0071",
+  "RUSTSEC-2026-0387",
+]
