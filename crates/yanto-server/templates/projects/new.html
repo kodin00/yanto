@@ -1,0 +1,26 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<p><a href="/projects">&larr; Projects</a></p>
+<h1>New project</h1>
+{% if let Some(e) = error %}<p class="error" role="alert">{{ e }}</p>{% endif %}
+<form method="post" action="/projects" class="card stack">
+  <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+  <label>Name <input name="name" value="{{ form.name }}" required maxlength="100"></label>
+  <label>Slug (optional; becomes the Compose project name) <input name="slug" value="{{ form.slug }}" maxlength="63" autocomplete="off"></label>
+  <label>Git URL or image reference <input name="source" value="{{ form.source }}" required placeholder="git@github.com:org/repo.git or nginx:alpine" autocomplete="off"></label>
+  <label>Branch (Git only; leave empty for master) <input name="branch" value="{{ form.branch }}" autocomplete="off"></label>
+  <label>Compose file path <input name="compose_path" value="{{ form.compose_path }}" placeholder="docker-compose.yml"></label>
+  <label>Env file <input name="env_file" value="{{ form.env_file }}" placeholder=".env"></label>
+  <label>Compose content (optional; overrides the repository file at deploy time)
+    <textarea name="compose_content" rows="8" spellcheck="false">{{ form.compose_content }}</textarea></label>
+  <label>Deploy key
+    <select name="deploy_key_id"><option value="">none</option>{% for k in keys %}<option value="{{ k.id }}"{% if k.selected %} selected{% endif %}>{{ k.label }}</option>{% endfor %}</select></label>
+  <label><input type="checkbox" name="generate_deploy_key"{% if form.generate_deploy_key.is_some() %} checked{% endif %}> Generate a new ed25519 deploy key for this project (Git only)</label>
+  <label>Registry credential (private images)
+    <select name="registry_credential_id"><option value="">none</option>{% for c in creds %}<option value="{{ c.id }}"{% if c.selected %} selected{% endif %}>{{ c.label }}</option>{% endfor %}</select></label>
+  <label><input type="checkbox" name="auto_start"{% if form.auto_start.is_some() %} checked{% endif %}> Restart containers automatically (<code>unless-stopped</code>)</label>
+  <p class="muted">Anyone with the deploy permission on a project can run code on this Host as root: compose files are executed as written.</p>
+  <button type="submit">Create project</button>
+</form>
+{% endblock %}

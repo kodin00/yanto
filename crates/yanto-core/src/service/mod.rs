@@ -15,6 +15,10 @@ pub mod authorized_keys;
 pub mod backups;
 pub mod containers;
 pub mod cron;
+pub mod deploy_keys;
+pub mod deployments;
+pub mod projects;
+pub mod registry_credentials;
 pub mod system;
 pub mod tokens;
 pub mod users;
@@ -30,6 +34,7 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::db::repo::access;
 use crate::db::repo::users::UserRow;
+use crate::deploy::{Engine, HostPorts};
 use crate::error::CoreError;
 use crate::password::Passwords;
 use crate::ports::HostMgmtPorts;
@@ -66,6 +71,7 @@ pub struct ServiceDeps<'a> {
     pub host_stats: Arc<dyn HostStatsPort>,
     /// Host side of Cron Entries, Authorized Keys and Backups (M5).
     pub host_mgmt: HostMgmtPorts,
+    pub host: HostPorts,
 }
 
 /// Shared, cheaply cloneable context held by every service.
@@ -127,6 +133,11 @@ pub struct Services {
     pub cron: cron::CronService,
     pub authorized_keys: authorized_keys::AuthorizedKeysService,
     pub backups: backups::BackupService,
+    pub projects: projects::ProjectService,
+    pub deployments: deployments::DeploymentService,
+    pub deploy_keys: deploy_keys::DeployKeyService,
+    pub registry_credentials: registry_credentials::RegistryCredentialService,
+    engine: Arc<Engine>,
 }
 
 impl Services {
@@ -146,8 +157,9 @@ impl Services {
             base_url: base_url.into(),
             limits: Arc::new(Limits::new()),
         };
-        // M2 replaces `NoProjects` with the Project-slug mapping (08-conventions section 10).
-        let projects: Arc<dyn containers::ContainerProjects> = Arc::new(containers::NoProjects);
+        let engine = Engine::new(ctx.clone(), deps.host, cfg);
+        let projects: Arc<dyn containers::ContainerProjects> =
+            Arc::new(containers::SlugProjects::new(ctx.clone()));
         Self {
             audit: audit::AuditService::new(ctx.clone()),
             auth: auth::AuthService::new(ctx.clone()),
@@ -176,6 +188,11 @@ impl Services {
                 deps.host_mgmt.clone(),
                 cfg.ssh.authorized_keys_user.clone(),
             ),
+            projects: projects::ProjectService::new(ctx.clone(), engine.clone()),
+            deployments: deployments::DeploymentService::new(ctx.clone(), engine.clone()),
+            deploy_keys: deploy_keys::DeployKeyService::new(ctx.clone()),
+            registry_credentials: registry_credentials::RegistryCredentialService::new(ctx.clone()),
+            engine,
             ctx,
         }
     }
@@ -183,6 +200,11 @@ impl Services {
     /// Shared context, for service modules in other crates' tests and the audit writer.
     pub fn ctx(&self) -> &Ctx {
         &self.ctx
+    }
+
+    /// The Deployment engine; `yanto serve` runs [`crate::deploy::worker::run`] on it.
+    pub fn engine(&self) -> Arc<Engine> {
+        self.engine.clone()
     }
 }
 
@@ -198,6 +220,10 @@ pub fn all_operations() -> Vec<&'static OpSpec> {
     v.extend(cron::OPERATIONS);
     v.extend(authorized_keys::OPERATIONS);
     v.extend(backups::OPERATIONS);
+    v.extend(projects::OPERATIONS);
+    v.extend(deployments::OPERATIONS);
+    v.extend(deploy_keys::OPERATIONS);
+    v.extend(registry_credentials::OPERATIONS);
     v.push(&audit::OP_AUDIT_LIST);
     v
 }

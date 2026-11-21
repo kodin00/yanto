@@ -22,11 +22,20 @@ use std::time::Duration;
 use crate::actor::{Actor, Channel, Origin, Permission, Scope};
 use crate::config::Config;
 use crate::db::Db;
+use crate::deploy::HostPorts;
 use crate::password::Passwords;
 use crate::ports::Clock;
 use crate::secrets::Secrets;
 use crate::service::users::GrantInput;
 use crate::service::{ServiceDeps, Services};
+
+pub mod command;
+pub mod host_probe;
+pub mod registry_auth;
+
+pub use command::{FakeCommands, Reply};
+pub use host_probe::FakeHostProbe;
+pub use registry_auth::FakeRegistryAuth;
 
 pub const OWNER_PASSWORD: &str = "owner-password-123";
 pub const MEMBER_PASSWORD: &str = "member-password-123";
@@ -79,18 +88,31 @@ pub struct TestCore {
     pub host_stats: Arc<host_stats::FakeHostStats>,
     /// Fakes behind the M5 host-management ports (cron, authorized_keys, backups, users).
     pub host: hostmgmt::HostFakes,
+    /// Scripted commands (`git`, `docker`); inspect `commands.calls()`.
+    pub commands: Arc<FakeCommands>,
+    pub probe: Arc<FakeHostProbe>,
+    pub registry_auth: Arc<FakeRegistryAuth>,
 }
 
 impl TestCore {
     pub async fn new() -> Self {
+        Self::with_config(|_| {}).await
+    }
+
+    /// Like [`TestCore::new`], letting the test adjust the config (limits, timeouts).
+    pub async fn with_config(adjust: impl FnOnce(&mut Config)) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut config = Config::default();
         config.paths.data_dir = dir.path().to_path_buf();
+        adjust(&mut config);
         let db = Db::open(&config.db_path()).await.expect("open db");
         let clock = Arc::new(FakeClock::new());
         let docker = Arc::new(docker::FakeDocker::new());
         let host_stats = Arc::new(host_stats::FakeHostStats::new());
         let host = hostmgmt::HostFakes::new(&dir.path().join("home"));
+        let commands = FakeCommands::new();
+        let probe = Arc::new(FakeHostProbe::default());
+        let registry_auth = Arc::new(FakeRegistryAuth::default());
         let services = Services::new(ServiceDeps {
             db: db.clone(),
             config: &config,
@@ -100,6 +122,11 @@ impl TestCore {
             docker: docker.clone(),
             host_stats: host_stats.clone(),
             host_mgmt: host.ports(),
+            host: HostPorts {
+                command: commands.clone(),
+                probe: probe.clone(),
+                registry_auth: registry_auth.clone(),
+            },
         });
         Self {
             dir,
@@ -110,7 +137,36 @@ impl TestCore {
             docker,
             host_stats,
             host,
+            commands,
+            probe,
+            registry_auth,
         }
+    }
+
+    /// Insert a minimal image Project row with this id if it does not exist (grants and
+    /// audit rows need a real Project since 0201). Idempotent; the slug derives from the id.
+    pub async fn ensure_project(&self, id: &str) {
+        let slug = id
+            .to_ascii_lowercase()
+            .replace(|c: char| !c.is_ascii_alphanumeric(), "-");
+        let secrets = &self.services.ctx().secrets;
+        let token = crate::secrets::Secret::new(format!("ydp_stub_{id}"));
+        let enc = secrets
+            .seal("projects", "deploy_token_enc", id, &token)
+            .expect("seal stub token");
+        sqlx::query(
+            "INSERT OR IGNORE INTO projects (id, name, slug, source_kind, image_ref, deploy_token_hash,
+                deploy_token_enc, created_at, updated_at)
+             VALUES (?, ?, ?, 'image', 'nginx:alpine', ?, ?, 0, 0)",
+        )
+        .bind(id)
+        .bind(id)
+        .bind(slug)
+        .bind(crate::crypto::sha256_hex(token.expose()))
+        .bind(enc)
+        .execute(self.db.writer())
+        .await
+        .expect("insert test project");
     }
 
     pub fn origin(&self) -> Origin {
@@ -150,6 +206,9 @@ impl TestCore {
         username: &str,
         grants: &[(&str, &[Permission])],
     ) -> TestUser {
+        for (p, _) in grants {
+            self.ensure_project(p).await;
+        }
         let inputs: Vec<GrantInput> = grants
             .iter()
             .map(|(p, perms)| GrantInput {

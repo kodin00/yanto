@@ -1,0 +1,144 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<p><a href="/projects">&larr; Projects</a></p>
+<h1>{{ p.name }} <span class="badge {{ status }}">{{ status }}</span></h1>
+<p class="muted"><code>{{ p.slug }}</code> &middot; {{ source }} &middot; updated {{ updated }}</p>
+<div id="action-msg"></div>
+
+{% if can_deploy || can_runtime %}
+<section class="card">
+  <h2>Actions</h2>
+  <div class="actions">
+    {% if can_deploy %}
+    <form method="post" action="/projects/{{ p.id }}/deploy" class="inline">
+      <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+      {% if is_git %}<label>Ref (optional) <input name="target_ref" placeholder="branch, tag or commit" autocomplete="off"></label>{% endif %}
+      <button type="submit">Deploy</button>
+    </form>
+    {% endif %}
+    {% if can_runtime %}
+    <button hx-post="/projects/{{ p.id }}/stop" hx-target="#action-msg" hx-confirm="Stop all containers of {{ p.name }}?">Stop</button>
+    <button hx-post="/projects/{{ p.id }}/restart" hx-target="#action-msg">Restart</button>
+    {% endif %}
+  </div>
+  <p class="muted">Deployments run compose files as written, as root on this Host.</p>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Deployments</h2>
+  {% if deployments.is_empty() %}<p class="muted">No deployments yet.</p>{% else %}
+  <table>
+    <thead><tr><th>Deployment</th><th>Status</th><th>Trigger</th><th>Revision</th><th>Queued</th>{% if can_rollback %}<th></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for d in deployments %}
+      <tr>
+        <td><a href="/deployments/{{ d.id }}"><code>{{ d.id }}</code></a></td>
+        <td><span class="badge {{ d.status }}">{{ d.status }}</span></td>
+        <td>{{ d.trigger }}</td>
+        <td class="ua">{{ d.revision }}</td>
+        <td>{{ d.queued }}</td>
+        {% if can_rollback %}<td>{% if d.rollback_target %}
+          <button hx-post="/projects/{{ p.id }}/rollback/preview" hx-vals='{"deployment_id":"{{ d.id }}"}' hx-target="#rollback-box">Roll back to this</button>
+        {% endif %}</td>{% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <div id="rollback-box"></div>
+</section>
+
+<section class="card">
+  <h2>Ports</h2>
+  <p class="muted">Published ports must bind <code>127.0.0.1</code> so an Ingress Provider carries the traffic. They are derived from the compose file at deploy time.</p>
+  {% if can_config %}
+  <form hx-put="/projects/{{ p.id }}/ports" hx-target="#ports-msg">
+    <table>
+      <thead><tr><th>Keep</th><th>Label</th><th>Bind</th><th>Host</th><th>Container</th></tr></thead>
+      <tbody>
+      {% for port in ports %}
+        <tr><td><input type="checkbox" name="keep" value="{{ port.id }}" checked aria-label="Keep {{ port.label }}"></td><td>{{ port.label }}</td><td>{{ port.bind_address }}</td><td>{{ port.host_port }}</td><td>{{ port.container_port }}/{{ port.protocol }}</td></tr>
+      {% endfor %}
+        <tr><td>add</td><td><input name="new_label" placeholder="label"></td><td>127.0.0.1</td><td><input name="new_host" size="6" placeholder="host"></td><td><input name="new_container" size="6" placeholder="container"> <select name="new_protocol"><option>tcp</option><option>udp</option></select></td></tr>
+      </tbody>
+    </table>
+    <button type="submit">Save ports</button> <span id="ports-msg"></span>
+  </form>
+  {% else %}
+  <table>
+    <thead><tr><th>Label</th><th>Bind</th><th>Host</th><th>Container</th></tr></thead>
+    <tbody>{% for port in ports %}<tr><td>{{ port.label }}</td><td>{{ port.bind_address }}</td><td>{{ port.host_port }}</td><td>{{ port.container_port }}/{{ port.protocol }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% endif %}
+</section>
+
+{% if can_config %}
+<section class="card">
+  <h2>Settings</h2>
+  <form method="post" action="/projects/{{ p.id }}/settings" class="stack">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <label>Name <input name="name" value="{{ p.name }}" required></label>
+    {% if is_git %}
+    <label>Git URL <input name="git_url" value="{% if let Some(g) = p.git_url %}{{ g }}{% endif %}"></label>
+    <label>Branch <input name="branch" value="{% if let Some(b) = p.branch %}{{ b }}{% endif %}"></label>
+    {% else %}
+    <label>Image <input name="image_ref" value="{% if let Some(i) = p.image_ref %}{{ i }}{% endif %}"></label>
+    {% endif %}
+    <label>Compose file <input name="compose_path" value="{{ p.compose_path }}"></label>
+    <label>Env file <input name="env_file" value="{{ p.env_file }}"></label>
+    <label>Compose content ({{ compose_source }}; saving non-empty text overrides the repository file at deploy time)
+      <textarea name="compose_content" rows="12" spellcheck="false">{% if p.has_compose_content %}{{ compose }}{% endif %}</textarea></label>
+    <label>Deploy key <select name="deploy_key_id"><option value="">none</option>{% for k in keys %}<option value="{{ k.id }}"{% if k.selected %} selected{% endif %}>{{ k.label }}</option>{% endfor %}</select></label>
+    <label>Registry credential <select name="registry_credential_id"><option value="">none</option>{% for c in creds %}<option value="{{ c.id }}"{% if c.selected %} selected{% endif %}>{{ c.label }}</option>{% endfor %}</select></label>
+    <label><input type="checkbox" name="auto_start"{% if p.auto_start %} checked{% endif %}> Restart containers automatically</label>
+    <label><input type="checkbox" name="manual_deploy_enabled"{% if p.manual_deploy_enabled %} checked{% endif %}> Allow <code>POST /deploy</code> with the Deploy Token</label>
+    <label><input type="checkbox" name="github_webhook_enabled"{% if p.github_webhook_enabled %} checked{% endif %}> Deploy on GitHub pushes to the branch</label>
+    <button type="submit">Save settings</button>
+  </form>
+  {% if !p.has_compose_content %}
+  <p class="muted">Compose file in use ({{ compose_source }}):</p>
+  <pre>{{ compose }}</pre>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if can_secrets %}
+<section class="card">
+  <h2>Environment <code>{{ env_file }}</code></h2>
+  <p class="muted">Values are masked. Leave <code>********</code> to keep a stored value. Changes apply on the next deployment.</p>
+  <form hx-put="/projects/{{ p.id }}/env" hx-target="#env-msg" class="stack">
+    <textarea name="content" rows="10" spellcheck="false" aria-label="Environment variables">{{ env_text }}</textarea>
+    <div class="actions">
+      <button type="submit">Save</button>
+      <button type="button" hx-post="/projects/{{ p.id }}/env/preview" hx-include="closest form" hx-target="#env-preview">Preview</button>
+    </div>
+    <span id="env-msg"></span>
+  </form>
+  <div id="env-preview"></div>
+</section>
+
+<section class="card">
+  <h2>Deploy Token</h2>
+  <p>Authenticates <code>POST {{ webhook_base }}/deploy?id={{ p.id }}</code> and signs the GitHub webhook (<code>/webhooks/github?id={{ p.id }}</code>, content type <code>application/json</code>).</p>
+  <div class="actions">
+    <button hx-post="/projects/{{ p.id }}/deploy-token/reveal" hx-target="#token-box">Reveal</button>
+    <button class="danger" hx-post="/projects/{{ p.id }}/deploy-token/rotate" hx-target="#token-box" hx-confirm="Rotate the token? The old token and the GitHub webhook secret stop working immediately.">Rotate</button>
+  </div>
+  <div id="token-box"></div>
+</section>
+{% endif %}
+
+{% if can_delete %}
+<section class="card">
+  <h2>Delete project</h2>
+  <form hx-delete="/projects/{{ p.id }}" hx-confirm="Delete {{ p.name }}? This cannot be undone." class="stack">
+    <label><input type="checkbox" name="stop_containers" value="on" checked> Also stop and remove the containers</label>
+    <label><input type="checkbox" name="delete_volumes" value="on"> Also delete the volumes (data loss)</label>
+    <label>Type the slug <code>{{ p.slug }}</code> to confirm deleting volumes <input name="confirm_slug" autocomplete="off"></label>
+    <button class="danger" type="submit">Delete project</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

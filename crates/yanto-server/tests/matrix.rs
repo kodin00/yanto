@@ -258,6 +258,187 @@ fn rest_routes(bob: &str, yb: &str, pb: &str) -> Vec<Rest> {
             owner_admin,
         ),
     ]
+    .into_iter()
+    .chain(rest_routes_m2())
+    .collect()
+}
+
+/// M2 routes. Columns: [owner-read, owner-write, owner-admin, member-read, member-write,
+/// member-admin]; the Member (alice) holds only `deploy` on prj_1. 404 counts as "allowed"
+/// (past authorization): the ids below are placeholders.
+fn rest_routes_m2() -> Vec<Rest> {
+    let (t, f) = (true, false);
+    let any = [t; 6];
+    let write = [f, t, t, f, f, f];
+    let read_secret = [t, t, t, f, f, f];
+    let admin = [f, f, t, f, f, f];
+    let r = |method: Method, path: &str, body: serde_json::Value, allowed| Rest {
+        method,
+        path: path.to_owned(),
+        body,
+        allowed,
+    };
+    vec![
+        r(Method::GET, "/api/v1/projects", json!({}), any),
+        r(Method::GET, "/api/v1/projects/prj_1", json!({}), any),
+        r(
+            Method::POST,
+            "/api/v1/projects",
+            json!({"name": "X", "image_ref": "nginx"}),
+            write,
+        ),
+        r(
+            Method::PATCH,
+            "/api/v1/projects/prj_1",
+            json!({"name": "n"}),
+            write,
+        ),
+        r(Method::DELETE, "/api/v1/projects/prj_1", json!({}), admin),
+        r(
+            Method::GET,
+            "/api/v1/projects/prj_1/compose",
+            json!({}),
+            read_secret,
+        ),
+        r(
+            Method::GET,
+            "/api/v1/projects/prj_1/env",
+            json!({}),
+            read_secret,
+        ),
+        r(
+            Method::GET,
+            "/api/v1/projects/prj_1/env/content",
+            json!({}),
+            read_secret,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/env/preview",
+            json!({"content": "A=1"}),
+            any,
+        ),
+        r(
+            Method::PUT,
+            "/api/v1/projects/prj_1/env",
+            json!({"content": "A=1"}),
+            write,
+        ),
+        r(
+            Method::PATCH,
+            "/api/v1/projects/prj_1/env",
+            json!({"variables": []}),
+            write,
+        ),
+        r(Method::GET, "/api/v1/projects/prj_1/ports", json!({}), any),
+        r(
+            Method::PUT,
+            "/api/v1/projects/prj_1/ports",
+            json!({"ports": []}),
+            write,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/projects/prj_1/deploy-token/reveal",
+            json!({}),
+            admin,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/projects/prj_1/deploy-token/rotate",
+            json!({}),
+            admin,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/projects/prj_1/deploy",
+            json!({}),
+            [f, t, t, f, t, t],
+        ),
+        r(
+            Method::POST,
+            "/api/v1/projects/prj_1/rollback/preview",
+            json!({}),
+            any,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/projects/prj_1/rollback",
+            json!({}),
+            [f, f, t, f, f, t],
+        ),
+        r(
+            Method::POST,
+            "/api/v1/projects/prj_1/stop",
+            json!({}),
+            admin,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/projects/prj_1/restart",
+            json!({}),
+            admin,
+        ),
+        r(Method::GET, "/api/v1/deployments", json!({}), any),
+        r(Method::GET, "/api/v1/deployments/dep_nope", json!({}), any),
+        r(
+            Method::GET,
+            "/api/v1/deployments/dep_nope/logs",
+            json!({}),
+            any,
+        ),
+        r(
+            Method::GET,
+            "/api/v1/deployments/dep_nope/logs/stream",
+            json!({}),
+            any,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/deployments/dep_nope/cancel",
+            json!({}),
+            [f, t, t, f, t, t],
+        ),
+        r(Method::GET, "/api/v1/deploy-keys", json!({}), any),
+        r(Method::GET, "/api/v1/deploy-keys/dky_nope", json!({}), any),
+        r(
+            Method::POST,
+            "/api/v1/deploy-keys",
+            json!({"name": "k"}),
+            admin,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/deploy-keys/import",
+            json!({"name": "k", "private_key": "x"}),
+            admin,
+        ),
+        r(
+            Method::DELETE,
+            "/api/v1/deploy-keys/dky_nope",
+            json!({}),
+            admin,
+        ),
+        r(Method::GET, "/api/v1/registry-credentials", json!({}), any),
+        r(
+            Method::POST,
+            "/api/v1/registry-credentials",
+            json!({"name": "c", "registry_host": "ghcr.io", "username": "u", "secret": "s"}),
+            admin,
+        ),
+        r(
+            Method::PATCH,
+            "/api/v1/registry-credentials/rcr_nope",
+            json!({}),
+            admin,
+        ),
+        r(
+            Method::DELETE,
+            "/api/v1/registry-credentials/rcr_nope",
+            json!({}),
+            admin,
+        ),
+    ]
 }
 
 #[tokio::test]
@@ -492,6 +673,146 @@ fn dash_routes() -> Vec<Dash> {
         d(Method::GET, "/backups/{pb}/download", &[], false, false),
         d(Method::DELETE, "/backups/{yb}", &[], true, false),
         d(Method::DELETE, "/backups/{pb}", &[], true, false),
+    ]
+    .into_iter()
+    .chain(dash_routes_m2())
+    .collect()
+}
+
+/// M2 routes. Alice (the Member) holds only `deploy` on prj_1. Redirecting actions use the
+/// htmx form (204 + `HX-Redirect`) so "allowed" is not confused with a login redirect.
+fn dash_routes_m2() -> Vec<Dash> {
+    let d = |method, path, form, htmx, member_ok| Dash {
+        method,
+        path,
+        form,
+        htmx,
+        member_ok,
+    };
+    vec![
+        d(Method::GET, "/projects", &[], false, true),
+        d(Method::GET, "/projects/new", &[], false, false),
+        d(
+            Method::POST,
+            "/projects",
+            &[("name", "X"), ("source", "nginx")],
+            false,
+            false,
+        ),
+        d(Method::GET, "/projects/prj_1", &[], false, true),
+        d(
+            Method::POST,
+            "/projects/prj_1/settings",
+            &[("name", "n")],
+            true,
+            false,
+        ),
+        d(Method::DELETE, "/projects/prj_1", &[], true, false),
+        d(Method::POST, "/projects/prj_1/deploy", &[], true, true),
+        d(Method::POST, "/projects/prj_1/stop", &[], true, false),
+        d(Method::POST, "/projects/prj_1/restart", &[], true, false),
+        d(
+            Method::POST,
+            "/projects/prj_1/rollback/preview",
+            &[],
+            true,
+            true,
+        ),
+        d(Method::POST, "/projects/prj_1/rollback", &[], true, true),
+        d(Method::GET, "/projects/prj_1/compose", &[], true, false),
+        d(Method::GET, "/projects/prj_1/env", &[], true, false),
+        d(
+            Method::PUT,
+            "/projects/prj_1/env",
+            &[("content", "A=1")],
+            true,
+            false,
+        ),
+        d(
+            Method::PATCH,
+            "/projects/prj_1/env",
+            &[("key", "A"), ("value", "1")],
+            true,
+            false,
+        ),
+        d(
+            Method::POST,
+            "/projects/prj_1/env/preview",
+            &[("content", "A=1")],
+            true,
+            false,
+        ),
+        d(
+            Method::POST,
+            "/projects/prj_1/deploy-token/reveal",
+            &[],
+            true,
+            false,
+        ),
+        d(
+            Method::POST,
+            "/projects/prj_1/deploy-token/rotate",
+            &[],
+            true,
+            false,
+        ),
+        d(Method::GET, "/projects/prj_1/ports", &[], true, true),
+        d(Method::PUT, "/projects/prj_1/ports", &[], true, false),
+        d(Method::GET, "/deployments", &[], false, true),
+        d(Method::GET, "/deployments/dep_nope", &[], false, true),
+        d(
+            Method::POST,
+            "/deployments/dep_nope/cancel",
+            &[],
+            true,
+            true,
+        ),
+        d(Method::GET, "/deployments/dep_nope/logs", &[], false, true),
+        d(
+            Method::GET,
+            "/deployments/dep_nope/logs/stream",
+            &[],
+            false,
+            true,
+        ),
+        d(Method::GET, "/_f/deployments/active", &[], true, true),
+        d(Method::GET, "/deploy-keys", &[], false, true),
+        d(Method::POST, "/deploy-keys", &[("name", "k")], true, false),
+        d(
+            Method::POST,
+            "/deploy-keys/import",
+            &[("name", "k"), ("private_key", "x")],
+            true,
+            false,
+        ),
+        d(Method::DELETE, "/deploy-keys/dky_nope", &[], true, false),
+        d(Method::GET, "/registry-credentials", &[], false, true),
+        d(
+            Method::POST,
+            "/registry-credentials",
+            &[
+                ("name", "c"),
+                ("registry_host", "ghcr.io"),
+                ("username", "u"),
+                ("secret", "s"),
+            ],
+            true,
+            false,
+        ),
+        d(
+            Method::POST,
+            "/registry-credentials/rcr_nope",
+            &[],
+            true,
+            false,
+        ),
+        d(
+            Method::DELETE,
+            "/registry-credentials/rcr_nope",
+            &[],
+            true,
+            false,
+        ),
     ]
 }
 

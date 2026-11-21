@@ -12,8 +12,8 @@
 //!   (`view` to read, `runtime` to act or open a terminal), exactly like a Project operation;
 //! * a container with no Project is **Owner only**; a Member gets 404 (existence hidden).
 //!
-//! M2 wires the real mapping by passing its own [`ContainerProjects`] implementation in
-//! `Services::new` (replacing [`NoProjects`]).
+//! `Services::new` wires [`SlugProjects`] (the `projects.slug` lookup); [`NoProjects`] remains the
+//! default for [`ContainerService::new`] callers that have no Projects table (tests).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -95,6 +95,32 @@ pub struct NoProjects;
 impl ContainerProjects for NoProjects {
     async fn project_for(&self, _: &ContainerInfo) -> Result<Option<String>, CoreError> {
         Ok(None)
+    }
+}
+
+/// The real mapping (M2): the Compose project label equals `projects.slug`.
+#[derive(Clone)]
+pub struct SlugProjects {
+    ctx: Ctx,
+}
+
+impl SlugProjects {
+    pub fn new(ctx: Ctx) -> Self {
+        Self { ctx }
+    }
+}
+
+#[async_trait::async_trait]
+impl ContainerProjects for SlugProjects {
+    async fn project_for(&self, container: &ContainerInfo) -> Result<Option<String>, CoreError> {
+        let Some(slug) = container.compose_project() else {
+            return Ok(None);
+        };
+        sqlx::query_scalar("SELECT id FROM projects WHERE slug = ?")
+            .bind(slug)
+            .fetch_optional(self.ctx.db.reader())
+            .await
+            .map_err(db_err)
     }
 }
 

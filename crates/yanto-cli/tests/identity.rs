@@ -76,6 +76,11 @@ async fn setup_code_then_owner_reset() {
         docker: Arc::new(yanto_core::testing::docker::FakeDocker::new()),
         host_stats: Arc::new(yanto_core::testing::host_stats::FakeHostStats::new()),
         host_mgmt: yanto_core::ports::HostMgmtPorts::unsupported(),
+        host: yanto_core::deploy::HostPorts {
+            command: Arc::new(yanto_host::TokioCommands),
+            probe: Arc::new(yanto_host::ProcProbe),
+            registry_auth: Arc::new(yanto_host::RunDirRegistryAuth::new(dir.path().join("run"))),
+        },
     });
     let origin = Origin::new(Channel::Dashboard, None);
     assert!(

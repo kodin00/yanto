@@ -3309,6 +3309,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -3344,6 +3345,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "libc",
  "pin-project-lite",
  "tokio",
@@ -4100,9 +4102,11 @@ dependencies = [
  "argon2",
  "async-trait",
  "base64 0.23.1",
+ "form_urlencoded",
  "futures-core",
  "futures-util",
  "getrandom 0.4.3",
+ "hmac 0.13.0",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -4113,6 +4117,8 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-stream",
+ "tokio-util",
  "toml",
  "tracing",
  "zeroize",
@@ -4133,6 +4139,7 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "tokio",
+ "tracing",
  "yanto-core",
 ]
 
@@ -4151,6 +4158,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
+ "tokio-stream",
  "tokio-tungstenite 0.30.0",
  "tokio-util",
  "tower",

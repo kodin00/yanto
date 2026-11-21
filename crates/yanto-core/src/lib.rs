@@ -7,6 +7,7 @@ pub mod config;
 pub mod cron;
 pub mod crypto;
 pub mod db;
+pub mod deploy;
 pub mod error;
 pub mod password;
 pub mod ports;

@@ -13,6 +13,7 @@ fn first_token_on_page(body: &str) -> String {
 #[tokio::test]
 async fn owner_manages_members_through_htmx() {
     let app = TestApp::new().await;
+    app.core.ensure_project("prj_1").await;
     let owner = app.owner_client().await;
 
     let dup = owner.post_form("/users", &[("username", "bad name")]).await;

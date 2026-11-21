@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 
 use super::backups::{project_backup_fixture, yanto_row_fixture};
 use crate::ErrorKind;
-use crate::actor::{Access, Actor, Permission, Scope};
+use crate::actor::{Actor, Permission, Scope};
 use crate::authkeys::test_keys;
 use crate::backup::{BackupKind, Trigger};
 use crate::cron::{EntryInput, Overlap};
@@ -117,7 +117,88 @@ const GRID: &[(&str, &str)] = &[
     ("backup_delete", "Y   N    N   N   Y   N   N   N   Y"),
     ("backup_delete_yanto", "Y   N    N   N   Y   N   N   N   Y"),
     ("backup_prune", "Y   N    N   N   N   N   N   N   Y"),
+    // M2. Member = alice with only `deploy` on prj_1. Project-scoped rows use prj_1 for the
+    // spec check; the per-permission cells (404 without access, 403 with the wrong permission)
+    // are in `matrix_projects.rs`.
+    ("project_list", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    ("project_get", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    ("project_create", "Y   N    N   Y   Y   N   N   N   Y"),
+    ("project_update", "Y   N    N   Y   Y   N   N   N   Y"),
+    ("project_delete", "Y   N    N   N   Y   N   N   N   Y"),
+    ("project_compose_read", "Y   N    Y   Y   Y   N   N   N   Y"),
+    ("project_env_read", "Y   N    Y   Y   Y   N   N   N   Y"),
+    (
+        "project_env_content_read",
+        "Y   N    Y   Y   Y   N   N   N   Y",
+    ),
+    ("project_env_preview", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    ("project_env_write", "Y   N    N   Y   Y   N   N   N   Y"),
+    (
+        "project_env_variables_write",
+        "Y   N    N   Y   Y   N   N   N   Y",
+    ),
+    ("project_ports_list", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    ("project_ports_set", "Y   N    N   Y   Y   N   N   N   Y"),
+    (
+        "project_deploy_token_reveal",
+        "Y   N    N   N   Y   N   N   N   Y",
+    ),
+    (
+        "project_deploy_token_rotate",
+        "Y   N    N   N   Y   N   N   N   Y",
+    ),
+    ("project_stop", "Y   N    N   N   Y   N   N   N   Y"),
+    ("project_restart", "Y   N    N   N   Y   N   N   N   Y"),
+    ("project_deploy", "Y   Y    N   Y   Y   N   Y   Y   Y"),
+    (
+        "project_rollback_preview",
+        "Y   Y    Y   Y   Y   Y   Y   Y   Y",
+    ),
+    ("project_rollback", "Y   Y    N   N   Y   N   N   Y   Y"),
+    ("deployments_list", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    ("deployment_get", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    ("deployment_logs", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    (
+        "deployment_logs_stream",
+        "Y   Y    Y   Y   Y   Y   Y   Y   Y",
+    ),
+    ("deployment_cancel", "Y   Y    N   Y   Y   N   Y   Y   Y"),
+    (
+        "deployments_events_stream",
+        "Y   Y    Y   Y   Y   Y   Y   Y   Y",
+    ),
+    ("deploy_webhook", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    ("github_webhook", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    ("deploy_key_list", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    (
+        "deploy_key_public_get",
+        "Y   Y    Y   Y   Y   Y   Y   Y   Y",
+    ),
+    ("deploy_key_create", "Y   N    N   N   Y   N   N   N   Y"),
+    ("deploy_key_import", "Y   N    N   N   Y   N   N   N   Y"),
+    ("deploy_key_delete", "Y   N    N   N   Y   N   N   N   Y"),
+    (
+        "registry_credential_list",
+        "Y   Y    Y   Y   Y   Y   Y   Y   Y",
+    ),
+    (
+        "registry_credential_create",
+        "Y   N    N   N   Y   N   N   N   Y",
+    ),
+    (
+        "registry_credential_update",
+        "Y   N    N   N   Y   N   N   N   Y",
+    ),
+    (
+        "registry_credential_delete",
+        "Y   N    N   N   Y   N   N   N   Y",
+    ),
 ];
+
+/// Project-scoped operations are checked against prj_1 (Alice's only Project).
+fn project_for(op: &crate::actor::OpSpec) -> Option<&'static str> {
+    matches!(op.access, crate::actor::Access::Project(_)).then_some("prj_1")
+}
 
 fn grid_row(name: &str) -> Vec<bool> {
     let (_, row) = GRID
@@ -153,6 +234,10 @@ struct Fixture {
     /// Existing Backup rows (Project kind on prj_1, and the Yanto DB) for the id-based operations.
     project_backup: String,
     yanto_backup: String,
+    /// A queued Deployment of prj_1.
+    dep: String,
+    key: String,
+    cred: String,
 }
 
 fn cron_input() -> EntryInput {
@@ -169,6 +254,7 @@ fn cron_input() -> EntryInput {
 
 async fn fixture() -> Fixture {
     let core = TestCore::new().await;
+    core.ensure_project("prj_9").await;
     let owner = core.setup_owner().await;
     let alice = core
         .create_member("alice", &[("prj_1", &[Permission::Deploy])])
@@ -177,6 +263,35 @@ async fn fixture() -> Fixture {
     let cid = core.docker.add_container("web", "running", &[]);
     let project_backup = project_backup_fixture(&core, "prj_1").await;
     let yanto_backup = yanto_row_fixture(&core).await;
+    let cli = Actor::cli();
+    let dep = core
+        .services
+        .deployments
+        .deploy(&cli, "prj_1", &Default::default())
+        .await
+        .expect("seed deployment")
+        .deployment
+        .id;
+    let key = core
+        .services
+        .deploy_keys
+        .create(&cli, "seed-key")
+        .await
+        .expect("seed key")
+        .id;
+    let cred = core
+        .services
+        .registry_credentials
+        .create(
+            &cli,
+            "seed-cred",
+            "ghcr.io",
+            "bot",
+            &crate::secrets::Secret::new("s3cret-pass"),
+        )
+        .await
+        .expect("seed credential")
+        .id;
     Fixture {
         core,
         owner,
@@ -185,6 +300,9 @@ async fn fixture() -> Fixture {
         cid,
         project_backup,
         yanto_backup,
+        dep,
+        key,
+        cred,
     }
 }
 
@@ -347,6 +465,9 @@ async fn invoke(f: &Fixture, op: &str, a: &Actor) -> Result<(), CoreError> {
         "backup_delete" => s.backups.delete(a, &f.project_backup).await,
         "backup_delete_yanto" => s.backups.delete(a, &f.yanto_backup).await,
         "backup_prune" => s.backups.prune(a, Retention::default()).await.map(|_| ()),
+        other if invoke_m2(f, other, a).await.is_some() => {
+            invoke_m2(f, other, a).await.expect("checked")
+        }
         other => panic!("no invocation for {other}"),
     }
 }
@@ -363,8 +484,7 @@ async fn every_actor_profile_against_every_operation() {
 
             // 1. The spec-level decision. Member/token rows have no Project here, so the
             //    spec check uses an unrestricted call; Project-scoped ops arrive in M2.
-            let project = matches!(op.access, Access::Project(_)).then_some("prj_1");
-            let spec = actor.authorize(op, project);
+            let spec = actor.authorize(op, project_for(op));
             if allowed {
                 assert!(spec.is_ok(), "{} should allow {profile}: {spec:?}", op.name);
             } else {
@@ -451,4 +571,287 @@ async fn happy_paths_really_succeed_for_the_owner() {
         .unwrap();
     s.backups.download(&o, &f.project_backup).await.unwrap();
     s.backups.delete(&o, &f.yanto_backup).await.unwrap();
+}
+
+fn rand_slug() -> String {
+    format!("mx{}", crate::crypto::random_hex::<4>())
+}
+
+/// M2 operations. `None` when `op` is not one of them.
+async fn invoke_m2(f: &Fixture, op: &str, a: &Actor) -> Option<Result<(), CoreError>> {
+    use crate::service::deployments::{DeployRequest, GithubDelivery, RollbackRequest};
+    use crate::service::projects::{DeleteOptions, ProjectInput, ProjectPatch, SourceInput};
+    let s = &f.core.services;
+    let origin =
+        crate::actor::Origin::new(crate::actor::Channel::Webhook, Some("203.0.113.9".into()));
+    let (p, d) = ("prj_1", f.dep.as_str());
+    let r = match op {
+        "project_list" => s.projects.list(a).await.map(|_| ()),
+        "project_get" => s.projects.get(a, p).await.map(|_| ()),
+        "project_create" => s
+            .projects
+            .create(
+                a,
+                &ProjectInput {
+                    name: "Matrix".into(),
+                    slug: Some(rand_slug()),
+                    source: SourceInput::Image {
+                        image_ref: "nginx".into(),
+                    },
+                    compose_path: None,
+                    compose_content: None,
+                    env_file: None,
+                    auto_start: None,
+                    manual_deploy_enabled: None,
+                    github_webhook_enabled: None,
+                    deploy_key_id: None,
+                    generate_deploy_key: false,
+                    registry_credential_id: None,
+                },
+            )
+            .await
+            .map(|_| ()),
+        "project_update" => s
+            .projects
+            .update(
+                a,
+                p,
+                &ProjectPatch {
+                    name: Some("Renamed".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map(|_| ()),
+        "project_delete" => s.projects.delete(a, p, &DeleteOptions::default()).await,
+        "project_compose_read" => s.projects.compose_read(a, p).await.map(|_| ()),
+        "project_env_read" => s.projects.env_read(a, p).await.map(|_| ()),
+        "project_env_content_read" => s.projects.env_content_read(a, p, false).await.map(|_| ()),
+        "project_env_preview" => s.projects.env_preview(a, None, "A=1").await.map(|_| ()),
+        "project_env_write" => s.projects.env_write(a, p, "A=1\n").await.map(|_| ()),
+        "project_env_variables_write" => s
+            .projects
+            .env_variables_write(
+                a,
+                p,
+                &[crate::deploy::env::VarChange {
+                    key: "A".into(),
+                    value: Some("1".into()),
+                }],
+            )
+            .await
+            .map(|_| ()),
+        "project_ports_list" => s.projects.ports_list(a, p).await.map(|_| ()),
+        "project_ports_set" => s.projects.ports_set(a, p, &[]).await.map(|_| ()),
+        "project_deploy_token_reveal" => s.projects.deploy_token_reveal(a, p).await.map(|_| ()),
+        "project_deploy_token_rotate" => s.projects.deploy_token_rotate(a, p).await.map(|_| ()),
+        "project_stop" => s.projects.stop(a, p).await.map(|_| ()),
+        "project_restart" => s.projects.restart(a, p).await.map(|_| ()),
+        "project_deploy" => s
+            .deployments
+            .deploy(a, p, &DeployRequest::default())
+            .await
+            .map(|_| ()),
+        "project_rollback_preview" => s
+            .deployments
+            .rollback_preview(a, p, &RollbackRequest::default())
+            .await
+            .map(|_| ()),
+        "project_rollback" => s
+            .deployments
+            .rollback(a, p, &RollbackRequest::default())
+            .await
+            .map(|_| ()),
+        "deployments_list" => s.deployments.list(a, &Default::default()).await.map(|_| ()),
+        "deployment_get" => s.deployments.get(a, d).await.map(|_| ()),
+        "deployment_logs" => s.deployments.logs(a, d, None).await.map(|_| ()),
+        "deployment_logs_stream" => s.deployments.log_stream(a, d, None).await.map(|_| ()),
+        "deployment_cancel" => s.deployments.cancel(a, d).await.map(|_| ()),
+        "deployments_events_stream" => s.deployments.events_stream(a).await.map(|_| ()),
+        "deploy_webhook" => s
+            .deployments
+            .deploy_webhook(&origin, p, "ydp_nope")
+            .await
+            .map(|_| ()),
+        "github_webhook" => s
+            .deployments
+            .github_webhook(
+                &origin,
+                p,
+                &GithubDelivery {
+                    signature: None,
+                    event: Some("push"),
+                    delivery_id: None,
+                    form_encoded: false,
+                    body: b"{}",
+                },
+            )
+            .await
+            .map(|_| ()),
+        "deploy_key_list" => s.deploy_keys.list(a).await.map(|_| ()),
+        "deploy_key_public_get" => s.deploy_keys.public_get(a, &f.key).await.map(|_| ()),
+        "deploy_key_create" => s.deploy_keys.create(a, "matrix-key").await.map(|_| ()),
+        "deploy_key_import" => s
+            .deploy_keys
+            .import(
+                a,
+                "matrix-import",
+                &crate::secrets::Secret::new("not a key"),
+            )
+            .await
+            .map(|_| ()),
+        "deploy_key_delete" => s.deploy_keys.delete(a, &f.key).await,
+        "registry_credential_list" => s.registry_credentials.list(a).await.map(|_| ()),
+        "registry_credential_create" => s
+            .registry_credentials
+            .create(
+                a,
+                "matrix-cred",
+                "docker.io",
+                "u",
+                &crate::secrets::Secret::new("pw-1234"),
+            )
+            .await
+            .map(|_| ()),
+        "registry_credential_update" => s
+            .registry_credentials
+            .update(a, &f.cred, &Default::default())
+            .await
+            .map(|_| ()),
+        "registry_credential_delete" => s.registry_credentials.delete(a, &f.cred).await,
+        _ => return None,
+    };
+    Some(r)
+}
+
+/// The per-permission cells of 08-conventions section 5 for every Project-scoped operation:
+/// exact permission allows, a different permission is 403 (view-only ops allow), no access row
+/// is 404, and a token never widens its user (scope caps; another Member's token is 404).
+#[tokio::test]
+async fn project_scoped_operations_per_permission() {
+    use crate::actor::{Access, Need};
+    let mut failures = Vec::new();
+    let project_ops: Vec<_> = all_operations()
+        .into_iter()
+        .filter(|o| matches!(o.access, Access::Project(_)))
+        .collect();
+    assert!(project_ops.len() >= 15);
+    for op in project_ops {
+        let Access::Project(need) = op.access else {
+            continue;
+        };
+        let mut f = fixture().await;
+        let other_perms = |skip: Option<Permission>| -> Vec<Permission> {
+            Permission::ALL
+                .into_iter()
+                .filter(|p| Some(*p) != skip)
+                .collect()
+        };
+        let exact_perms: Vec<Permission> = match need {
+            Need::Permission(p) => vec![p],
+            Need::View => vec![],
+        };
+        let skip = match need {
+            Need::Permission(p) => Some(p),
+            Need::View => None,
+        };
+        let exact = f
+            .core
+            .create_member("exact", &[("prj_1", &exact_perms)])
+            .await;
+        let others = f
+            .core
+            .create_member("others", &[("prj_1", &other_perms(skip))])
+            .await;
+        let none = f.core.create_member("noaccess", &[("prj_2", &[])]).await;
+
+        let kind_of = |r: Result<(), CoreError>| r.err().map(|e| e.kind);
+        let check = |label: &str,
+                     got: Option<ErrorKind>,
+                     want: Option<ErrorKind>,
+                     out: &mut Vec<String>| {
+            if got.is_some() != want.is_some() || (want.is_some() && got != want) {
+                out.push(format!(
+                    "{} / {label}: expected {want:?}, got {got:?}",
+                    op.name
+                ));
+            }
+        };
+        // Session actors: authorize() and the real service call must agree.
+        let exact_s = f.core.session_actor(&exact).await;
+        check(
+            "exact permission",
+            kind_of(exact_s.authorize(op, Some("prj_1"))),
+            None,
+            &mut failures,
+        );
+        let res = invoke(&f, op.name, &exact_s).await;
+        if matches!(res, Err(ref e) if matches!(e.kind, ErrorKind::Forbidden | ErrorKind::NotFound))
+        {
+            failures.push(format!(
+                "{} service denied the exact-permission member: {res:?}",
+                op.name
+            ));
+        }
+        // A successful delete consumed the seeded row; the Backup rule authorizes after loading
+        // it (the Project comes from the row), so seed a fresh one for the remaining actors.
+        if op.name == "backup_delete" {
+            f.project_backup = project_backup_fixture(&f.core, "prj_1").await;
+        }
+        let others_s = f.core.session_actor(&others).await;
+        let want_other = matches!(need, Need::Permission(_)).then_some(ErrorKind::Forbidden);
+        check(
+            "other permissions",
+            kind_of(others_s.authorize(op, Some("prj_1"))),
+            want_other.clone(),
+            &mut failures,
+        );
+        if want_other.is_some() {
+            let res = invoke(&f, op.name, &others_s).await;
+            if !matches!(res, Err(ref e) if e.kind == ErrorKind::Forbidden) {
+                failures.push(format!(
+                    "{} service let a member with other permissions through: {res:?}",
+                    op.name
+                ));
+            }
+        }
+        let none_s = f.core.session_actor(&none).await;
+        check(
+            "no access row",
+            kind_of(none_s.authorize(op, Some("prj_1"))),
+            Some(ErrorKind::NotFound),
+            &mut failures,
+        );
+        let res = invoke(&f, op.name, &none_s).await;
+        if !matches!(res, Err(ref e) if e.kind == ErrorKind::NotFound) {
+            failures.push(format!(
+                "{} service did not 404 a member without access: {res:?}",
+                op.name
+            ));
+        }
+        // Tokens: scope caps the user, never widens it.
+        for scope in Scope::ALL {
+            let (_, tok) = f.core.token_actor(&exact, scope).await;
+            let want = (scope < op.min_scope).then_some(ErrorKind::Forbidden);
+            check(
+                &format!("exact member token {scope}"),
+                kind_of(tok.authorize(op, Some("prj_1"))),
+                want,
+                &mut failures,
+            );
+            let (_, tok) = f.core.token_actor(&none, scope).await;
+            let want = if scope < op.min_scope {
+                ErrorKind::Forbidden
+            } else {
+                ErrorKind::NotFound
+            };
+            check(
+                &format!("no-access member token {scope}"),
+                kind_of(tok.authorize(op, Some("prj_1"))),
+                Some(want),
+                &mut failures,
+            );
+        }
+    }
+    assert!(failures.is_empty(), "violations:\n{}", failures.join("\n"));
 }

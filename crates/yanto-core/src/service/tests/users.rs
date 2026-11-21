@@ -15,6 +15,9 @@ fn grant(p: &str, perms: &[Permission]) -> GrantInput {
 #[tokio::test]
 async fn create_lists_updates_and_deletes_a_member() {
     let core = TestCore::new().await;
+    for p in ["prj_1", "prj_2", "prj_3"] {
+        core.ensure_project(p).await;
+    }
     let owner = core.setup_owner().await;
     let o = core.session_actor(&owner).await;
     let created = core
@@ -48,6 +51,15 @@ async fn create_lists_updates_and_deletes_a_member() {
         .await
         .unwrap();
     assert_eq!(updated.grants.len(), 2);
+    assert!(matches!(
+        kind(
+            core.services
+                .users
+                .update_access(&o, &created.user.id, &[grant("prj_nope", &[])])
+                .await
+        ),
+        ErrorKind::Validation(_)
+    ));
     let n: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM user_project_permissions WHERE project_id = 'prj_1'",
     )

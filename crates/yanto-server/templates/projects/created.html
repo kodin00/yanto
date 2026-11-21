@@ -1,0 +1,18 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>Project {{ name }} created</h1>
+<div class="secret">
+  <p><strong>Deploy Token</strong> (shown once; reveal it later from the project page with the secrets permission):</p>
+  <code class="link">{{ token }}</code>
+  <p class="muted">Use it as <code>Authorization: Bearer &lt;token&gt;</code> for <code>POST {{ base_url }}/deploy?id={{ project_id }}</code>, and as the secret of the GitHub push webhook (<code>/webhooks/github?id={{ project_id }}</code>).</p>
+</div>
+{% if let Some(k) = public_key %}
+<div class="secret">
+  <p><strong>Deploy key</strong> (add this public key to the repository as a read-only deploy key):</p>
+  <code class="link">{{ k }}</code>
+  <p class="muted">Fingerprint {{ fingerprint }}</p>
+</div>
+{% endif %}
+<p><a href="/projects/{{ project_id }}">Open project</a></p>
+{% endblock %}

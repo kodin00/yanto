@@ -1,0 +1,33 @@
+<div class="card">
+  <h3>Rollback preview</h3>
+  {% if let Some(c) = pv.current %}<p>Current: {% if let Some(s) = c.commit_sha %}<code>{{ s }}</code>{% endif %}{% if let Some(i) = c.image_digest %} <code>{{ i }}</code>{% endif %}</p>{% endif %}
+  <p>Target: {% if let Some(s) = pv.target.commit_sha %}<code>{{ s }}</code>{% endif %}{% if let Some(m) = pv.target.commit_message %} {{ m }}{% endif %}{% if let Some(i) = pv.target.image_digest %} <code>{{ i }}</code>{% endif %}</p>
+  {% if let Some(b) = pv.commits_behind %}<p>{{ b }} commit(s) will be undone{% if let Some(a) = pv.commits_ahead %}, {{ a }} ahead of the current one{% endif %}.</p>{% endif %}
+  {% if !pv.files.is_empty() %}
+  <table><thead><tr><th>File</th><th>+</th><th>-</th></tr></thead><tbody>
+  {% for f in pv.files %}<tr><td>{{ f.path }}</td><td>{{ f.added }}</td><td>{{ f.removed }}</td></tr>{% endfor %}
+  </tbody></table>
+  {% if pv.files_truncated %}<p class="muted">Only the first 40 files are shown.</p>{% endif %}
+  {% endif %}
+  {% if let Some(avail) = pv.image_available %}{% if !avail %}<p class="error">The target image is no longer available from its registry.</p>{% endif %}{% endif %}
+  {% if pv.restores_config %}
+  <h4>Compose diff</h4>
+  {% if diff_lines.is_empty() %}<p class="muted">No compose changes.</p>{% else %}
+  <pre class="diff">{% for l in diff_lines %}<span class="diff-{{ l.0 }}">{{ l.1 }}</span>
+{% endfor %}</pre>{% endif %}
+  <h4>Environment (keys only)</h4>
+  <ul>
+    {% for k in pv.env_diff.added %}<li>+ <code>{{ k }}</code> added</li>{% endfor %}
+    {% for k in pv.env_diff.removed %}<li>- <code>{{ k }}</code> removed</li>{% endfor %}
+    {% for k in pv.env_diff.changed %}<li>~ <code>{{ k }}</code> value changes</li>{% endfor %}
+    {% if pv.env_diff.added.is_empty() && pv.env_diff.removed.is_empty() && pv.env_diff.changed.is_empty() %}<li class="muted">No environment changes.</li>{% endif %}
+  </ul>
+  {% endif %}
+  {% for n in pv.notes %}<p class="muted">{{ n }}</p>{% endfor %}
+  <form method="post" action="/projects/{{ project_id }}/rollback">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <input type="hidden" name="deployment_id" value="{{ target_deployment }}">
+    <input type="hidden" name="git_ref" value="{{ git_ref }}">
+    <button class="danger" type="submit">Roll back</button>
+  </form>
+</div>

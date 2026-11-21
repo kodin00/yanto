@@ -29,6 +29,7 @@ tower-http.workspace = true
 tracing.workspace = true
 futures-util = { version = "0.3.34", default-features = false, features = ["alloc", "sink"] }
 tokio-util = { version = "0.7.20", features = ["io"] }
+tokio-stream = "0.1.19"
 
 [dev-dependencies]
 sqlx.workspace = true

@@ -74,6 +74,13 @@ impl Fx {
             passwords: Passwords::cheap_for_tests(),
             docker: Arc::new(yanto_core::testing::docker::FakeDocker::new()),
             host_stats: Arc::new(yanto_core::testing::host_stats::FakeHostStats::new()),
+            host: yanto_core::deploy::HostPorts {
+                command: Arc::new(yanto_host::TokioCommands),
+                probe: Arc::new(yanto_host::ProcProbe),
+                registry_auth: Arc::new(yanto_host::RunDirRegistryAuth::new(
+                    h.run_dir.join("deploy"),
+                )),
+            },
             host_mgmt: HostMgmtPorts {
                 users: users.clone(),
                 cron: Arc::new(

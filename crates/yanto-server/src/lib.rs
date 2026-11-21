@@ -11,6 +11,7 @@ mod download;
 mod error;
 mod nav;
 mod net;
+mod webhooks;
 
 #[cfg(feature = "testing")]
 pub mod testing;

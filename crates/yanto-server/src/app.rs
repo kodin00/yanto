@@ -14,7 +14,7 @@ use yanto_core::service::Services;
 use yanto_core::{Config, Db};
 
 use crate::net::{Cidr, default_trusted_proxies};
-use crate::{api_v1, assets, dashboard};
+use crate::{api_v1, assets, dashboard, webhooks};
 
 /// Default request body limit (1 MiB, as in the legacy server).
 const BODY_LIMIT: usize = 1024 * 1024;
@@ -75,6 +75,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .merge(assets::routes())
+        .merge(webhooks::routes())
         .nest("/api/v1", api_v1::routes(&state))
         .merge(dashboard::routes(&state))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
