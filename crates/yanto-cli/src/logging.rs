@@ -13,3 +13,18 @@ pub fn init(cfg: &LogConfig) -> anyhow::Result<()> {
     }
     .map_err(|e| anyhow::anyhow!("cannot install tracing subscriber: {e}"))
 }
+
+/// Like [`init`] but writing to stderr: stdout belongs to the MCP protocol (`yanto mcp`).
+pub fn init_stderr(cfg: &LogConfig) -> anyhow::Result<()> {
+    let filter = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new(&cfg.level))
+        .map_err(|e| anyhow::anyhow!("invalid log.level {:?}: {e}", cfg.level))?;
+    let builder = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr);
+    match cfg.format {
+        LogFormat::Json => builder.json().try_init(),
+        LogFormat::Pretty => builder.pretty().try_init(),
+    }
+    .map_err(|e| anyhow::anyhow!("cannot install tracing subscriber: {e}"))
+}
