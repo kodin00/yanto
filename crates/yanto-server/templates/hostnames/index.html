@@ -1,0 +1,59 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>Hostnames</h1>
+<p class="muted">A Hostname publishes a Project's declared loopback port (or the Hosted Registry) on the internet through one Ingress Provider. Publishing exposes the service publicly: Cloudflare Access and WAF rules are your responsibility.</p>
+
+{% if let Some(e) = error %}<p class="error" role="alert">{{ e }}</p>{% endif %}
+{% for n in notices %}<p class="muted" role="status">{{ n }}</p>{% endfor %}
+
+{% include "hostnames/_rows.html" %}
+
+<section class="card">
+  <h2>New Hostname</h2>
+  <form method="post" action="/hostnames" class="stack">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <label>Hostname <input name="hostname" value="{{ form_hostname }}" placeholder="app.example.com" autocomplete="off" required></label>
+    <label>Target
+      <select name="target" required>
+        {% for t in targets %}<option value="{{ t.value }}">{{ t.label }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Ingress Provider
+      <select name="provider">
+        <option value="cloudflare_tunnel">Cloudflare Tunnel{% if let Some(t) = tunnel_name %} (tunnel {{ t }}){% else %} (no active tunnel){% endif %}</option>
+        <option value="traefik"{% if !traefik_ready %} disabled{% endif %}>Traefik{% if !traefik_ready %} (not ready){% endif %}</option>
+      </select>
+    </label>
+    {% if !traefik_ready %}<p class="muted">Traefik is not ready: {{ traefik_reason }}.{% if is_owner %} <a href="/traefik">Details</a>{% endif %}</p>{% endif %}
+    <label>Cloudflare zone for DNS
+      <select name="zone_id">
+        <option value="">none (I manage DNS myself)</option>
+        {% for z in zones %}<option value="{{ z.id }}">{{ z.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label><input type="checkbox" name="manage_dns" value="1"> Let Yanto manage the DNS record (CNAME to the tunnel, or A/AAAA to the Host public IP for Traefik)</label>
+    <button type="submit">Create</button>
+  </form>
+</section>
+
+{% if is_owner %}
+<section class="card">
+  <h2>Provider tools</h2>
+  <p><a href="/hostnames/diagnostics">Diagnose all</a> &middot; <a href="/traefik">Traefik status and prerequisites</a> &middot; <a href="/cloudflare">Cloudflare</a></p>
+  <form method="post" action="/hostnames/resync" class="inline">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <button type="submit">Re-sync providers</button>
+    <span class="muted">Pushes the full Cloudflare ingress and the Traefik file again; manual edits in either place are overwritten.</span>
+  </form>
+  <form method="post" action="/hostnames/public-ip" class="stack">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <h3>Host public IP</h3>
+    <p class="muted">Used for A/AAAA records of Traefik Hostnames. Yanto never looks it up for you. {% if public_ip_set %}Currently set.{% else %}Not set.{% endif %}</p>
+    <label>IPv4 <input name="v4" placeholder="203.0.113.5"></label>
+    <label>IPv6 <input name="v6" placeholder="2001:db8::5"></label>
+    <button type="submit">Save</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

@@ -261,6 +261,7 @@ fn rest_routes(bob: &str, yb: &str, pb: &str) -> Vec<Rest> {
     .into_iter()
     .chain(rest_routes_m2())
     .chain(rest_routes_m6())
+    .chain(rest_routes_m7())
     .collect()
 }
 
@@ -678,6 +679,7 @@ fn dash_routes() -> Vec<Dash> {
     .into_iter()
     .chain(dash_routes_m2())
     .chain(dash_routes_m6())
+    .chain(dash_routes_m7())
     .collect()
 }
 
@@ -887,6 +889,7 @@ async fn dashboard_routes_against_every_principal() {
                         | "/registry/enable"
                         | "/registry/settings"
                         | "/registry/users"
+                        | "/hostnames/resync"
                 ) {
                     failures.push(format!("{label}: expected success, got {status}"));
                 }
@@ -995,6 +998,174 @@ fn rest_routes_m6() -> Vec<Rest> {
     ]
 }
 
+/// M7 routes. Columns: [owner-read, owner-write, owner-admin, member-read, member-write,
+/// member-admin]; the Member (alice) holds only `deploy` on prj_1, so Hostname operations are 403
+/// for her. Operations on an id read the scope first and then answer 404 for unknown ids, so a
+/// token with enough scope counts as "allowed" (past authorization).
+fn rest_routes_m7() -> Vec<Rest> {
+    let (t, f) = (true, false);
+    let any = [t; 6];
+    let owner_read = [t, t, t, f, f, f];
+    let owner_write = [f, t, t, f, f, f];
+    let owner_admin = [f, f, t, f, f, f];
+    let id_write = [f, t, t, f, t, t];
+    let id_admin = [f, f, t, f, f, t];
+    let r = |method: Method, path: &str, body: serde_json::Value, allowed| Rest {
+        method,
+        path: path.to_owned(),
+        body,
+        allowed,
+    };
+    let host = json!({"hostname": "a.example.com", "ingress_provider": "traefik",
+        "project_id": "prj_1", "project_port_id": "ppt_none"});
+    let dns = json!({"client_id": "cfc_x", "zone_id": "z", "type": "A", "name": "a.example.com", "content": "203.0.113.1"});
+    let dns_body = json!({"type": "A", "name": "a.example.com", "content": "203.0.113.1"});
+    let zone = "?client_id=cfc_x&zone_id=z";
+    vec![
+        r(Method::GET, "/api/v1/hostnames", json!({}), any),
+        r(Method::GET, "/api/v1/hostnames/options", json!({}), any),
+        r(Method::GET, "/api/v1/hostnames/diagnostics", json!({}), any),
+        r(Method::POST, "/api/v1/hostnames", host, owner_write),
+        r(
+            Method::POST,
+            "/api/v1/hostnames/resync",
+            json!({}),
+            owner_write,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/hostnames/public-ip",
+            json!({}),
+            owner_admin,
+        ),
+        r(
+            Method::DELETE,
+            "/api/v1/hostnames/hst_x",
+            json!({}),
+            id_admin,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/hostnames/hst_x/retry",
+            json!({}),
+            id_write,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/hostnames/hst_x/enable",
+            json!({}),
+            id_write,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/hostnames/hst_x/disable",
+            json!({}),
+            id_write,
+        ),
+        r(Method::GET, "/api/v1/traefik", json!({}), owner_read),
+        r(Method::GET, "/api/v1/daemons", json!({}), owner_read),
+        r(
+            Method::POST,
+            "/api/v1/daemons/frps/restart",
+            json!({"confirm": true}),
+            owner_admin,
+        ),
+        r(
+            Method::GET,
+            "/api/v1/cloudflare/clients",
+            json!({}),
+            owner_read,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/cloudflare/clients/validate",
+            json!({"account_id": "x", "api_token": "t"}),
+            owner_admin,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/cloudflare/clients",
+            json!({"name": "n", "account_id": "x", "api_token": "t"}),
+            owner_admin,
+        ),
+        r(
+            Method::PATCH,
+            "/api/v1/cloudflare/clients/cfc_x",
+            json!({"name": "n"}),
+            owner_admin,
+        ),
+        r(
+            Method::DELETE,
+            "/api/v1/cloudflare/clients/cfc_x",
+            json!({}),
+            owner_admin,
+        ),
+        r(
+            Method::GET,
+            "/api/v1/cloudflare/clients/cfc_x/zones",
+            json!({}),
+            owner_read,
+        ),
+        r(
+            Method::GET,
+            "/api/v1/cloudflare/tunnels",
+            json!({}),
+            owner_read,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/cloudflare/tunnels",
+            json!({"client_id": "cfc_x", "name": "t"}),
+            owner_write,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/cloudflare/tunnels/cft_x/activate",
+            json!({}),
+            owner_admin,
+        ),
+        r(
+            Method::GET,
+            "/api/v1/cloudflare/tunnels/cft_x/status",
+            json!({}),
+            owner_read,
+        ),
+        r(
+            Method::DELETE,
+            "/api/v1/cloudflare/tunnels/cft_x",
+            json!({}),
+            owner_admin,
+        ),
+        r(
+            Method::GET,
+            &format!("/api/v1/cloudflare/dns{zone}"),
+            json!({}),
+            owner_read,
+        ),
+        r(Method::POST, "/api/v1/cloudflare/dns", dns, owner_write),
+        r(
+            Method::PATCH,
+            &format!("/api/v1/cloudflare/dns/rec{zone}"),
+            dns_body,
+            owner_write,
+        ),
+        r(
+            Method::DELETE,
+            &format!("/api/v1/cloudflare/dns/rec{zone}"),
+            json!({}),
+            owner_admin,
+        ),
+        r(Method::GET, "/api/v1/frp", json!({}), owner_read),
+        r(
+            Method::PATCH,
+            "/api/v1/frp/settings",
+            json!({}),
+            owner_write,
+        ),
+        r(Method::POST, "/api/v1/frp/restore", json!({}), owner_write),
+    ]
+}
+
 /// M6 Hosted Registry dashboard routes: Owner only.
 fn dash_routes_m6() -> Vec<Dash> {
     let d = |method, path, form, htmx, member_ok| Dash {
@@ -1054,5 +1225,147 @@ fn dash_routes_m6() -> Vec<Dash> {
         d(Method::GET, "/registry/gc", &[], true, false),
         d(Method::POST, "/registry/gc", &[], true, false),
         d(Method::POST, "/registry/gc/preview", &[], true, false),
+    ]
+}
+
+/// M7 dashboard routes. Hostname operations on an id answer 404 for unknown ids (so a Member is
+/// "past authorization"); the Project-scoped ones with a Project id are 403 for alice.
+fn dash_routes_m7() -> Vec<Dash> {
+    let d = |method, path, form, htmx, member_ok| Dash {
+        method,
+        path,
+        form,
+        htmx,
+        member_ok,
+    };
+    let dns_form: &[(&str, &str)] = &[
+        ("client_id", "cfc_x"),
+        ("zone_id", "z"),
+        ("type", "A"),
+        ("name", "a.example.com"),
+        ("content", "203.0.113.1"),
+    ];
+    vec![
+        d(Method::GET, "/hostnames", &[], false, true),
+        d(Method::GET, "/hostnames/diagnostics", &[], false, true),
+        d(
+            Method::POST,
+            "/hostnames",
+            &[
+                ("target", "prj_1|ppt_none"),
+                ("hostname", "a.example.com"),
+                ("provider", "traefik"),
+            ],
+            false,
+            false,
+        ),
+        d(Method::POST, "/hostnames/resync", &[], false, false),
+        d(
+            Method::POST,
+            "/hostnames/public-ip",
+            &[("v4", "not-an-ip")],
+            false,
+            false,
+        ),
+        d(Method::DELETE, "/hostnames/hst_x", &[], true, true),
+        d(Method::POST, "/hostnames/hst_x/retry", &[], true, true),
+        d(Method::POST, "/hostnames/hst_x/enable", &[], true, true),
+        d(Method::POST, "/hostnames/hst_x/disable", &[], true, true),
+        d(Method::GET, "/traefik", &[], false, false),
+        d(Method::GET, "/projects/prj_1/hostnames", &[], true, false),
+        d(Method::GET, "/cloudflare", &[], false, false),
+        d(
+            Method::POST,
+            "/cloudflare/clients",
+            &[("name", "n"), ("account_id", "x"), ("api_token", "t")],
+            false,
+            false,
+        ),
+        d(
+            Method::POST,
+            "/cloudflare/clients/validate",
+            &[("account_id", "x"), ("api_token", "t")],
+            true,
+            false,
+        ),
+        d(
+            Method::PUT,
+            "/cloudflare/clients/cfc_x",
+            &[("name", "n")],
+            true,
+            false,
+        ),
+        d(
+            Method::DELETE,
+            "/cloudflare/clients/cfc_x",
+            &[],
+            true,
+            false,
+        ),
+        d(
+            Method::GET,
+            "/cloudflare/clients/cfc_x/zones",
+            &[],
+            true,
+            false,
+        ),
+        d(
+            Method::POST,
+            "/cloudflare/tunnels",
+            &[("client_id", "cfc_x"), ("name", "t")],
+            false,
+            false,
+        ),
+        d(
+            Method::DELETE,
+            "/cloudflare/tunnels/cft_x",
+            &[],
+            true,
+            false,
+        ),
+        d(
+            Method::POST,
+            "/cloudflare/tunnels/cft_x/activate",
+            &[],
+            true,
+            false,
+        ),
+        d(
+            Method::GET,
+            "/cloudflare/tunnels/cft_x/status",
+            &[],
+            true,
+            false,
+        ),
+        d(
+            Method::POST,
+            "/cloudflare/tunnels/cft_x/token/reveal",
+            &[],
+            false,
+            false,
+        ),
+        d(Method::GET, "/dns", &[], false, false),
+        d(Method::POST, "/dns", dns_form, false, false),
+        d(Method::PUT, "/dns/rec", dns_form, true, false),
+        d(
+            Method::DELETE,
+            "/dns/rec?client_id=cfc_x&zone_id=z",
+            &[],
+            true,
+            false,
+        ),
+        d(Method::GET, "/frp", &[], false, false),
+        d(Method::GET, "/frp/proxies", &[], true, false),
+        d(Method::PUT, "/frp/settings", &[], true, false),
+        d(Method::POST, "/frp/restore", &[], false, false),
+        d(Method::POST, "/frp/token/reveal", &[], false, false),
+        d(Method::GET, "/daemons", &[], false, false),
+        d(
+            Method::POST,
+            "/daemons/frps/restart",
+            &[("confirm", "true")],
+            true,
+            false,
+        ),
     ]
 }

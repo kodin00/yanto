@@ -69,6 +69,31 @@ pub const NAV: &[NavEntry] = &[
         view: Some(AppView::Ssh),
     },
     NavEntry {
+        label: "Hostnames",
+        href: "/hostnames",
+        view: Some(AppView::Hostnames),
+    },
+    NavEntry {
+        label: "Cloudflare",
+        href: "/cloudflare",
+        view: Some(AppView::Dns),
+    },
+    NavEntry {
+        label: "DNS",
+        href: "/dns",
+        view: Some(AppView::Dns),
+    },
+    NavEntry {
+        label: "FRP",
+        href: "/frp",
+        view: Some(AppView::Frp),
+    },
+    NavEntry {
+        label: "Host Daemons",
+        href: "/daemons",
+        view: Some(AppView::System),
+    },
+    NavEntry {
         label: "Backups",
         href: "/backups",
         view: Some(AppView::Backups),

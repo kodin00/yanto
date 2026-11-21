@@ -14,6 +14,7 @@ mod docker;
 mod host_probe;
 mod host_stats;
 mod hostmgmt;
+mod ingress;
 mod registry_api;
 mod registry_auth;
 mod users;
@@ -34,6 +35,7 @@ pub use docker::*;
 pub use host_probe::{HostProbePort, Listener};
 pub use host_stats::*;
 pub use hostmgmt::{HostMgmtPorts, Unsupported};
+pub use ingress::*;
 pub use registry_api::{
     ManifestInfo, Page, RegistryApiError, RegistryApiPort, RegistryDeps, RegistryEndpoint,
 };

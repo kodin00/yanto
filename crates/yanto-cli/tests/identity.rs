@@ -79,6 +79,11 @@ async fn setup_code_then_owner_reset() {
             Arc::new(yanto_host::HttpRegistryApi::new()),
         ),
         host_mgmt: yanto_core::ports::HostMgmtPorts::unsupported(),
+        ingress: yanto_host::ingress_ports_without_registry(
+            &config,
+            Arc::new(yanto_host::TokioCommands),
+            None,
+        ),
         host: yanto_core::deploy::HostPorts {
             command: Arc::new(yanto_host::TokioCommands),
             probe: Arc::new(yanto_host::ProcProbe),

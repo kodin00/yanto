@@ -108,6 +108,7 @@ async fn registry_end_to_end_with_a_real_daemon() {
         host_stats: Arc::new(yanto_host::SysinfoStats::new()),
         registry: RegistryDeps::new(Arc::new(HttpRegistryApi::new())),
         host_mgmt: yanto_core::ports::HostMgmtPorts::unsupported(),
+        ingress: yanto_host::ingress_ports_without_registry(&config, Arc::new(TokioCommands), None),
         host: HostPorts {
             command: Arc::new(TokioCommands),
             probe: Arc::new(ProcProbe),

@@ -13,6 +13,7 @@ mod authorized_keys;
 mod backups;
 mod containers;
 mod cron;
+mod ingress;
 mod me;
 mod projects;
 mod registry;
@@ -49,6 +50,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .merge(backups::routes())
         .merge(projects::routes())
         .merge(registry::routes())
+        .merge(ingress::routes())
         .fallback(not_found)
         .layer(axum::middleware::map_response(no_store))
 }

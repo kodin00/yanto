@@ -220,6 +220,96 @@ const GRID: &[(&str, &str)] = &[
     ("registry_tag_delete", "Y   N    N   N   Y   N   N   N   Y"),
     ("registry_gc_preview", "Y   N    N   N   Y   N   N   N   Y"),
     ("registry_gc", "Y   N    N   N   Y   N   N   N   Y"),
+    // M7 ingress and FRP. Owner-only except the Hostname operations, which are Project-scoped
+    // (`hostnames` permission; alice has only `deploy`). Reveal operations are session-only.
+    ("daemons_status", "Y   N    Y   Y   Y   N   N   N   Y"),
+    ("daemon_control", "Y   N    N   N   Y   N   N   N   Y"),
+    (
+        "cloudflare_clients_list",
+        "Y   N    Y   Y   Y   N   N   N   Y",
+    ),
+    (
+        "cloudflare_client_validate",
+        "Y   N    N   N   Y   N   N   N   Y",
+    ),
+    (
+        "cloudflare_client_create",
+        "Y   N    N   N   Y   N   N   N   Y",
+    ),
+    (
+        "cloudflare_client_update",
+        "Y   N    N   N   Y   N   N   N   Y",
+    ),
+    (
+        "cloudflare_client_delete",
+        "Y   N    N   N   Y   N   N   N   Y",
+    ),
+    (
+        "cloudflare_zones_list",
+        "Y   N    Y   Y   Y   N   N   N   Y",
+    ),
+    (
+        "cloudflare_tunnels_list",
+        "Y   N    Y   Y   Y   N   N   N   Y",
+    ),
+    (
+        "cloudflare_tunnel_create",
+        "Y   N    N   Y   Y   N   N   N   Y",
+    ),
+    (
+        "cloudflare_tunnel_activate",
+        "Y   N    N   N   Y   N   N   N   Y",
+    ),
+    (
+        "cloudflare_tunnel_status",
+        "Y   N    Y   Y   Y   N   N   N   Y",
+    ),
+    (
+        "cloudflare_tunnel_delete",
+        "Y   N    N   N   Y   N   N   N   Y",
+    ),
+    (
+        "cloudflare_tunnel_token_reveal",
+        "Y   N    N   N   N   N   N   N   Y",
+    ),
+    ("cloudflare_dns_list", "Y   N    Y   Y   Y   N   N   N   Y"),
+    (
+        "cloudflare_dns_create",
+        "Y   N    N   Y   Y   N   N   N   Y",
+    ),
+    (
+        "cloudflare_dns_update",
+        "Y   N    N   Y   Y   N   N   N   Y",
+    ),
+    (
+        "cloudflare_dns_delete",
+        "Y   N    N   N   Y   N   N   N   Y",
+    ),
+    ("frps_overview", "Y   N    Y   Y   Y   N   N   N   Y"),
+    ("frps_settings_update", "Y   N    N   Y   Y   N   N   N   Y"),
+    ("frps_config_restore", "Y   N    N   Y   Y   N   N   N   Y"),
+    ("frps_token_reveal", "Y   N    N   N   N   N   N   N   Y"),
+    ("traefik_status", "Y   N    Y   Y   Y   N   N   N   Y"),
+    ("hostnames_resync", "Y   N    N   Y   Y   N   N   N   Y"),
+    (
+        "hostnames_public_ip_set",
+        "Y   N    N   N   Y   N   N   N   Y",
+    ),
+    (
+        "hostname_registry_manage",
+        "Y   N    N   N   Y   N   N   N   Y",
+    ),
+    ("hostnames_list", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    ("hostnames_options", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    (
+        "hostnames_diagnostics",
+        "Y   Y    Y   Y   Y   Y   Y   Y   Y",
+    ),
+    ("hostname_create", "Y   N    N   Y   Y   N   N   N   Y"),
+    ("hostname_retry", "Y   N    N   Y   Y   N   N   N   Y"),
+    ("hostname_enable", "Y   N    N   Y   Y   N   N   N   Y"),
+    ("hostname_disable", "Y   N    N   Y   Y   N   N   N   Y"),
+    ("hostname_delete", "Y   N    N   N   Y   N   N   N   Y"),
 ];
 
 /// Project-scoped operations are checked against prj_1 (Alice's only Project).
@@ -493,10 +583,13 @@ async fn invoke(f: &Fixture, op: &str, a: &Actor) -> Result<(), CoreError> {
         "backup_delete_yanto" => s.backups.delete(a, &f.yanto_backup).await,
         "backup_prune" => s.backups.prune(a, Retention::default()).await.map(|_| ()),
         other if is_m6(other) => invoke_m6(f, other, a).await,
-        other if invoke_m2(f, other, a).await.is_some() => {
-            invoke_m2(f, other, a).await.expect("checked")
-        }
-        other => panic!("no invocation for {other}"),
+        other => match invoke_m2(f, other, a).await {
+            Some(r) => r,
+            None => match super::matrix_ingress::invoke(&f.core, other, a).await {
+                Some(r) => r,
+                None => panic!("no invocation for {other}"),
+            },
+        },
     }
 }
 

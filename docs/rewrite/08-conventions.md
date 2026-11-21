@@ -259,3 +259,17 @@ sudo systemctl start yanto
 - `yanto-cli/src/cmd/backup.rs`: `backup project <slug> (--volumes|--db <service>)`; `dashboard/backups.rs` create form for Project kinds; `backup_restore` for volumes and dumps (04 7.6).
 - Migrations: follow-up `05xx` rebuilding `cron_entries` and `backups` with `REFERENCES projects (id) ON DELETE SET NULL` (and `project_databases` for `backups.database_id`).
 - Tests: `project_volume_and_database_backups_end_to_end` is `#[ignore]`d in `service/tests/backups.rs`.
+
+## 12. M7 (Ingress & FRP): what later milestones need to know
+
+**Hosted Registry hook (M6 merge).** Registry Hostnames (`target_kind = registry`) resolve their loopback port through `ports::RegistryTarget::listen_port() -> Result<Option<u16>>` (`None` = registry disabled, so creation fails with 422). The composition root passes `NoRegistry` today: in `yanto-cli/src/cmd/common.rs::open` replace the `TODO(M6-merge)` argument of `yanto_host::ingress_ports_without_registry(..)` with `yanto_host::ingress_ports(&config, Arc::new(TokioCommands), owner, Arc::new(<registry impl>))`. In tests set `core.ingress.registry.enable(port)`. The same hook decides reconcile: when the registry is disabled later, its Hostnames turn `error` on the next publish or Re-sync.
+
+**Deviations from 00-05.**
+- `hostnames.project_port_id` is `ON DELETE NO ACTION`, not `RESTRICT` (same effect for a single port; it does not break Project deletion ordering). Removing a port or a Project that has Hostnames is a 409 (`projects::delete` / `delete_port` check), instead of 02's silent cascade, because a cascade would leave the public route behind.
+- Only TCP ports on `127.0.0.1` can be targets (`::1` is refused); the target URL is always `http://127.0.0.1:<port>`.
+- `frp.config_path` wins when it is not the default; otherwise `-c` from the unit's `ExecStart`, else the default (04 8.3).
+- Extra operations: `hostnames_options` (Members read provider readiness, the active tunnel and its zones), `hostname_registry_manage` (Owner/admin for registry Hostnames), `hostnames_resync`, `hostnames_public_ip_set` (`host.public_ip[_v6]`), `frps_config_restore`, `frps_token_reveal` (session only). A Hostname without `tunnel_id` uses the active tunnel.
+- Hostname operations by id check the token scope before loading the row (403, not 404, for a weak token).
+- `daemon_control` needs `confirm: true` for every action (REST/MCP); the dashboard sends it from forms guarded by `hx-confirm` (the frps ones carry the dropped-tunnels warning, D28).
+
+**Unverified (OQ-23, OQ-27).** frps dashboard JSON field names (parsed leniently, the raw entry is kept), `frps verify`, Cloudflare tunnel `status` values (`inactive`/`down` are treated as "no connector"), minimum token permissions, an empty Traefik dynamic file, Traefik reload-by-signal, and DNS `comment` support.

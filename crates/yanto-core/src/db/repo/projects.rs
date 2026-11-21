@@ -127,6 +127,18 @@ pub async fn list(conn: &mut SqliteConnection) -> Result<Vec<ProjectRow>, CoreEr
 }
 
 pub async fn delete(conn: &mut SqliteConnection, id: &str) -> Result<(), CoreError> {
+    // M7: a Hostname publishes the Project on a provider; deleting the row would leave that
+    // public route behind (and its port free to be reused by another Project).
+    let hostnames: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM hostnames WHERE project_id = ?")
+        .bind(id)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(db_err)?;
+    if hostnames > 0 {
+        return Err(CoreError::conflict(format!(
+            "{hostnames} Hostname(s) still publish this project; delete them first"
+        )));
+    }
     sqlx::query("DELETE FROM projects WHERE id = ?")
         .bind(id)
         .execute(conn)
@@ -255,7 +267,15 @@ pub async fn delete_port(conn: &mut SqliteConnection, id: &str) -> Result<(), Co
         .execute(conn)
         .await
         .map(|_| ())
-        .map_err(db_err)
+        .map_err(|e| {
+            if e.as_database_error()
+                .is_some_and(|d| d.is_foreign_key_violation())
+            {
+                CoreError::conflict("a Hostname uses this port; delete the Hostname first")
+            } else {
+                db_err(e)
+            }
+        })
 }
 
 pub async fn update_port(

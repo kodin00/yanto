@@ -1,0 +1,76 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>FRP</h1>
+<p class="muted">Yanto manages the <code>frps</code> server side only. You install frp and write <code>frpc</code> configs yourself; Yanto never creates tunnels. Secrets stay in <code>frps.toml</code>.</p>
+
+<section class="card">
+  <h2>Status</h2>
+  <p><span class="badge {{ o.status_key }}">{{ o.status }}</span>{% if !o.version.is_empty() %} <span class="muted">version {{ o.version }}</span>{% endif %}</p>
+  {% for w in o.warnings %}<p class="error" role="alert">{{ w }}</p>{% endfor %}
+  {% if !o.installed %}
+  <p>frps is not installed (unit <code>{{ o.unit }}</code> not found). Nothing else on this page works until it is.</p>
+  <ul>{% for i in o.instructions %}<li>{{ i }}</li>{% endfor %}</ul>
+  <p class="muted">Sample unit (Yanto does not write it):</p>
+  <pre><code>{{ o.sample_unit }}</code></pre>
+  {% endif %}
+  {% if o.pending_restart %}
+  <div class="card" role="alert">
+    <strong>The saved configuration is not applied yet.</strong>
+    <p class="muted">Applying restarts frps and <strong>drops every live tunnel</strong>; clients reconnect on their own.</p>
+    <form hx-post="/daemons/frps/restart" hx-confirm="Restart frps now? This drops every live tunnel.">
+      <input type="hidden" name="confirm" value="true">
+      <button type="submit" class="danger">Restart frps to apply</button>
+    </form>
+    {% if o.backup %}
+    <form method="post" action="/frp/restore" class="inline">
+      <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+      <button type="submit">Restore the previous configuration</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% if o.installed %}
+  <form hx-post="/daemons/frps/start" class="inline"><input type="hidden" name="confirm" value="true"><button type="submit">Start</button></form>
+  <form hx-post="/daemons/frps/stop" class="inline" hx-confirm="Stop frps? This drops every live tunnel."><input type="hidden" name="confirm" value="true"><button type="submit" class="danger">Stop</button></form>
+  {% endif %}
+</section>
+
+{% if o.has_config %}
+<section class="card">
+  <h2>Configuration</h2>
+  <p class="muted"><code>{{ o.config_path }}</code>. Only the fields below are edited; every other key and comment is kept. Saving writes a backup first and does not restart frps.</p>
+  <form hx-put="/frp/settings" class="stack">
+    <label>Public host (shown in client setup hints) <input name="public_host" value="{{ o.public_host }}"></label>
+    <label>Bind address <input name="bind_addr" value="{{ o.bind_addr }}" placeholder="0.0.0.0"></label>
+    <label>Bind port <input name="bind_port" value="{{ o.bind_port }}" inputmode="numeric" placeholder="7000"></label>
+    <label>Auth method <input name="auth_method" value="{{ o.auth_method }}" placeholder="token"></label>
+    <label>Auth token <input type="password" name="auth_token" autocomplete="off" placeholder="{% if o.token_set %}set (leave empty to keep){% else %}not set{% endif %}"></label>
+    <label><input type="checkbox" name="generate_token" value="1"> Generate a new random token (32 bytes)</label>
+    <label>Dashboard address <input name="web_addr" value="{{ o.web_addr }}" placeholder="127.0.0.1"></label>
+    <label>Dashboard port <input name="web_port" value="{{ o.web_port }}" inputmode="numeric" placeholder="empty disables the dashboard"></label>
+    <label>Dashboard user <input name="web_user" value="{{ o.web_user }}"></label>
+    <label>Dashboard password <input type="password" name="web_password" autocomplete="off" placeholder="{% if o.password_set %}set (leave empty to keep){% else %}not set{% endif %}"></label>
+    <label>Allowed remote ports (one per line: <code>3001</code> or <code>2000-3000</code>)
+      <textarea name="allow_ports" rows="4">{{ o.allow_ports }}</textarea>
+    </label>
+    <button type="submit">Save</button>
+  </form>
+  <form method="post" action="/frp/token/reveal" class="inline">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <button type="submit">Reveal auth token</button> <span class="muted">frpc clients need it; revealing is audited.</span>
+  </form>
+  <h3>Other settings (read only)</h3>
+  <pre><code>{{ o.unowned }}</code></pre>
+</section>
+{% else if !o.config_error.is_empty() %}
+<section class="card"><p class="error" role="alert">{{ o.config_error }}. Writes are blocked until the file is valid.</p></section>
+{% endif %}
+
+{% if o.installed %}
+<section class="card">
+  <h2>Live proxies</h2>
+  <div hx-get="/frp/proxies" hx-trigger="load, every 5s" hx-swap="innerHTML">Loading...</div>
+</section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,25 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<p><a href="/hostnames">&larr; Hostnames</a></p>
+<h1>Hostname diagnostics</h1>
+<p class="muted">Read-only checks; nothing is changed. The public probe sends one <code>HEAD https://&lt;hostname&gt;/</code> request.</p>
+<p>
+  {% if public %}<a href="/hostnames/diagnostics{% if !id.is_empty() %}?id={{ id }}{% endif %}">Without public probe</a>
+  {% else %}<a href="/hostnames/diagnostics?{% if !id.is_empty() %}id={{ id }}&amp;{% endif %}public=1">Run again with public probe</a>{% endif %}
+</p>
+{% for d in items %}
+<section class="card">
+  <h2><code>{{ d.hostname }}</code> <span class="muted">{{ d.provider }}</span></h2>
+  <table>
+    <thead><tr><th>Check</th><th>Result</th><th>Detail</th></tr></thead>
+    <tbody>
+    {% for c in d.checks %}
+      <tr><td>{{ c.name }}</td><td><span class="badge {{ c.status }}">{{ c.status }}</span></td><td>{{ c.detail }}{% if !c.hint.is_empty() %}<br><span class="muted">{{ c.hint }}</span>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endfor %}
+{% if items.is_empty() %}<p class="muted">No Hostnames to check.</p>{% endif %}
+{% endblock %}

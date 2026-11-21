@@ -36,6 +36,8 @@ tracing.workspace = true
 zeroize.workspace = true
 zstd = "0.14.4"
 bcrypt = "0.19.3"
+toml_edit = "0.25.20"
+serde_norway = "0.9.42"
 
 [dev-dependencies]
 tempfile.workspace = true

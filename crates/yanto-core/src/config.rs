@@ -114,6 +114,11 @@ pub struct IngressConfig {
 pub struct TraefikConfig {
     pub dynamic_dir: PathBuf,
     pub cert_resolver: String,
+    /// Entry point routers listen on (TLS only).
+    pub entrypoint: String,
+    /// Operator's static config, parsed for the prerequisite checklist (best effort).
+    pub static_config: PathBuf,
+    pub unit: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -221,6 +226,9 @@ impl Default for TraefikConfig {
         Self {
             dynamic_dir: "/etc/traefik/dynamic".into(),
             cert_resolver: "letsencrypt".into(),
+            entrypoint: "websecure".into(),
+            static_config: "/etc/traefik/traefik.yml".into(),
+            unit: "traefik".into(),
         }
     }
 }

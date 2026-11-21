@@ -1,0 +1,10 @@
+<p class="muted">frps: {{ status }}. Refreshed every 5 seconds.</p>
+<table>
+  <thead><tr><th>Proxy</th><th>Type</th><th>Remote port</th><th>Status</th><th>Traffic today</th><th>Connections</th><th>Client</th></tr></thead>
+  <tbody>
+  {% for p in proxies %}
+    <tr><td>{{ p.name }}</td><td>{{ p.proxy_type }}</td><td>{{ p.remote_port }}</td><td><span class="badge {{ p.status }}">{{ p.status }}</span></td><td>{{ p.traffic }}</td><td>{{ p.connections }}</td><td>{{ p.client }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if proxies.is_empty() %}<p class="muted">No proxies. Clients (frpc) register them; Yanto never creates tunnels.</p>{% endif %}
