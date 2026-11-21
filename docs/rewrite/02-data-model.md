@@ -2,7 +2,7 @@
 
 # 02 — Data model (SQLite, v1.0.0)
 
-Binding inputs: [`00-scope.md`](00-scope.md) (D1–D21), ADRs 0002/0004/0005/0006/0007/0008, [`CONTEXT.md`](../../CONTEXT.md). Legacy reference: [`docs/legacy/03-database-schema.md`](../legacy/03-database-schema.md). Fresh start (ADR 0004): no legacy import, no legacy shapes.
+Binding inputs: [`00-scope.md`](00-scope.md) (D1–D28), ADRs 0002/0004/0005/0006/0007/0008, [`CONTEXT.md`](../../CONTEXT.md). Legacy reference: [`docs/legacy/03-database-schema.md`](../legacy/03-database-schema.md). Fresh start (ADR 0004): no legacy import, no legacy shapes.
 
 Labels: items not grounded in `docs/legacy/` or the ADRs are marked **ASSUMPTION**. Crate versions are **unverified** (not checked against Context7 or crates.io in this pass).
 

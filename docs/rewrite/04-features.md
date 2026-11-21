@@ -2,7 +2,7 @@
 
 # 04 — Feature specifications
 
-Terms follow [`CONTEXT.md`](../../CONTEXT.md); decisions D1–D21 in [`00-scope.md`](00-scope.md) and the ADRs are binding and not re-decided here. Legacy behavior: [`docs/legacy/`](../legacy/).
+Terms follow [`CONTEXT.md`](../../CONTEXT.md); decisions D1–D28 in [`00-scope.md`](00-scope.md) and the ADRs are binding and not re-decided here. Legacy behavior: [`docs/legacy/`](../legacy/).
 
 **Conventions**
 - **Fact** = grounded in the legacy code/docs or in documentation fetched via Context7 on 2026-11-21. **ASSUMPTION** = proposal not grounded in a source. **unverified** = a claim not confirmed in a source available while writing; check before implementing.

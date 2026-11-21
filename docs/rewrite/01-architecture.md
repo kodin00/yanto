@@ -2,7 +2,7 @@
 
 # 01 — Architecture of the Rust rewrite
 
-Binding inputs: [`CONTEXT.md`](../../CONTEXT.md), [`docs/adr/`](../adr/), [`00-scope.md`](00-scope.md) (D1–D21). Nothing here re-decides them. Install, CLI, CI, and release live in [`05-install-and-ops.md`](05-install-and-ops.md).
+Binding inputs: [`CONTEXT.md`](../../CONTEXT.md), [`docs/adr/`](../adr/), [`00-scope.md`](00-scope.md) (D1–D28). Nothing here re-decides them. Install, CLI, CI, and release live in [`05-install-and-ops.md`](05-install-and-ops.md).
 
 Conventions: **ASSUMPTION** = not grounded in the provided docs/legacy code/library docs; needs confirmation. Library versions are written only where Context7 docs listed one; otherwise **unverified** (pin at first `cargo add`, verify on crates.io).
 
