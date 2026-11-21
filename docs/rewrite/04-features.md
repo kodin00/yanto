@@ -9,7 +9,7 @@ Terms follow [`CONTEXT.md`](../../CONTEXT.md); decisions D1–D21 in [`00-scope.
 - Host side effects list files, commands and API calls exactly. "Docker" means the Docker Engine API through `bollard` unless a CLI is named. `docker compose` is always the CLI (the Compose plugin has no Engine API).
 - Paths use `DATA=/var/lib/yanto` as an ASSUMPTION for the data dir (final value belongs to the install doc). `RUN=/run/yanto` is a root-only tmpfs dir (0700) for transient files.
 - Every subprocess is spawned without a shell, in its own process group, with a timeout and a cancellation token (legacy `runCommand` discipline: SIGTERM, then SIGKILL after 5 s). Output is streamed to a log sink and capped when stored.
-- Secrets (Deploy Tokens, Registry Credentials, Cloudflare API tokens, frps tokens, Deploy Key private keys) are stored encrypted at rest (envelope scheme defined in the security doc; ASSUMPTION) and never written to logs, audit metadata, or process arguments.
+- Secrets (Deploy Tokens, Registry Credentials, Cloudflare API tokens, frps tokens, Deploy Key private keys) are stored encrypted at rest (AES-256-GCM envelope, key `/var/lib/yanto/keys/app.key`; design in 01 §8.3, columns in 02 §3), except frps tokens, which stay only in the operator's `frps.toml` and never written to logs, audit metadata, or process arguments.
 - Every mutating operation writes an Audit log entry (§10). Failures surface in the htmx UI as an inline error banner with the step name and last 12 output lines, and in REST/MCP as an RFC 7807-style JSON error (ASSUMPTION on format) with the same text.
 
 ---
@@ -468,7 +468,7 @@ Storage: `DATA/backups/` (0700), files 0600, named `<owner>-<kind>-<UTC timestam
 
 **Yanto SQLite**
 - `VACUUM INTO 'DATA/backups/.yanto-<ts>.db.partial'` through the live connection (consistent snapshot of a WAL database, requires SQLite ≥ 3.27; the alternative is the SQLite online backup API — either satisfies "online backup", implementation choice). Then `PRAGMA integrity_check` on the copy, zstd → `yanto-db-<ts>.db.zst`, delete the intermediate. File is 0600.
-- Content class: **CONFIDENTIAL** (contains password hashes, encrypted secrets, audit log). The encryption **master key is not inside the database** (ASSUMPTION; see security doc); restoring on a different Host requires the key separately — the backup page says so (open question whether `yanto backup` should optionally include the key file).
+- Content class: **RESTRICTED** once bundled. The archive contains the DB (password hashes, encrypted secrets, audit log) **and** `keys/app.key` (D22), so it alone decrypts every secret. It is downloadable by the Owner only, flagged sensitive in the UI, and written `0600`. Layout: `yanto-<ts>.tar.zst` holding `yanto.db` and `app.key`.
 
 ### 7.4 Retention
 - Schedules are Cron Entries (§5) running `yanto backup …`; retention policy is a flag, not a separate scheduler: `--keep-last N` (default 7) and/or `--keep-days D`. After a **successful** scheduled run, Yanto deletes older `source=scheduled` backups of the same (project, kind, target) series beyond the policy and removes their files. Manual and `pre-restore` backups are exempt (pre-restore: keep last 3 per target).
@@ -741,7 +741,6 @@ Append-only record of who did what, through which interface, to which entity (po
 ---
 
 ## Open questions and risks (consolidated)
-1. Master key location and backup of the secrets envelope (affects §7 restore on a new Host).
 2. `registry:2` tag semantics and in-container config path (§4.2); Cloudflare request-body limit (§4.5, unverified).
 3. `cron-run` as root dropping privileges: more code on a root path (§5.3); alternative is a daemon socket.
 4. Docker CLI plugin discovery under a temp `DOCKER_CONFIG` (§4.7); bollard exec resize API name per pinned version (§2.2).

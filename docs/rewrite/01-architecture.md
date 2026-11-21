@@ -112,7 +112,7 @@ impl DeploymentService {
 | Dashboard | HTML + htmx, SSE for live logs/status, WebSocket for exec terminal | session cookie + CSRF | askama templates; full page or partial depending on `HX-Request` |
 | REST `/api/v1` | JSON over HTTP | `Authorization: Bearer <API Token>` | JSON DTOs, uniform error body, pagination `page/pageSize` (as legacy) |
 | MCP (HTTP) | `rmcp` streamable HTTP mounted at `/mcp` | API Token | tools backed by service fns |
-| MCP (stdio) | `yanto mcp` | API Token from env/flag (§4.1) | same tools |
+| MCP (stdio) | `yanto mcp` | API Token from `YANTO_API_TOKEN_FILE` or env, never argv (§4.1) | same tools |
 | Webhooks | `POST /deploy?id=` , `POST /webhooks/github` | Deploy Token / GitHub signature | 202 + Deployment id |
 
 ### 4.1 MCP details (grounded in rmcp docs)
@@ -161,8 +161,8 @@ Synchronizer token stored in the server-side session (not a double-submit cookie
 | Credential | Format | Storage | Verified by | Revealable? |
 |---|---|---|---|---|
 | Session | tower-sessions id | `sessions` table | cookie lookup | n/a |
-| API Token | `yanto_` + 32 random bytes base64url (prefix ASSUMPTION) | **SHA-256 hash** + display prefix + scope + owner + last_used + expiry | constant-time hash compare | no (shown once) |
-| Deploy Token | random 32 bytes base64url | **encrypted at rest** (envelope, §8.3) because parity requires reveal/rotate in UI | decrypt-compare or store a second hash for lookup (ASSUMPTION: store hash for lookup + ciphertext for reveal) | yes (needs `secrets` permission) |
+| API Token | `yat_<id-part>_<secret>` (02 §4.1; prefix ASSUMPTION) | **SHA-256 hash** + display prefix + scope + owner + last_used + expiry | constant-time hash compare | no (shown once) |
+| Deploy Token | `ydp_` + 32 random bytes base64url | SHA-256 hash (bearer check) **and** envelope-encrypted copy (§8.3) because parity requires reveal/rotate in UI and the GitHub HMAC needs the secret | constant-time hash compare | yes (needs `secrets` permission) |
 | Setup code | random, short-lived | hash in `settings` | constant time | no |
 | Invite/reset links | random, 24h, single-use | hash | constant time | no |
 
@@ -328,8 +328,9 @@ The file never contains the app encryption key, tokens, or passwords.
 ```
 /var/lib/yanto/
   yanto.db  yanto.db-wal  yanto.db-shm     # SQLite (WAL)
-  keys/app.key                              # 32-byte envelope key, 0600, generated at install
-  ssh/<project-slug>/id_ed25519{,.pub}      # Deploy Keys, dir 0700, private 0600
+  keys/app.key                              # 32-byte envelope key (§8.3), 0600, generated at install, never in a Backup
+  ssh/<project-slug>/id_ed25519{,.pub}      # Deploy Key; private file is materialized from the encrypted DB value for the clone only, then removed; dir 0700, private 0600
+  ssh/known_hosts                           # git/ssh host keys (accept-new)
   projects/<project-slug>/                  # git checkout or generated compose + .env
   backups/
     projects/<project-slug>/<ts>-<kind>.tar.zst|.sql.gz
@@ -337,11 +338,18 @@ The file never contains the app encryption key, tokens, or passwords.
   registry/{data/,auth/htpasswd}            # Hosted Registry storage + htpasswd (0600)
   tmp/                                      # scratch, wiped on start
 ```
-Outside the data dir (all documented, all under Yanto's control): `/etc/yanto/config.toml`, `/etc/cron.d/yanto`, the managed block in the configured user's `authorized_keys`, Yanto's Traefik file, the `frps` config, the systemd unit `/etc/systemd/system/yanto.service`.
+Outside the data dir (all documented, all under Yanto's control): `/etc/yanto/config.toml`, `/run/yanto/` (systemd `RuntimeDirectory`, tmpfs `0700`: per-command `DOCKER_CONFIG` dirs, flock files; 04 §4.7), `/etc/cron.d/yanto`, the managed block in the configured user's `authorized_keys`, Yanto's Traefik file, the `frps` config, the systemd unit `/etc/systemd/system/yanto.service`.
 
-### 8.3 Secrets at rest (ASSUMPTION — design not in 00-scope)
+### 8.3 Secrets at rest (canonical design; field-level inventory in [02 §3](02-data-model.md))
 
-Reveal/rotate requirements (Deploy Token, `.env` secrets, Registry Credentials, Cloudflare API tokens) need recoverable secrets. Use envelope encryption with `keys/app.key` and an AEAD (`chacha20poly1305` or `aes-gcm`, **unverified**), ciphertext + nonce in SQLite. Threat model matches ADR 0007: the Host and root are trusted; this protects DB backups and downloaded Backups of Yanto's SQLite from leaking secrets. `app.key` is **excluded** from Backups of Yanto's database (and noted in restore docs: restoring the DB on another Host without the key loses secrets). Open question #2.
+ASSUMPTION (not in 00-scope): reveal/rotate requirements (Deploy Token, Deploy Key private keys, Registry Credentials, Cloudflare API tokens, `.env` secrets on queued Deployments) need recoverable secrets, so Yanto uses envelope encryption.
+
+- **Key**: one 32-byte key at `/var/lib/yanto/keys/app.key` (`0600`, dir `0700`), generated by `yanto install` only if absent and never regenerated. It is read at startup; it is never accepted from env vars or flags and never written to `config.toml` or the DB.
+- **Algorithm**: AES-256-GCM, 12-byte random nonce per value, stored as `enc:v1:<b64url nonce>:<b64url ciphertext||tag>` in `*_enc` TEXT columns. AAD is `<table>.<column>.<row id>`, so a ciphertext copied to another row or column fails to decrypt. The `v1` tag reserves room for a later algorithm or key rotation (no rotation command in v1.0.0).
+- **Not encrypted (hashed instead)**: passwords (Argon2id; bcrypt for Hosted Registry users because `registry:2` requires it), and high-entropy tokens used only for lookup (session id, API Token, account token, setup code: SHA-256).
+- **Deploy Token** stores both a SHA-256 hash (bearer check, no decrypt on the hot path) and an encrypted copy (`deploy_token_enc`: reveal in the UI, and the GitHub webhook HMAC key). See OQ-1 in [07-open-questions](07-open-questions.md).
+- **Threat model** (ADR 0007): the Host and root are trusted. The key protects copies of `yanto.db` that leave the Host's trust boundary or are handled separately from the key: pre-migrate and pre-update DB copies (`backups/yanto/`, DB only). The Yanto-DB Backup is the exception by design (D22): it bundles the DB and `app.key` into one archive, Owner-only, flagged sensitive. Restoring a bare DB on another Host without `app.key` leaves `*_enc` values unreadable; Yanto shows them as "needs re-entry" instead of failing to start. `yanto doctor` warns when the key is missing or its mode is not `0600`.
+- Decrypted values live in redacting wrappers (`Secret<T>`), never in logs, spans, audit metadata, or process arguments.
 
 ## 9. Error handling and tracing
 
