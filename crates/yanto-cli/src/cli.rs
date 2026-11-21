@@ -23,11 +23,20 @@ pub struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum Command {
     /// Run the dashboard and API server
     Serve,
     /// Print the version
     Version,
+    /// Interactive/non-interactive installer
+    Install(crate::cmd::install::Args),
+    /// Update the binary from GitHub Releases
+    SelfUpdate(crate::cmd::self_update::SelfUpdateArgs),
+    /// Remove Yanto (keeps data unless --purge)
+    Uninstall(crate::cmd::uninstall::UninstallArgs),
+    /// Re-run prerequisite, Host Daemon and path checks
+    Doctor(crate::cmd::doctor::DoctorArgs),
 }
 
 #[cfg(test)]
