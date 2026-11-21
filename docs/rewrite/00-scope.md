@@ -33,6 +33,13 @@ Yanto v1.0.0 is a single static Rust binary. It runs as a root systemd service o
 | D19 | `install.sh` is thin: it downloads the latest release binary from GitHub Releases, verifies SHA256, and runs `yanto install`, an interactive wizard where every prompt has a flag (`--non-interactive`). Self-built binaries use the same `yanto install`. `yanto self-update` uses the release path. | — |
 | D20 | Targets: Linux + systemd, amd64/arm64, static musl. Tested on Debian 12+ and Ubuntu 22.04+. | — |
 | D21 | First Rust release is **v1.0.0**. | — |
+| D22 | Secrets at rest: envelope key at `/var/lib/yanto/keys/app.key`. The Yanto-DB Backup bundles the DB and `app.key` into one archive, downloadable by the Owner only and flagged sensitive in the UI. | Owner decision |
+| D23 | API Tokens belong to a user and inherit that user's per-Project permissions, capped by token scope (`read` < `write` < `admin`). No per-token Project list. | Owner decision |
+| D24 | Container exec is dashboard-only in v1 (no REST or MCP exec). | Owner decision |
+| D25 | Each Deployment snapshots its compose file and encrypted `.env`; rollback restores the exact config. | Owner decision |
+| D26 | Cron Entries run wrapped as `yanto cron-run <id>`, which records exit code, duration and output tail; the UI shows run history. | Owner decision |
+| D27 | The release workflow adds GitHub artifact attestations; `install.sh` verifies with `gh attestation verify` when `gh` is present, else falls back to SHA256. | Owner decision |
+| D28 | Applying `frps` config (restarts `frps`, drops live tunnels) requires an explicit confirmation with a warning. | Owner decision |
 
 ## Feature parity checklist
 
@@ -83,3 +90,34 @@ Legend: **Port** = keep the behavior, **Change** = keep it reshaped, **New** = n
 - Managing several servers from one dashboard
 - systemd service management, firewall, package updates
 - Remote backup destinations (S3/R2)
+
+## Resolved during review
+
+Cross-document conflicts that neither the ADRs nor D1–D28 decided, resolved toward the simpler option. Each is applied in docs 01–05.
+
+- Secrets: AES-256-GCM envelope (`enc:v1:…`, AAD = table.column.row id) with the key at `/var/lib/yanto/keys/app.key`; canonical text in 01 §8.3, column inventory in 02 §3.
+- Deploy Token: stored as SHA-256 hash (bearer check) plus an encrypted copy (reveal, GitHub HMAC key); see OQ-1.
+- Deploy Key private key: encrypted in `deploy_keys.private_key_enc`; materialized to `/var/lib/yanto/ssh/<slug>/id_ed25519` only for the clone; key pairs generated with the `ssh-key` crate, not `ssh-keygen`.
+- Cloudflare connector token and `frps` dashboard/auth secrets are not stored in SQLite (fetched from the API / read from `frps.toml`).
+- Config split: `config.toml` holds bootstrap and host-integration paths (bind, port, `public_url`, data dir, SSH user, Traefik dir/resolver/entrypoint, `frps` config path, unit names); `app_settings` holds runtime-tunable values only; Hosted Registry enablement is DB state.
+- Session cookie is `yanto_session` (no `__Host-` prefix); sessions last 7 days absolute with no sliding window; CSRF token is per session.
+- Health: unauthenticated `GET /healthz` (liveness) and `GET /api/v1/health` (`read`, detailed); there is no `/health`.
+- Token formats: API Token `yat_<id>_<secret>`, Deploy Token `ydp_<secret>`.
+- Deployment `status` includes `interrupted` (startup recovery of `running` rows); `trigger` is `manual|api|deploy_token|github|rollback|cron`; one running and one queued row per Project (partial unique indexes).
+- Naming follows 02: `slug` (not `folder_name`), `image_ref`, `compose_path`, `deployment_logs`, one shared `deploy_keys` table, one `registry_credential_id` per Project.
+- Deploy limits are `app_settings` keys `deploy.max_concurrent` (2), `runtime.command_timeout_ms`, `runtime.deployment_log_max_bytes` (500 000); drain on shutdown 30 s, `TimeoutStopSec=45`, SIGKILL grace 5 s.
+- Webhooks: `/deploy` ignores the request body; rate limits as in 03 §a.4; GitHub body cap 1 MiB; delivery-id dedupe keeps the last 100 ids in memory.
+- Hosted Registry: DB is the source of truth for registry users and htpasswd; files live under `/var/lib/yanto/registry/{data,auth}` plus `config.yml`; internal `yanto-internal` password stored encrypted; registry pages are Owner-only.
+- Registry auth for pulls uses a throwaway per-command `DOCKER_CONFIG` under `/run/yanto/` (systemd `RuntimeDirectory`); `docker login` is never run and the unit sets no global `DOCKER_CONFIG`.
+- Traefik: one Yanto-owned `yanto.yml` in the dynamic dir, targets are plain `http://127.0.0.1:<port>` (no `scheme`/`no_tls_verify`).
+- Hostname for the Hosted Registry is a Hostname row with `target_kind='registry'` (Owner-only), needed for remote push; see OQ-9.
+- Backups: layout `backups/projects/<slug>/<ts>-<kind>.{tar.zst,sql.zst}` and `backups/yanto/<ts>-yanto.tar.zst`; kinds `project_volumes|project_postgres|project_mysql|yanto_sqlite`; `trigger` adds `pre_restore`; retention is flag-driven (`--keep-last`, `--keep-days`); `backup_download` needs `admin` scope.
+- Audit: 02 §4.5 is the single schema (adds `channel`, `outcome`, `request_id`); hash chain, `yanto audit verify|prune` and export are not in v1.0.0; retention default 365 days.
+- App logs view reads the in-memory ring buffer (last 500 lines), not `journalctl`.
+- Exec routes are `/containers/{id}/exec` (page) and `/exec/ws` (WebSocket) per 03 §b.
+- CLI names follow 05 §10: `backup yanto` (not `yanto-db`), `backup project <slug> (--volumes|--db <service>)`, `db status|migrate` (not `migrate --check`), `restore yanto`, `deploy`, `cron-run`; `yanto mcp` reads the token from `YANTO_API_TOKEN_FILE` (or env), never argv; backup lock contention exits 75.
+- `yanto install` has no default SSH user (derived from `$SUDO_USER` or required via `--ssh-user`); there is no `root` default.
+- The cron file's user field is always `root` and `yanto cron-run` drops to the entry's `run_as_user` (reconciles D26 with the CONTEXT.md Cron Entry wording; see OQ-9).
+- Members may create API Tokens for themselves in the dashboard (follows from D23); Owner-only operations stay 403 for them.
+- Cloudflare tunnel connector-token reveal is dashboard-only (not REST or MCP), Owner-only and audited.
+
