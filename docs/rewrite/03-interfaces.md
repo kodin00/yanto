@@ -47,18 +47,18 @@ Derived app views (not stored, doc 02): Owner = `dashboard, projects, deployment
 
 | Rule | Value |
 |---|---|
-| Session | Opaque 32-byte random id; cookie `__Host-yanto_session` when `cookie_secure`, else `yanto_session` (`__Host-` requires `Secure`; ASSUMPTION). `HttpOnly`, `SameSite=Lax`, `Path=/`. Server stores SHA-256 in `sessions` (doc 02). |
+| Session | Opaque 32-byte random id; cookie `yanto_session` (one name for http and https; `__Host-` prefix not used, since it requires `Secure`). `Secure` is set when `server.public_url` is `https://` (01 §8.1). `HttpOnly`, `SameSite=Lax`, `Path=/`. Server stores SHA-256 in `sessions` (doc 02). |
 | Lifetime | 7 days absolute (legacy parity), no sliding window (ASSUMPTION; open question 5). |
 | Fixation | New session id on login and account setup; old ones for that browser dropped. |
 | Revocation | Delete `sessions` row. Triggers: logout, password change/reset, user disabled/deleted, `owner-reset`, Owner "sign out everywhere". Checked on every request (indexed lookup). |
 | Streams | SSE/WebSocket handlers re-check the session row (and the Project permission) every **15 s**; on loss they send a terminal `authorization_revoked` event and close (legacy). |
 | CSRF token | Per-session synchronizer token (`sessions.csrf_token`) rendered into a `<meta name="csrf-token">`; htmx sends it through `hx-headers` as `X-CSRF-Token`. Required on every non-GET/HEAD/OPTIONS dashboard request, compared in constant time; failure is 403. **Deviation from legacy:** no per-request rotation, because rotating on each mutation races under concurrent htmx requests (ASSUMPTION). |
-| Origin check | Mutating requests must have `Origin` (or `Referer`) host equal to the request `Host` or `app_base_url`, and `Sec-Fetch-Site` not `cross-site` when present. Same check is mandatory on the WebSocket upgrade for container exec (cross-site WebSocket hijacking). |
+| Origin check | Mutating requests must have `Origin` (or `Referer`) host equal to the request `Host` or `server.public_url`, and `Sec-Fetch-Site` not `cross-site` when present. Same check is mandatory on the WebSocket upgrade for container exec (cross-site WebSocket hijacking). |
 | CSRF-exempt | `POST /deploy`, `POST /webhooks/github` (own credentials), `/api/v1/*`, `/mcp` (Bearer only). Nothing else. |
 | Headers | `Content-Security-Policy` strict (self + nonce for inline; no external origins), `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `X-Frame-Options: DENY` / `frame-ancestors 'none'`, `Cache-Control: no-store` on pages that render secrets. |
 | First Owner | Dashboard shows setup only while zero users exist. Requires the **one-time setup code** (D18; printed by `yanto install`, stored hashed in `app_settings.setup.code_hash`, constant-time compare, deleted after use). Setup is single-flight (transactional insert against the single-owner index). |
 | Passwords | Min 12 chars (ASSUMPTION; legacy minimum not documented), max 1024; Argon2id (ASSUMPTION); constant-time verify; unknown-user logins still burn a dummy hash to avoid a user-enumeration timing oracle. Generic message "Invalid username or password". |
-| Account tokens | Invite/reset URL `<app_base_url>/account/setup#token=<token>` (fragment keeps it out of logs and Referer). 24h, single-use; preview via `POST` (not GET). |
+| Account tokens | Invite/reset URL `<server.public_url>/account/setup#token=<token>` (fragment keeps it out of logs and Referer). 24h, single-use; preview via `POST` (not GET). |
 
 ### a.4 Rate limiting
 
@@ -326,7 +326,7 @@ Not in REST by design: login/logout/setup, `api_token_*`, `session_*`, `cloudfla
 
 ## d) MCP
 
-Transports: streamable HTTP at `POST /mcp` (stateless per legacy) and `yanto mcp` over stdio, both via the `rmcp` SDK (version unverified; fallback per ADR 0005 is to drop HTTP first). Auth is an API Token. HTTP: `Authorization: Bearer`, Host/Origin allow-list (loopback, `app_base_url`, configured extras; DNS-rebinding guard), 20 failures / 15 min / IP. stdio: token read from `YANTO_API_TOKEN_FILE` (path to a 0600 file) or, less preferred, `YANTO_API_TOKEN` env (ASSUMPTION; never from argv, since argv leaks via `ps`). Tool registration: tools above the token scope are not listed (legacy parity) **and** the service layer re-checks scope per call.
+Transports: streamable HTTP at `POST /mcp` (stateless per legacy) and `yanto mcp` over stdio, both via the `rmcp` SDK (version unverified; fallback per ADR 0005 is to drop HTTP first). Auth is an API Token. HTTP: `Authorization: Bearer`, Host/Origin allow-list (loopback, `server.public_url`, configured extras; DNS-rebinding guard), 20 failures / 15 min / IP. stdio: token read from `YANTO_API_TOKEN_FILE` (path to a 0600 file) or, less preferred, `YANTO_API_TOKEN` env (ASSUMPTION; never from argv, since argv leaks via `ps`). Tool registration: tools above the token scope are not listed (legacy parity) **and** the service layer re-checks scope per call.
 
 Tool shape: `name = yanto_<operation>`; input JSON Schema derived from the Rust input struct (`schemars`, ASSUMPTION); result is a text block + `structuredContent`; errors become `isError` results. Annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) are derived from the class: R = read-only, W = write, D = destructive, E = open-world (calls Cloudflare/registry/GitHub).
 
@@ -455,6 +455,8 @@ Binary `yanto`. The CLI runs on the Host as root, opens the same SQLite DB and c
 | `yanto version` | Version, build, SQLite version. |
 
 ## Open questions / risks
+
+Consolidated in [07-open-questions](07-open-questions.md).
 
 1. ~~API Tokens are not Project-scoped~~ Resolved: D23 (tokens inherit their user's per-Project permissions; no per-token Project list).
 2. Deploy Token reversibility (doc 02, section 3) enables reveal + HMAC at the cost of a decryptable secret.

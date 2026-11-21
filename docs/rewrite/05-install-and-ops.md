@@ -380,6 +380,8 @@ Exit codes (ASSUMPTION): `0` success, `1` runtime error, `2` usage error (clap d
 
 ## 11. Open questions and risks
 
+Numbered in [07-open-questions](07-open-questions.md).
+
 1. **Prerequisite installation**: legacy `install.sh` installed Docker via apt; D19 makes the script thin and D15 argues against Yanto installing daemons. Plan: print commands only. Confirm, or add an opt-in `--install-prereqs` for Debian/Ubuntu.
 2. **Release authenticity**: resolved by D27 (attestations + `gh attestation verify` when `gh` is present, SHA256 otherwise). Remaining gap: hosts without `gh` get integrity only.
 3. **`curl | bash` + wizard**: relies on `/dev/tty`; behavior over non-TTY SSH sessions and cloud-init must be tested (`--non-interactive` path).

@@ -733,6 +733,8 @@ Columns and constraints are defined once in 02 §4.5: `actor_type` (`user|api_to
 ---
 
 ## Open questions and risks (consolidated)
+
+Numbered in [07-open-questions](07-open-questions.md).
 2. `registry:2` tag semantics and in-container config path (§4.2); Cloudflare request-body limit (§4.5, unverified).
 3. `cron-run` as root dropping privileges: more code on a root path (§5.3); alternative is a daemon socket.
 4. Docker CLI plugin discovery under a temp `DOCKER_CONFIG` (§4.7); bollard exec resize API name per pinned version (§2.2).

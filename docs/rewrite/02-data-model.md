@@ -446,8 +446,6 @@ Known keys (ASSUMPTION, derived from legacy runtime settings). Host-integration 
 
 | Key | Value | Default |
 |---|---|---|
-| `runtime.app_base_url` | URL string | none |
-| `runtime.cookie_secure` | bool | true when base URL is https |
 | `runtime.trusted_proxies` | array of CIDR | `["127.0.0.1/32"]` |
 | `runtime.command_timeout_ms` | int | legacy range 1 000 to 86 400 000 |
 | `runtime.command_output_max_bytes` | int | legacy range 16 384 to 100 MB |
@@ -591,6 +589,8 @@ Singleton (`id = 1`). Yanto manages the `frps` server side only (D17). It stores
 - Referenced credentials cannot be deleted silently: FK `SET NULL` plus service-layer 409 listing dependents; `cloudflare_tunnels` and `project_ports` use `RESTRICT`.
 
 ## 7. Open questions / risks
+
+Consolidated in [07-open-questions](07-open-questions.md) (OQ-1, OQ-18).
 
 1. Deploy Token reversible storage (section 3 note) trades hash-only safety for reveal/HMAC. Alternative: separate webhook secret from bearer token, bearer hash-only, reveal = rotate-and-show.
 2. Single-writer pool and long `VACUUM INTO` calls can stall writers; schedule off-peak.

@@ -36,10 +36,10 @@ Single repo, virtual workspace at the root (D2). Resolver 2, edition 2021 or lat
 
 | Crate | Kind | Responsibility | May depend on |
 |---|---|---|---|
-| `yanto-core` | lib | Domain types (Project, Deployment, Hostname, …), **the service layer** (one fn per operation), authorization (`Actor`, permissions, token scopes), SQLite repositories + migrations, deployment queue worker, retention tasks, log/event hub, **port traits** (`DockerPort`, `ComposePort`, `GitPort`, `CronPort`, `AuthorizedKeysPort`, `HostDaemonPort`, `IngressProvider`, `RegistryPort`, `CloudflarePort`), config types, `CoreError`. No HTTP framework, no `bollard`, no filesystem writes outside the data dir. | sqlx, tokio, serde, tracing |
+| `yanto-core` | lib | Domain types (Project, Deployment, Hostname, …), **the service layer** (one fn per operation), authorization (`Actor`, permissions, token scopes), SQLite repositories + migrations, deployment queue worker, retention tasks, log/event hub, **port traits** (`DockerPort`, `ComposePort`, `GitPort`, `CronPort`, `AuthorizedKeysPort`, `HostDaemonPort`, `IngressProvider`, `RegistryPort`, `CloudflarePort`, `DnsPort`), config types, `CoreError`. No HTTP framework, no `bollard`, no filesystem writes outside the data dir. | sqlx, tokio, serde, tracing |
 | `yanto-host` | lib | Real implementations of the ports: Docker (bollard), `docker compose` runner, `git` runner, cron writer, authorized_keys writer, systemd/daemon checks, Traefik file provider, frps config + dashboard client, Cloudflare API client, Hosted Registry client. One module per concern (§7). | `yanto-core` (ports only), bollard, reqwest, tokio |
 | `yanto-server` | lib | The three adapters: htmx dashboard (askama templates, embedded assets), `/api/v1` REST, MCP over streamable HTTP; session/CSRF/token middleware; SSE and WebSocket (exec terminal) endpoints; webhook endpoints. Thin: parse → build `Actor` → call a service fn → render. | `yanto-core`, axum, tower-sessions, askama, rmcp |
-| `yanto-cli` | bin `yanto` | clap CLI, composition root (wires `yanto-host` into `yanto-core` services), `serve`, `install` wizard, `self-update`, `owner-reset`, `backup`, `mcp` (stdio adapter, uses `rmcp` stdio + the same tool set exported by `yanto-server::mcp`), `version`. | all three, clap, inquire |
+| `yanto-cli` | bin `yanto` | clap CLI, composition root (wires `yanto-host` into `yanto-core` services), `serve`, `install`/`uninstall` wizard, `self-update`, `owner-reset`, `setup-code`, `token`, `backup`/`restore`, `deploy`, `cron-run`, `doctor`, `db`, `mcp` (stdio adapter, uses `rmcp` stdio + the same tool set exported by `yanto-server::mcp`), `version`. | all three, clap, inquire |
 
 Why this split (short):
 - **core vs host**: the service layer must be testable with fakes and never touch `/etc` or Docker in unit tests. Ports in core, impls in host, composition in the CLI. This is the seam ADR 0005 needs (one service layer, many callers).
@@ -398,13 +398,15 @@ All versions **unverified** unless noted; pin at first `cargo add` after checkin
 
 ## 12. Open questions and risks
 
+Consolidated and numbered in [07-open-questions](07-open-questions.md). Items below that are marked resolved were closed by D22–D28.
+
 1. **`rmcp` stability** (ADR 0005 already allows dropping HTTP). Version and exact feature flags unverified; isolate in `yanto-server::mcp`.
-2. **Secrets at rest design** (§8.3) is new — confirm key handling, exclusion of `app.key` from Backups, and what restore means across Hosts.
+2. ~~Secrets at rest design~~ Resolved: D22.
 3. **Stdio MCP as a separate process** shares SQLite with `serve`; Deployments it enqueues rely on the poll fallback. Alternative: stdio proxies to the local REST API.
-4. **frps apply = restart** drops tunnels; need confirm UX or a hot-reload check in frps docs.
-5. **Volume Backups**: method not decided (helper container via bollard vs `docker run … tar`); needs an image available offline.
+4. ~~frps apply = restart~~ Resolved: D28 (explicit confirmation).
+5. **Volume Backups**: method decided in 04 §7.3 (throwaway helper container via bollard); the helper image must be available (OQ-24).
 6. **Cron `%` escaping and temp-file naming** on Debian/Ubuntu need a real test.
 7. **Exec terminal over WebSocket** is the largest attack surface of the dashboard; session + CSRF + Origin + permission + audit are all required, plus idle timeout.
-8. **GitHub webhook secret** = Deploy Token (see OQ-1 in 07); no separate secret.
+8. **GitHub webhook secret** = Deploy Token (OQ-1); no separate secret.
 9. **sqlx SQLite single-writer** pool design is an ASSUMPTION; load is small (ADR 0002) but queue claim and log batch writes must not starve interactive requests.
 10. **vendored JS** (htmx, SSE ext, xterm) needs a documented update procedure and checksum list to stay compatible with "no npm".
