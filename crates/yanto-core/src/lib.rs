@@ -4,7 +4,9 @@ pub mod config;
 pub mod crypto;
 pub mod db;
 pub mod error;
+pub mod password;
 pub mod ports;
+pub mod ratelimit;
 pub mod secrets;
 
 pub use config::Config;
