@@ -16,6 +16,7 @@ mod keys;
 mod project_databases;
 mod projects;
 mod registry;
+mod settings;
 mod system;
 
 use super::ToolSet;
@@ -38,6 +39,7 @@ pub fn register(set: &mut ToolSet) {
     frps::register(set);
     cloudflare::register(set);
     hostnames::register(set);
+    settings::register(set);
 }
 
 /// `Some(None)` for an explicit JSON `null` (clear), `Some(Some(v))` for a value, `None` when absent.

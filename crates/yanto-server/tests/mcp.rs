@@ -393,6 +393,11 @@ fn sample_args() -> BTreeMap<&'static str, Value> {
         ),
         ("yanto_frps_overview", json!({})),
         ("yanto_frps_settings_update", json!({"bind_port":7000})),
+        ("yanto_settings_read", json!({})),
+        (
+            "yanto_settings_update",
+            json!({"values": {"deploy.max_concurrent": 3}}),
+        ),
         ("yanto_daemons_status", json!({})),
         ("yanto_traefik_status", json!({})),
         ("yanto_system_logs", json!({})),

@@ -64,8 +64,8 @@ Legend: **Port** = keep the behavior, **Change** = keep it reshaped, **New** = n
 - [x] **Change** — Cloudflare: clients, zones, tunnels, DNS, Hostnames, diagnostics — runtime moves to the host `cloudflared`
 - [x] **Change** — FRP: `frps` Host Daemon status, config, tunnel listing (frpc generation dropped)
 - [x] **Port** — Audit log
-- [ ] **Change** — Settings: runtime, Cloudflare, SSH, API Tokens (setup wizard moves partly into `yanto install`)
-- [x] **Change** — MCP: same devops tool surface, rebuilt on `rmcp`, authenticated by API Tokens _(97 tools: M1-M7 and post-M2 areas done; `daemon_control`, `settings_*` and resources not exposed, see [m8-deviations](m8-deviations.md))_
+- [x] **Change** — Settings: runtime, Cloudflare, SSH, API Tokens (setup wizard moves partly into `yanto install`) _(`/settings` page and `GET|PATCH /api/v1/settings` for runtime values read at startup; Cloudflare, SSH keys and API tokens keep their own pages, linked from Settings)_
+- [x] **Change** — MCP: same devops tool surface, rebuilt on `rmcp`, authenticated by API Tokens _(99 tools: M1-M7, post-M2 areas and `settings_*` done; `daemon_control` and resources not exposed, see [m8-deviations](m8-deviations.md))_
 
 ### New
 
@@ -74,8 +74,8 @@ Legend: **Port** = keep the behavior, **Change** = keep it reshaped, **New** = n
 - [x] Cron Entries (`/etc/cron.d/yanto`)
 - [x] Authorized Keys
 - [x] Traefik Ingress Provider
-- [ ] `/api/v1` REST API with API Tokens
-- [ ] `yanto install` interactive wizard and `yanto self-update`
+- [x] `/api/v1` REST API with API Tokens
+- [x] `yanto install` interactive wizard and `yanto self-update`
 
 ### Drop
 
