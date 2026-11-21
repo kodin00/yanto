@@ -9,6 +9,9 @@
 //! line to [`routes`] below.
 
 mod audit;
+mod authorized_keys;
+mod backups;
+mod cron;
 mod me;
 mod users;
 
@@ -35,6 +38,9 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .merge(me::routes())
         .merge(audit::routes())
         .merge(users::routes())
+        .merge(cron::routes())
+        .merge(authorized_keys::routes())
+        .merge(backups::routes())
         .fallback(not_found)
         .layer(axum::middleware::map_response(no_store))
 }

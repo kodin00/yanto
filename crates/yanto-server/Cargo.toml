@@ -23,10 +23,11 @@ rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile = { workspace = true, optional = true }
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs"] }
 tower = { workspace = true, optional = true }
 tower-http.workspace = true
 tracing.workspace = true
+tokio-util = { version = "0.7.20", features = ["io"] }
 
 [dev-dependencies]
 # Enables the `testing` feature for this crate's own unit and integration tests.

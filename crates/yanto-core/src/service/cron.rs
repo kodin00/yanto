@@ -281,6 +281,18 @@ impl CronService {
         })
     }
 
+    /// One entry (authorized like `cron_list`).
+    pub async fn get(&self, actor: &Actor, id: &str) -> Result<CronEntryDto, CoreError> {
+        actor.authorize(&OP_CRON_LIST, None)?;
+        let mut dto = self.entry_dto(id).await?;
+        let mut conn = self.reader().await?;
+        dto.last_run = repo::runs_list(&mut conn, id, 1)
+            .await?
+            .pop()
+            .map(Into::into);
+        Ok(dto)
+    }
+
     pub async fn files_list(&self, actor: &Actor) -> Result<Vec<CronSource>, CoreError> {
         actor.authorize(&OP_CRON_FILES_LIST, None)?;
         self.host.cron.system_sources()
