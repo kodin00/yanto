@@ -57,6 +57,15 @@ pub async fn open(config: Config) -> anyhow::Result<Runtime> {
         docker: Arc::new(yanto_host::BollardDocker::new(&config.docker.socket)),
         host_stats: Arc::new(yanto_host::SysinfoStats::new()),
         host_mgmt: host_ports(&config),
+        // TODO(M6-merge): pass the Hosted Registry target instead of `NoRegistry`.
+        ingress: yanto_host::ingress_ports_without_registry(
+            &config,
+            Arc::new(TokioCommands),
+            Some((
+                rustix::process::geteuid().as_raw(),
+                rustix::process::getegid().as_raw(),
+            )),
+        ),
         host: HostPorts {
             command: Arc::new(TokioCommands),
             probe: Arc::new(ProcProbe),

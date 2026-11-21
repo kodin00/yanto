@@ -113,6 +113,7 @@ async fn git_and_image_projects_deploy_roll_back_and_clean_up() {
         docker: Arc::new(yanto_host::BollardDocker::new(&config.docker.socket)),
         host_stats: Arc::new(yanto_host::SysinfoStats::new()),
         host_mgmt: yanto_core::ports::HostMgmtPorts::unsupported(),
+        ingress: yanto_host::ingress_ports_without_registry(&config, Arc::new(TokioCommands), None),
         host: HostPorts {
             command: Arc::new(TokioCommands),
             probe: Arc::new(ProcProbe),

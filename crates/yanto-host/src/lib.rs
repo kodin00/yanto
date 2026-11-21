@@ -10,23 +10,35 @@
 
 mod authkeys;
 mod backup;
+pub mod cloudflare;
 pub mod commands;
 mod cron;
 mod cron_exec;
 mod docker;
+pub mod frp;
 pub mod fsutil;
+mod ingress;
+pub mod ingress_probe;
 pub mod probe;
 pub mod registry_auth;
 mod stats;
+pub mod systemd;
+pub mod traefik;
 mod users;
 
 pub use authkeys::{HostAuthorizedKeys, parse_sshd_t};
 pub use backup::HostBackup;
+pub use cloudflare::CloudflareHttp;
 pub use commands::TokioCommands;
 pub use cron::HostCron;
 pub use cron_exec::{HostCronExec, exec_as};
 pub use docker::BollardDocker;
+pub use frp::{FrpDashboardHttp, HostFrpFiles};
+pub use ingress::{ingress_ports, ingress_ports_without_registry};
+pub use ingress_probe::HostIngressProbe;
 pub use probe::ProcProbe;
 pub use registry_auth::RunDirRegistryAuth;
 pub use stats::SysinfoStats;
+pub use systemd::HostSystemd;
+pub use traefik::HostTraefik;
 pub use users::{SystemUsers, parse_passwd};
