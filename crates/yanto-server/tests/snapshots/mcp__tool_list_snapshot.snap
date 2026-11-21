@@ -9,6 +9,7 @@ yanto_authorized_keys_delete | authorized_keys_delete | admin | Destructive | tr
 yanto_authorized_keys_list | authorized_keys_list | read | Read | false | false
 yanto_backup_create | backup_create | write | Write | false | false
 yanto_backup_delete | backup_delete | admin | Destructive | true | false
+yanto_backup_restore | backup_restore | admin | Destructive | true | false
 yanto_backup_targets_list | backup_targets_list | read | Read | false | false
 yanto_backups_list | backups_list | read | Read | false | false
 yanto_cleanup | system_cleanup | admin | Destructive | true | false
@@ -61,6 +62,8 @@ yanto_hostnames_diagnostics | hostnames_diagnostics | read | Read | false | true
 yanto_hostnames_list | hostnames_list | read | Read | false | false
 yanto_project_compose_read | project_compose_read | read | Read | false | false
 yanto_project_create | project_create | write | Write | false | false
+yanto_project_databases_list | project_databases_list | read | Read | false | false
+yanto_project_databases_set | project_databases_set | write | Write | false | false
 yanto_project_delete | project_delete | admin | Destructive | true | false
 yanto_project_deploy | project_deploy | write | Write | false | true
 yanto_project_deploy_token_reveal | project_deploy_token_reveal | admin | Destructive | true | false
@@ -93,6 +96,7 @@ yanto_registry_tags_list | registry_tags_list | read | Read | false | false
 yanto_registry_user_create | registry_user_create | write | Write | false | false
 yanto_registry_user_delete | registry_user_delete | admin | Destructive | true | false
 yanto_registry_users_list | registry_users_list | read | Read | false | false
+yanto_system_logs | system_logs | read | Read | false | false
 yanto_system_usage | system_usage | read | Read | false | false
 yanto_traefik_status | traefik_status | read | Read | false | false
 yanto_whoami | whoami | read | Read | false | false

@@ -395,6 +395,13 @@ fn sample_args() -> BTreeMap<&'static str, Value> {
         ("yanto_frps_settings_update", json!({"bind_port":7000})),
         ("yanto_daemons_status", json!({})),
         ("yanto_traefik_status", json!({})),
+        ("yanto_system_logs", json!({})),
+        ("yanto_project_databases_list", p.clone()),
+        (
+            "yanto_project_databases_set",
+            json!({"id":"prj_x","databases":[]}),
+        ),
+        ("yanto_backup_restore", id.clone()),
     ] {
         m.insert(k, v);
     }
