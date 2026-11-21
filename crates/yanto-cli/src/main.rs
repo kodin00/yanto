@@ -21,6 +21,7 @@ fn main() -> anyhow::Result<()> {
         cli::Command::OwnerReset => cmd::owner_reset::run(&cli.config),
         cli::Command::Backup(c) => cmd::backup::run(&cli.config, &c),
         cli::Command::Restore(a) => cmd::backup::restore(&cli.config, &a),
+        cli::Command::Deploy(a) => cmd::deploy::run(&cli.config, &a),
         cli::Command::CronRun { id } => cmd::cron_run::run(&cli.config, &id),
         cli::Command::ExecAs(a) => cmd::exec_as::run(&a),
     }

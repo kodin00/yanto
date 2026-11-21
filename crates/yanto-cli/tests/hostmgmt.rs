@@ -196,6 +196,59 @@ async fn project_backup_cli_resolves_the_slug_and_the_declaration() {
 }
 
 #[tokio::test]
+async fn deploy_enqueues_joins_the_queue_and_wait_can_time_out() {
+    use yanto_core::service::projects::{ProjectInput, SourceInput};
+    let fx = Fx::new();
+    fx.init();
+    assert!(!fx.yanto(&["deploy", "nope"]).status.success());
+    let (s, db) = fx.services().await;
+    s.projects
+        .create(
+            &yanto_core::actor::Actor::cli(),
+            &ProjectInput {
+                name: "Blog".into(),
+                slug: Some("blog".into()),
+                source: SourceInput::Image {
+                    image_ref: "nginx:alpine".into(),
+                },
+                compose_path: None,
+                compose_content: None,
+                env_file: None,
+                auto_start: None,
+                manual_deploy_enabled: None,
+                github_webhook_enabled: None,
+                deploy_key_id: None,
+                generate_deploy_key: false,
+                registry_credential_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    drop(s);
+    db.close().await;
+
+    let first = fx.yanto(&["deploy", "blog"]);
+    assert!(first.status.success(), "{}", err(&first));
+    assert!(out(&first).contains("queued"), "{}", out(&first));
+    let second = fx.yanto(&["deploy", "blog"]);
+    assert!(out(&second).contains("joined"), "{}", out(&second));
+    // A Git ref makes no sense for an image Project.
+    assert!(
+        !fx.yanto(&["deploy", "blog", "--ref", "main"])
+            .status
+            .success()
+    );
+    // Nobody runs the queue here, so waiting ends by timeout with exit code 124.
+    let waited = fx.yanto(&["deploy", "blog", "--wait", "--timeout", "1"]);
+    assert_eq!(waited.status.code(), Some(124), "{}", err(&waited));
+    assert!(
+        !fx.yanto(&["deploy", "blog", "--timeout", "5"])
+            .status
+            .success()
+    );
+}
+
+#[tokio::test]
 async fn restore_brings_back_the_backed_up_database_and_checks_the_archive() {
     let fx = Fx::new();
     fx.init();
