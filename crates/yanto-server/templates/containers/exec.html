@@ -1,0 +1,16 @@
+{% extends "layout.html" %}
+
+{% block head %}
+<link rel="stylesheet" href="/assets/vendor/xterm.css">
+<script src="/assets/vendor/xterm.js" defer></script>
+<script src="/assets/vendor/xterm-addon-fit.js" defer></script>
+<script src="/assets/js/exec-terminal.js" defer></script>
+{% endblock %}
+
+{% block content %}
+<p><a href="/containers/{{ id }}">&larr; {{ name }}</a></p>
+<h1>Terminal: {{ name }}</h1>
+<p class="muted">An interactive shell as the container's default user. The session is audited (start, end, duration, byte counts); keystrokes and output are not recorded. It closes after 15 minutes without input.</p>
+<div id="terminal" class="terminal" data-ws-path="/containers/{{ id }}/exec/ws"></div>
+<p id="terminal-status" class="muted" role="status">Connecting&hellip;</p>
+{% endblock %}

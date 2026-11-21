@@ -9,7 +9,9 @@
 //! line to [`routes`] below.
 
 mod audit;
+mod containers;
 mod me;
+mod system;
 mod users;
 
 use axum::extract::{ConnectInfo, FromRequest, FromRequestParts, Request};
@@ -35,6 +37,8 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .merge(me::routes())
         .merge(audit::routes())
         .merge(users::routes())
+        .merge(containers::routes())
+        .merge(system::routes())
         .fallback(not_found)
         .layer(axum::middleware::map_response(no_store))
 }

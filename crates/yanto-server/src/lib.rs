@@ -15,3 +15,4 @@ mod net;
 pub mod testing;
 
 pub use app::{AppState, router, serve};
+pub use dashboard::ExecLimits;

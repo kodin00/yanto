@@ -1,0 +1,26 @@
+{% for r in rows %}
+<tr>
+  <td><a href="/containers/{{ r.id }}">{{ r.name }}</a><br><code class="muted">{{ r.short_id }}</code></td>
+  <td>{{ r.image }}</td>
+  <td><span class="badge {% if r.running %}ok{% endif %}">{{ r.state }}</span><br><span class="muted">{{ r.status }}</span></td>
+  <td>{{ r.ports }}</td>
+  <td>{{ r.cpu }}</td>
+  <td>{{ r.mem }}</td>
+  <td>{{ r.project }}</td>
+  <td>{{ r.created }}</td>
+  <td class="actions">
+    {% if r.managed %}<span class="muted">managed</span>{% else %}
+    {% if r.running %}
+    <button hx-post="/containers/{{ r.id }}/restart" hx-target="#container-rows" hx-swap="innerHTML" hx-confirm="Restart {{ r.name }}?">Restart</button>
+    <button class="danger" hx-post="/containers/{{ r.id }}/stop" hx-target="#container-rows" hx-swap="innerHTML" hx-confirm="Stop {{ r.name }}?">Stop</button>
+    <a href="/containers/{{ r.id }}/exec">Terminal</a>
+    {% else %}
+    <button hx-post="/containers/{{ r.id }}/start" hx-target="#container-rows" hx-swap="innerHTML">Start</button>
+    {% endif %}
+    {% endif %}
+    <a href="/containers/{{ r.id }}/logs">Logs</a>
+  </td>
+</tr>
+{% else %}
+<tr><td colspan="9" class="muted">No containers.</td></tr>
+{% endfor %}

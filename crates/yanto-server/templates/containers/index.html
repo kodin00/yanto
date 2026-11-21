@@ -1,0 +1,12 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>Containers</h1>
+{% if let Some(e) = docker_error %}<p class="error" role="alert">{{ e }}. Actions are disabled until the Docker socket answers.</p>{% endif %}
+<table>
+  <thead><tr><th>Name</th><th>Image</th><th>State</th><th>Ports</th><th>CPU</th><th>Memory</th><th>Compose</th><th>Created</th><th></th></tr></thead>
+  <tbody id="container-rows" hx-get="/containers/rows" hx-trigger="every 10s" hx-swap="innerHTML">
+    {% include "containers/_rows.html" %}
+  </tbody>
+</table>
+{% endblock %}

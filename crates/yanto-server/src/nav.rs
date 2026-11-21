@@ -19,6 +19,16 @@ pub const NAV: &[NavEntry] = &[
         view: Some(AppView::Dashboard),
     },
     NavEntry {
+        label: "Containers",
+        href: "/containers",
+        view: Some(AppView::Containers),
+    },
+    NavEntry {
+        label: "System",
+        href: "/system",
+        view: Some(AppView::System),
+    },
+    NavEntry {
         label: "Users",
         href: "/users",
         view: Some(AppView::Users),
