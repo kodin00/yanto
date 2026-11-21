@@ -40,6 +40,9 @@ Yanto v1.0.0 is a single static Rust binary. It runs as a root systemd service o
 | D26 | Cron Entries run wrapped as `yanto cron-run <id>`, which records exit code, duration and output tail; the UI shows run history. | Owner decision |
 | D27 | The release workflow adds GitHub artifact attestations; `install.sh` verifies with `gh attestation verify` when `gh` is present, else falls back to SHA256. | Owner decision |
 | D28 | Applying `frps` config (restarts `frps`, drops live tunnels) requires an explicit confirmation with a warning. | Owner decision |
+| D29 | Members may create API Tokens for themselves in the dashboard only, capped by their own permissions. The Owner can list and revoke all tokens. | OQ-17 |
+| D30 | Dashboard sessions expire after 24h idle or 7 days absolute, whichever comes first. | OQ-6 |
+| D31 | Self-update rollback after migrations is a manual DB restore; the pre-update DB copy is kept under `backups/yanto/`. | OQ-10 |
 
 ## Feature parity checklist
 
