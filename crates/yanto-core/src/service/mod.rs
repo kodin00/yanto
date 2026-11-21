@@ -11,6 +11,10 @@
 
 pub mod audit;
 pub mod auth;
+pub mod deploy_keys;
+pub mod deployments;
+pub mod projects;
+pub mod registry_credentials;
 pub mod tokens;
 pub mod users;
 
@@ -25,6 +29,7 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::db::repo::access;
 use crate::db::repo::users::UserRow;
+use crate::deploy::{Engine, HostPorts};
 use crate::error::CoreError;
 use crate::password::Passwords;
 use crate::ports::Clock;
@@ -56,6 +61,7 @@ pub struct ServiceDeps<'a> {
     pub clock: Arc<dyn Clock>,
     pub secrets: Arc<Secrets>,
     pub passwords: Passwords,
+    pub host: HostPorts,
 }
 
 /// Shared, cheaply cloneable context held by every service.
@@ -112,6 +118,11 @@ pub struct Services {
     pub auth: auth::AuthService,
     pub users: users::UserService,
     pub tokens: tokens::TokenService,
+    pub projects: projects::ProjectService,
+    pub deployments: deployments::DeploymentService,
+    pub deploy_keys: deploy_keys::DeployKeyService,
+    pub registry_credentials: registry_credentials::RegistryCredentialService,
+    engine: Arc<Engine>,
 }
 
 impl Services {
@@ -131,11 +142,17 @@ impl Services {
             base_url: base_url.into(),
             limits: Arc::new(Limits::new()),
         };
+        let engine = Engine::new(ctx.clone(), deps.host, cfg);
         Self {
             audit: audit::AuditService::new(ctx.clone()),
             auth: auth::AuthService::new(ctx.clone()),
             users: users::UserService::new(ctx.clone()),
             tokens: tokens::TokenService::new(ctx.clone()),
+            projects: projects::ProjectService::new(ctx.clone(), engine.clone()),
+            deployments: deployments::DeploymentService::new(ctx.clone(), engine.clone()),
+            deploy_keys: deploy_keys::DeployKeyService::new(ctx.clone()),
+            registry_credentials: registry_credentials::RegistryCredentialService::new(ctx.clone()),
+            engine,
             ctx,
         }
     }
@@ -143,6 +160,11 @@ impl Services {
     /// Shared context, for service modules in other crates' tests and the audit writer.
     pub fn ctx(&self) -> &Ctx {
         &self.ctx
+    }
+
+    /// The Deployment engine; `yanto serve` runs [`crate::deploy::worker::run`] on it.
+    pub fn engine(&self) -> Arc<Engine> {
+        self.engine.clone()
     }
 }
 
@@ -153,6 +175,10 @@ pub fn all_operations() -> Vec<&'static OpSpec> {
     v.extend(auth::OPERATIONS);
     v.extend(users::OPERATIONS);
     v.extend(tokens::OPERATIONS);
+    v.extend(projects::OPERATIONS);
+    v.extend(deployments::OPERATIONS);
+    v.extend(deploy_keys::OPERATIONS);
+    v.extend(registry_credentials::OPERATIONS);
     v.push(&audit::OP_AUDIT_LIST);
     v
 }

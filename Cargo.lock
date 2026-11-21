@@ -3650,6 +3650,7 @@ dependencies = [
  "argon2",
  "async-trait",
  "base64 0.23.1",
+ "form_urlencoded",
  "getrandom 0.4.3",
  "hmac 0.13.0",
  "serde",
