@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use tokio::net::TcpListener;
+use yanto_core::ports::CancellationToken;
 use yanto_core::service::Services;
 use yanto_server::AppState;
 
@@ -27,10 +28,20 @@ async fn serve(config: yanto_core::Config) -> anyhow::Result<()> {
     }
 
     let purge = tokio::spawn(purge_loop(rt.services.clone()));
+    // Stale per-command registry auth directories from a crashed process.
+    rt.registry_auth.sweep();
+    let stop = CancellationToken::new();
+    let worker = tokio::spawn(yanto_core::deploy::worker::run(
+        rt.services.engine(),
+        stop.clone(),
+    ));
     let state = AppState::load(rt.db.clone(), rt.config.clone(), rt.services.clone()).await;
     yanto_server::serve(listener, state, shutdown_signal()).await?;
 
     tracing::info!("shutting down");
+    stop.cancel();
+    // Drain running deployments (30 s, then cancel) before closing the database.
+    let _ = worker.await;
     purge.abort();
     rt.db.close().await;
     Ok(())

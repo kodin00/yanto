@@ -73,6 +73,11 @@ async fn setup_code_then_owner_reset() {
         clock: Arc::new(SystemClock),
         secrets: Arc::new(Secrets::ephemeral()),
         passwords: Passwords::cheap_for_tests(),
+        host: yanto_core::deploy::HostPorts {
+            command: Arc::new(yanto_host::TokioCommands),
+            probe: Arc::new(yanto_host::ProcProbe),
+            registry_auth: Arc::new(yanto_host::RunDirRegistryAuth::new(dir.path().join("run"))),
+        },
     });
     let origin = Origin::new(Channel::Dashboard, None);
     assert!(

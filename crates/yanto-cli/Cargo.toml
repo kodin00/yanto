@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 yanto-core.workspace = true
+yanto-host.workspace = true
 yanto-server.workspace = true
 anyhow.workspace = true
 clap.workspace = true
