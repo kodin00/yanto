@@ -507,6 +507,12 @@ async fn declared_databases_validate_names_and_keep_ids_across_edits() {
             database: Some("x'y".into()),
             ..db("db")
         },
+        // Would be read as a dump-tool option.
+        DatabaseInput {
+            database: Some("-rdump".into()),
+            ..db("db")
+        },
+        db("-svc"),
         DatabaseInput {
             password_env: Some("hunter2 $(id)".into()),
             ..db("db")
