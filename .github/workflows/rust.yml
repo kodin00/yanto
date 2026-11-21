@@ -2,9 +2,9 @@ name: rust
 
 on:
   push:
-    branches: ["rewrite/rust", "m*"]
+    branches: ["master", "rewrite/rust", "m*"]
   pull_request:
-    branches: ["rewrite/rust", "m*"]
+    branches: ["master", "rewrite/rust", "m*"]
 
 permissions:
   contents: read
