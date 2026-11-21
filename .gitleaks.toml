@@ -9,3 +9,9 @@ useDefault = true
 description = "Vendored minified JS: generic-api-key false positives"
 targetRules = ["generic-api-key"]
 paths = ['''^crates/yanto-server/assets/vendor/[^/]+\.js$''']
+
+# Cargo build output is gitignored; `gitleaks dir .` does not honor .gitignore and flags the
+# PEM test fixtures compiled into dependency metadata.
+[[allowlists]]
+description = "Gitignored Cargo build output"
+paths = ['''^target/''']
