@@ -16,7 +16,7 @@ Conventions: unlabeled behavior is ported from legacy. **ASSUMPTION** marks anyt
 |---|---|---|---|
 | Owner | password, session cookie | dashboard | Everything. Bypasses Project access checks. Exactly one (DB-enforced). |
 | Member | password, session cookie | dashboard | Only Projects granted in `user_project_access`, with per-Project permissions. Never reaches Owner-only operations. |
-| API Token | `Authorization: Bearer yat_...` | `/api/v1`, `/mcp`, `yanto mcp` (stdio) | Scope `read` < `write` < `admin`; a higher scope includes lower. **Not Project-scoped**: acts with Owner-level reach bounded by scope (legacy MCP tokens behaved this way). Open question 1. |
+| API Token | `Authorization: Bearer yat_...` | `/api/v1`, `/mcp`, `yanto mcp` (stdio) | Scope `read` < `write` < `admin`; a higher scope includes lower. **Belongs to a user (D23)**: acts as that user, so it inherits the user's per-Project permissions (Owner: everything; Member: granted Projects only) and is further capped by scope. No per-token Project list. |
 | Deploy Token | `Authorization: Bearer <token>` on `POST /deploy` | that one endpoint | Can only trigger a Deployment of its own Project. |
 | GitHub | `X-Hub-Signature-256` | `POST /webhooks/github` | Can only trigger a `push`-matched Deployment of its own Project. |
 | Host root (CLI) | local process as root | `yanto ...` | Trusted (ADR 0007). CLI writes the same audit log (`actor_type='cli'`). |
@@ -31,7 +31,7 @@ Permissions: `deploy`, `runtime`, `config`, `secrets`, `backups`, `hostnames`. H
 |---|---|
 | (view only) | `project_get/list`, `deployments_list`, `deployment_get/logs`, `deployment_logs_stream`, `containers_list`, `container_logs(_stream)`, `audit_list` (Project-scoped), `project_ports_list`, `project_databases_list`, `hostnames_list` (names visible only with `hostnames`; see below) |
 | `deploy` | `project_deploy` (without env), `project_rollback_preview`, `project_rollback`, `deployment_cancel` |
-| `runtime` | `project_stop`, `project_restart`, `container_start/stop/restart`, `container_exec` (dashboard terminal + REST) |
+| `runtime` | `project_stop`, `project_restart`, `container_start/stop/restart`, `container_exec_session` (dashboard terminal only, D24) |
 | `config` | `project_update` (not `slug`, `source_kind`), `project_compose_read`, `project_ports_set`, `project_databases_set`, assign `deploy_key_id`/`registry_credential_id` (select among existing ones only) |
 | `secrets` | `project_env_read`, `project_env_content_read`, `project_env_preview`, `project_env_write`, `project_env_variables_write`, `project_deploy_token_reveal`, `project_deploy_token_rotate`, `project_deploy` **with** env payload (also needs `deploy`), `deploy_key_public_get` |
 | `backups` | `backups_list`, `backup_create`, `backup_download`, `backup_delete` for that Project's volumes/DBs; adds the `backups` view |
@@ -79,9 +79,9 @@ In-memory token buckets (ASSUMPTION: no DB persistence; limits reset on restart,
 |---|---|---|
 | `read` | — | Non-mutating reads; env reads are **masked**; no secret reveal; no exec; no log of secrets. Also `whoami`, MCP resources. |
 | `write` | `read` | Reversible/day-to-day mutations: `project_create/update`, env writes, `project_deploy`, `deployment_cancel`, `container_start`, `backup_create`, `hostname_*` create/retry/enable/disable, `cloudflare_tunnel_create`, DNS create/update, `cron_toggle`, `registry_user_create`, `project_ports_set`, `project_databases_set`, `frps_settings_update`. |
-| `admin` | `write` | Destructive, host-level, credential, and reveal operations: all `*_delete`, `project_stop/restart`, `project_rollback`, `container_stop/restart/exec`, `project_deploy_token_reveal/rotate`, credential create/update (Cloudflare, Registry Credential, Deploy Key), `cron_create/update`, `authorized_keys_add`, `registry_enable/disable`, `registry_gc`, `daemon_control`, `settings_update`, `system_cleanup`, `backup_download`, `backup_restore`, `user_*`. |
+| `admin` | `write` | Destructive, host-level, credential, and reveal operations: all `*_delete`, `project_stop/restart`, `project_rollback`, `container_stop/restart`, `project_deploy_token_reveal/rotate`, credential create/update (Cloudflare, Registry Credential, Deploy Key), `cron_create/update`, `authorized_keys_add`, `registry_enable/disable`, `registry_gc`, `daemon_control`, `settings_update`, `system_cleanup`, `backup_download`, `backup_restore`, `user_*`. |
 
-Rule: a token can never exceed what an Owner can do, and token **issuance, listing, and revocation are not available through any token** (REST/MCP); they are dashboard- or CLI-only (privilege-laundering guard, ASSUMPTION; legacy created tokens only via the Owner session too). Scope check happens in the service layer, not by hiding tools, but MCP additionally hides tools above the token scope from `tools/list` (legacy parity).
+Rule: a token can never exceed what its user can do (D23), and token **issuance, listing, and revocation are not available through any token** (REST/MCP); they are dashboard- or CLI-only (privilege-laundering guard, ASSUMPTION; legacy created tokens only via the Owner session too). Scope check happens in the service layer, not by hiding tools, but MCP additionally hides tools above the token scope from `tools/list` (legacy parity).
 
 ### a.6 Deploy Token and GitHub webhook verification
 
@@ -163,7 +163,7 @@ Server-rendered HTML (Askama, per 01 §11). Full pages return the layout; **frag
 | `/containers/{id}/exec/ws` | GET (upgrade) | **WebSocket** (Origin-checked; PTY; idle timeout 15 min, ASSUMPTION; audited at open and per command) | M runtime | `container_exec_session` |
 | `/backups` | GET | page | M backups | `backups_list` |
 | `/backups` | POST | action | M backups (O for Yanto SQLite) | `backup_create` |
-| `/backups/{id}/download` | GET | file (streamed) | M backups | `backup_download` |
+| `/backups/{id}/download` | GET | file (streamed) | M backups (O for the Yanto DB archive, D22) | `backup_download` |
 | `/backups/{id}` | DELETE | action | M backups | `backup_delete` |
 | `/backups/{id}/restore` | POST | action | O | `backup_restore` |
 | `/hostnames` | GET | page | M hostnames | `hostnames_list`, `hostnames_diagnostics` |
@@ -180,6 +180,7 @@ Server-rendered HTML (Askama, per 01 §11). Full pages return the layout; **frag
 | `/deploy-keys` | GET, POST (`generate`, `import`); `/{id}` DELETE | page/action | O | `deploy_key_*` |
 | `/cron` | GET, POST; `/{id}` PUT, DELETE; `/{id}/toggle` POST | page/action | O | `cron_*` |
 | `/cron/system-files` | GET | fragment (read-only listing of non-Yanto cron files) | O | `cron_files_list` |
+| `/cron/{id}/runs` | GET | fragment (run history, D26) | O | `cron_runs_list` |
 | `/ssh` | GET, POST; `/{id}` DELETE | page/action (Authorized Keys + configured Unix user) | O | `authorized_keys_*` |
 | `/cloudflare` | GET | page (clients, tunnels, zones) | O | `cloudflare_clients_list` ... |
 | `/cloudflare/clients` | POST; `/{id}` PUT, DELETE; `/validate` POST | action | O | `cloudflare_client_*` |
@@ -196,7 +197,7 @@ Server-rendered HTML (Askama, per 01 §11). Full pages return the layout; **frag
 | `/system/logs/stream` | GET | **SSE** (Yanto app log tail) | O | `system_logs_stream` |
 | `/users` | GET, POST; `/{id}/access` PUT; `/{id}/status` PATCH; `/{id}/reset-link` POST; `/{id}` DELETE | page/action | O | `user_*` |
 | `/settings` | GET, POST | page/action (runtime settings; host paths from `config.toml` shown read-only) | O | `settings_read`, `settings_update` |
-| `/settings/api-tokens` | GET, POST; `/{id}` DELETE | page/action (token shown once) | O | `api_token_list/create/revoke` |
+| `/settings/api-tokens` | GET, POST; `/{id}` DELETE | page/action (own tokens only; token shown once) | S | `api_token_list/create/revoke` |
 | `/settings/sessions` | GET; `/{id}` DELETE | page/action | S | `session_list`, `session_revoke` |
 | `/settings/password` | POST | action | S | `password_change` |
 | `/healthz` | GET | `ok`, minimal, no checks detail | pub | `health` (details only via `/api/v1/health`) |
@@ -207,7 +208,7 @@ Error handling: htmx 4xx/5xx responses return a fragment with `HX-Retarget` to a
 
 ## c) REST `/api/v1`
 
-Bearer-only. JSON in/out (`Content-Type: application/json`, body cap 1 MiB; env/compose endpoints 1 MiB; backup restore upload streamed). Error body `{"error":{"code","message"}}`, codes 400/401/403/404/409/413/422/429/500 (ASSUMPTION: envelope differs from legacy `{message}`). Lists use `?limit` (default 50, max 500) and `?cursor`. Scope enforces the matrix in a.5. Where a Member permission is relevant it is listed in a.2; tokens ignore Project permissions. Secrets (tokens, passwords, private keys, `*_enc`) are never returned except where the row says **reveals** (shown once or on explicit reveal).
+Bearer-only. JSON in/out (`Content-Type: application/json`, body cap 1 MiB; env/compose endpoints 1 MiB; backup restore upload streamed). Error body `{"error":{"code","message"}}`, codes 400/401/403/404/409/413/422/429/500 (ASSUMPTION: envelope differs from legacy `{message}`). Lists use `?limit` (default 50, max 500) and `?cursor`. Scope enforces the matrix in a.5. Where a Member permission is relevant it is listed in a.2; a token carries its user's Project permissions (D23), then the scope check applies. Secrets (tokens, passwords, private keys, `*_enc`) are never returned except where the row says **reveals** (shown once or on explicit reveal).
 
 | Operation | Method | Path | Scope | Summary |
 |---|---|---|---|---|
@@ -238,7 +239,7 @@ Bearer-only. JSON in/out (`Content-Type: application/json`, body cap 1 MiB; env/
 | `project_deploy_token_reveal` | POST | `/projects/{id}/deploy-token/reveal` | admin | **Reveals** Deploy Token. POST to avoid caching/logging in GET. |
 | `project_deploy_token_rotate` | POST | `/projects/{id}/deploy-token/rotate` | admin | New token, **reveals** once. |
 | `project_deploy` | POST | `/projects/{id}/deploy` | write | Enqueue Deployment (`target_ref?`, env payload?). 202 `{deployment, reused}`. |
-| `project_rollback_preview` | POST | `/projects/{id}/rollback/preview` | read | Commit/file diff summary. |
+| `project_rollback_preview` | POST | `/projects/{id}/rollback/preview` | read | Commit/file diff summary plus compose diff and env key diff (values masked, D25). |
 | `project_rollback` | POST | `/projects/{id}/rollback` | admin | Enqueue rollback Deployment. |
 | `project_stop` | POST | `/projects/{id}/stop` | admin | `docker compose down`/stop. |
 | `project_restart` | POST | `/projects/{id}/restart` | admin | Restart stack. |
@@ -253,7 +254,6 @@ Bearer-only. JSON in/out (`Content-Type: application/json`, body cap 1 MiB; env/
 | `container_start` | POST | `/containers/{id}/start` | write | |
 | `container_stop` | POST | `/containers/{id}/stop` | admin | |
 | `container_restart` | POST | `/containers/{id}/restart` | admin | |
-| `container_exec` | POST | `/containers/{id}/exec` | admin | One-shot command (`{command}`), returns exit code + output. Not exposed over MCP. |
 | `backups_list` | GET | `/backups?project_id=` | read | |
 | `backup_targets_list` | GET | `/backups/targets` | read | Declared DBs/volumes eligible. |
 | `backup_create` | POST | `/backups` | write | `{kind, project_id?, database_id?}`; `yanto_sqlite` allowed. |
@@ -287,6 +287,7 @@ Bearer-only. JSON in/out (`Content-Type: application/json`, body cap 1 MiB; env/
 | `registry_gc` | POST | `/registry/gc` | admin | Run garbage collection. |
 | `cron_list` | GET | `/cron` | read | Yanto-owned entries. |
 | `cron_files_list` | GET | `/cron/system-files` | read | Other cron files, read-only. |
+| `cron_runs_list` | GET | `/cron/{id}/runs` | read | Run history recorded by `yanto cron-run` (exit code, duration, output tail). |
 | `cron_create` | POST | `/cron` | admin | `{name, schedule, run_as_user, command, enabled}`. |
 | `cron_update` | PATCH | `/cron/{id}` | admin | |
 | `cron_toggle` | POST | `/cron/{id}/toggle` | write | Enable/disable only. |
@@ -398,7 +399,7 @@ Tool shape: `name = yanto_<operation>`; input JSON Schema derived from the Rust 
 | `yanto_registry_repos_list` / `yanto_registry_tags_list` | `registry_repos_list` / `registry_tags_list` | read | R | |
 | `yanto_registry_tag_delete` | `registry_tag_delete` | admin | D | C |
 | `yanto_registry_gc` | `registry_gc` | admin | D | C |
-| `yanto_cron_list` / `yanto_cron_files_list` | `cron_list` / `cron_files_list` | read | R | |
+| `yanto_cron_list` / `yanto_cron_files_list` / `yanto_cron_runs_list` | `cron_list` / `cron_files_list` / `cron_runs_list` | read | R | |
 | `yanto_cron_create` / `yanto_cron_update` | `cron_create` / `cron_update` | admin | W | C |
 | `yanto_cron_toggle` | `cron_toggle` | write | W | |
 | `yanto_cron_delete` | `cron_delete` | admin | D | C |
@@ -422,13 +423,13 @@ Tool shape: `name = yanto_<operation>`; input JSON Schema derived from the Rust 
 | `yanto_cloudflare_dns_create` / `_update` | `cloudflare_dns_create` / `_update` | write | W,E | |
 | `yanto_cloudflare_dns_delete` | `cloudflare_dns_delete` | admin | D,E | C |
 | `yanto_frps_overview` | `frps_overview` | read | R | |
-| `yanto_frps_settings_update` | `frps_settings_update` | write | W | |
+| `yanto_frps_settings_update` | `frps_settings_update` | write | W | (saves only; applying = `daemon_control` restart of `frps`, which needs `confirm`, D28) |
 
 Resources (read scope only; legacy parity, ASSUMPTION for the two new): `yanto://overview`, `yanto://projects/{id}/compose`, `yanto://projects/{id}/env` (masked), `yanto://deployments/{id}/logs`, `yanto://containers/{id}/logs`, `yanto://system/logs`, `yanto://registry/overview`, `yanto://hostnames`.
 
 Legacy tools **dropped** (no equivalent): `yanto_nodes_list`, `yanto_worker_join_command_reveal`, `yanto_settings_multi_node_update` (multi-node); `yanto_backup_upload_r2`, `yanto_settings_r2_update` (R2); `yanto_settings_cloudflare_update/validate`, legacy global `yanto_cloudflare_dns_*` blob (replaced by per-client DNS), `yanto_cloudflare_assignment*` (Docker-network assignments), `yanto_cloudflare_tunnel_node_status/start/stop/restart` (replaced by `daemon_control` + `cloudflare_tunnel_status`), `yanto_project_cloudflare_route*`/`yanto_cloudflare_route_*`/`yanto_cloudflare_routes_diagnostics` (replaced by `hostname_*`), `yanto_settings_ssh_key_save/generate` (replaced by `deploy_key_*`), `yanto_settings_setup_state_update` (wizard moves to `yanto install`), `yanto_frp_server_start/stop/restart` (replaced by `daemon_control` with `frps`), `yanto_frp_tunnel_create/update/delete` (tunnel definitions dropped), `yanto_backups_postgres_targets_list` (replaced by `backup_targets_list`).
 
-Deliberately **not** exposed over MCP (risk area: access control; an LLM-driven client should not hold these even with `admin`): `container_exec`, `user_*`, `api_token_*`, `session_*`, `backup_download` (binary), SSE streams, `deployment_logs_stream` (clients poll `deployment_logs`).
+Deliberately **not** exposed over MCP (risk area: access control; an LLM-driven client should not hold these even with `admin`): `user_*`, `api_token_*`, `session_*`, `backup_download` (binary), SSE streams, `deployment_logs_stream` (clients poll `deployment_logs`).
 
 Prompt-injection note (risk area: input validation): deployment/container logs and env previews returned to an LLM client are untrusted data; tool results label them as such in the text block, and masked env values are never unmasked by MCP.
 
@@ -448,15 +449,16 @@ Binary `yanto`. The CLI runs on the Host as root, opens the same SQLite DB and c
 | `yanto backup project <slug>` / `yanto backup yanto` / `backup list` / `backup prune` | Create and prune Backups; `backup project|yanto` is what scheduled Cron Entries call (D14). Exits non-zero on failure. |
 | `yanto restore yanto <archive>` | Restore the Yanto DB Backup with the service stopped (04 §7.6). |
 | `yanto deploy <slug> [--ref]` | Enqueue a Deployment locally; optional `--wait`/`--follow` (ASSUMPTION). |
+| `yanto cron-run <id>` | Called only by `/etc/cron.d/yanto`: runs a Cron Entry as its `run_as_user` and records the run (D26, 04 §5.3). |
 | `yanto doctor` | Checks DB integrity, migrations, `app.key` presence/perms, Docker, Host Daemons, ports, disk. |
 | `yanto db status` / `yanto db migrate` | Report or apply migrations without serving. |
 | `yanto version` | Version, build, SQLite version. |
 
 ## Open questions / risks
 
-1. API Tokens are not Project-scoped: a `write` token can deploy any Project. Project-scoped tokens would be a v1.x addition (DB: `api_token_projects`).
+1. ~~API Tokens are not Project-scoped~~ Resolved: D23 (tokens inherit their user's per-Project permissions; no per-token Project list).
 2. Deploy Token reversibility (doc 02, section 3) enables reveal + HMAC at the cost of a decryptable secret.
-3. `container_exec` via REST (`admin`) is a root-equivalent remote shell for any admin token; ADR 0007 accepts root, but consider disabling REST exec by default (setting).
+3. ~~REST exec~~ Resolved: D24 (exec is dashboard-only; no REST or MCP exec).
 4. `deployment_cancel`, `backup_restore`, `cloudflare_tunnel_activate`, and per-session CSRF (instead of legacy rotation) are new or changed behavior; not in the parity checklist.
 5. Session lifetime has no idle timeout (legacy parity); a shorter idle timeout may be preferable for an internet-reachable dashboard.
 6. In-memory rate limits reset on restart; repeated restarts weaken brute-force protection.

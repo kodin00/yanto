@@ -15,7 +15,7 @@ Conventions: **ASSUMPTION** = not grounded in provided docs, legacy code, or lib
 | Service | systemd, root, hardened where it cannot break host management (§5) |
 | Update | `yanto self-update` (release path) with automatic DB backup and rollback |
 | Build | `mise` pins Rust + tools; `cargo build --release --target …-musl` |
-| Release | GitHub Actions on tag: musl x86_64 + aarch64 binaries, `SHA256SUMS`, GitHub Release. **No GHCR image.** |
+| Release | GitHub Actions on tag: musl x86_64 + aarch64 binaries, `SHA256SUMS`, build attestations (D27), GitHub Release. **No GHCR image.** |
 | Wizard installs prerequisites? | **No** — checks and prints the exact commands (ASSUMPTION; legacy script apt-installed Docker; see open question 1) |
 
 ## 2. `install.sh`
@@ -27,7 +27,7 @@ Steps:
 2. **Arch detect** (`uname -m`): `x86_64|amd64` → `x86_64-unknown-linux-musl`; `aarch64|arm64` → `aarch64-unknown-linux-musl`; anything else → error listing supported arches (D20).
 3. **Resolve version**: default = latest Release (`https://github.com/kodin00/yanto/releases/latest/download/<asset>`; pre-release tags are marked prerelease so `latest` skips them). Override with `YANTO_VERSION=v1.0.0` → `…/releases/download/v1.0.0/<asset>`. Also `YANTO_REPO` to override `owner/repo` (forks, testing).
 4. **Download** to a fresh `mktemp -d` directory (mode 0700): asset `yanto-<target>` and `SHA256SUMS`. Use `curl -fsSL --proto '=https' --tlsv1.2 --retry 3`.
-5. **Verify SHA256**: `grep " yanto-<target>$" SHA256SUMS | sha256sum -c -`; abort and delete temp dir on mismatch or missing line. Note: the checksum file comes from the same Release, so this proves integrity (corruption, truncated download) but **not** authenticity if the Release itself is compromised. Mitigation path is open question 2 (signature/attestation).
+5. **Verify**: (a) `grep " yanto-<target>$" SHA256SUMS | sha256sum -c -`; abort and delete temp dir on mismatch or missing line. (b) If `gh` is on PATH (D27): `gh attestation verify yanto-<target> --repo <owner/repo>`; abort on failure. Without `gh`, it prints a notice and relies on (a) only. Note: the checksum file comes from the same Release, so (a) proves integrity (corruption, truncated download) but **not** authenticity; the attestation is what covers a compromised Release. Exact `gh attestation verify` flags: **unverified**.
 6. **Install binary**: `install -m 0755 -o root -g root <tmp>/yanto-<target> /usr/local/bin/yanto` (via a temp name in the same dir + `mv` for atomic replace).
 7. **Hand off**: `exec /usr/local/bin/yanto install "$@"` — every script argument is passed through to the wizard. If stdin is not a TTY (the `curl | bash` case) and the wizard is interactive, reopen the terminal: `exec … </dev/tty` when `/dev/tty` is readable; otherwise the wizard fails with "pass `--non-interactive`".
 8. Prints the installed version and exits non-zero on any failure; leaves nothing in `/etc` (all config writing is in `yanto install`).
@@ -344,7 +344,7 @@ Tooling in CI comes from mise: `jdx/mise-action` with `install: true` and `cache
 2. **build** (matrix: `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`; native runner per arch): install musl toolchain (`musl-tools`), `mise install`, `cargo build --release --locked --target $T -p yanto-cli`, assert static (`file`/`ldd` shows "statically linked"/"not a dynamic executable"), smoke-run `yanto version` (on its own arch), upload as `yanto-$T`.
 3. **checksums**: download both, `sha256sum yanto-* > SHA256SUMS`.
 4. **publish** (`permissions: contents: write`, this job only): `gh release create "$TAG" --generate-notes [--prerelease] yanto-x86_64-unknown-linux-musl yanto-aarch64-unknown-linux-musl SHA256SUMS scripts/install.sh`.
-5. Optional: build provenance attestation for each asset (`actions/attest-build-provenance`, **unverified** name/version) — supports open question 2.
+5. **Attest** (D27): build provenance attestation for each binary asset (`actions/attest-build-provenance`, job needs `id-token: write` and `attestations: write`; action name, version and permission names **unverified**). `install.sh` and `self-update` verify as in §2 step 5.
 
 Asset naming is fixed (no version in the file name) so `releases/latest/download/<name>` works from `install.sh` and `self-update`.
 
@@ -367,7 +367,8 @@ Binary `yanto` (`yanto-cli`, clap derive). Global: `--config <path>` (`YANTO_CON
 | `yanto restore yanto <archive>` | Restore the Yanto DB archive with the service stopped (04 §7.6) | yes | no (must be stopped) |
 | `yanto deploy <slug> [--ref <ref>] [--wait]` | Enqueue a Deployment locally (ASSUMPTION: new) | yes (DB) | no (waits queued if `serve` is down) |
 | `yanto mcp` | MCP over stdio; services run in-process; auth via `YANTO_API_TOKEN_FILE` (or `YANTO_API_TOKEN`; never argv; 01 §4.1, 03 §d) | yes (DB) | no (Deployments wait queued if `serve` is down) |
-| `yanto token create\|list\|revoke` | Manage API Tokens from the shell (ASSUMPTION: new); `create --name <n> --scope read\|write\|admin [--expires <d>]` | yes (DB) | no |
+| `yanto token create\|list\|revoke` | Manage API Tokens from the shell (ASSUMPTION: new); `create --name <n> --scope read\|write\|admin [--user <username>] [--expires <d>]` (user defaults to the Owner; D23) | yes (DB) | no |
+| `yanto cron-run <id>` | Called only by `/etc/cron.d/yanto`: runs a Cron Entry as its `run_as_user` and records the run (D26, 04 §5.3); exit 75 if the DB is unreadable | yes (cron runs it as root) | no |
 | `yanto doctor` | Run prereq + Host Daemon + path checks (ASSUMPTION: new) | yes | no |
 | `yanto db migrate` / `yanto db status` | Apply or show migrations without serving (ASSUMPTION) | yes | no |
 | `yanto completions <shell>` | Print shell completions (`clap_complete`, **unverified**) | no | no |
@@ -380,7 +381,7 @@ Exit codes (ASSUMPTION): `0` success, `1` runtime error, `2` usage error (clap d
 ## 11. Open questions and risks
 
 1. **Prerequisite installation**: legacy `install.sh` installed Docker via apt; D19 makes the script thin and D15 argues against Yanto installing daemons. Plan: print commands only. Confirm, or add an opt-in `--install-prereqs` for Debian/Ubuntu.
-2. **Release authenticity**: SHA256 from the same Release covers corruption only. Consider signing (minisign/cosign) or provenance attestation, with the public key/identity embedded in `install.sh` and the binary for `self-update`. Needs a decision before v1.0.0.
+2. **Release authenticity**: resolved by D27 (attestations + `gh attestation verify` when `gh` is present, SHA256 otherwise). Remaining gap: hosts without `gh` get integrity only.
 3. **`curl | bash` + wizard**: relies on `/dev/tty`; behavior over non-TTY SSH sessions and cloud-init must be tested (`--non-interactive` path).
 4. **systemd hardening is unverified**: Tier B especially (`ProtectSystem=strict` + generated `ReadWritePaths`). Must be exercised on Debian 12 and Ubuntu 22.04 with real Docker, cron, Traefik, and an `authorized_keys` write before shipping; record `systemd-analyze security` score.
 5. **Operator-changed paths** (Traefik dir, frps config, SSH user) invalidate `ReadWritePaths` silently; needs a startup self-check that surfaces a clear error instead of EROFS.

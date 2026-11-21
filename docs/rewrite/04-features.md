@@ -44,10 +44,10 @@ A Project is Git-backed or image-backed and runs under Docker Compose with proje
 **Rollback**
 - Git Project: target = explicit ref, else a chosen prior Deployment's `commit_sha`, else the second distinct successful commit (legacy rule). Preview (read-only, needs existing checkout): `git fetch --all --tags`, current vs target summary, `git rev-list --count` both directions, `git diff --numstat` capped at 40 files.
 - Image Project (New): each successful Deployment records `image_digest` (`RepoDigests[0]` from `inspect_image`). Rollback deploys `repo@sha256:<digest>` via a generated override; preview does a manifest existence check (for Hosted Registry images the digest may have been garbage-collected, §4) and fails early if missing.
-- Rollback creates a new Deployment with trigger `rollback` and `rollback_from_deployment_id` (02 §4.2). It restores code/image only; compose/env edits are not versioned (each Deployment stores sha256 of compose and env content, not the content, to explain drift — ASSUMPTION).
+- Rollback creates a new Deployment with trigger `rollback` and `rollback_from_deployment_id` (02 §4.2). Per D25 every Deployment snapshots the compose file it ran (`compose_snapshot`) and the encrypted `.env` (`env_snapshot_enc`), and rollback restores that exact config together with the code/image. The preview shows a compose diff and an env key-level diff (values masked).
 
 ### 1.2 Inputs / state (SQLite)
-- Tables (all defined in 02 §4): `projects` (incl. `deploy_token_hash`, `deploy_token_enc`, `deploy_key_id`, `registry_credential_id`), `deploy_keys` (shared rows, referenced by Projects), `deployments` (trigger `manual|api|deploy_token|github|rollback|cron`; `rollback_from_deployment_id`, `image_digest`, `compose_sha256`, `env_sha256`), `deployment_logs(deployment_id, seq, ts, stream, data)` capped at `runtime.deployment_log_max_bytes` (default 500 000, legacy): oldest chunks dropped, a truncation notice kept at the head.
+- Tables (all defined in 02 §4): `projects` (incl. `deploy_token_hash`, `deploy_token_enc`, `deploy_key_id`, `registry_credential_id`), `deploy_keys` (shared rows, referenced by Projects), `deployments` (trigger `manual|api|deploy_token|github|rollback|cron`; `rollback_from_deployment_id`, `image_digest`, `compose_snapshot`, `env_snapshot_enc`), `deployment_logs(deployment_id, seq, ts, stream, data)` capped at `runtime.deployment_log_max_bytes` (default 500 000, legacy): oldest chunks dropped, a truncation notice kept at the head.
 - Files on Host: `DATA/projects/<slug>/` (mode 0750), `<compose_path>`, `<env_file>` (0600), `.yanto.restart.override.yml`.
 
 ### 1.3 Host/Docker side effects (exact order of a Deployment)
@@ -58,7 +58,7 @@ A Project is Git-backed or image-backed and runs under Docker Compose with proje
    - Missing dir: `git clone --branch <branch> -- <git_url> <path>`. Dir exists but no `.git`: `git init` + `git remote add origin <git_url>`.
    - Explicit target ref: `git fetch --all --tags`, `git checkout <ref>`. Otherwise `git fetch origin <branch>`, `git checkout <branch>` (or `checkout -B <branch> origin/<branch>`), `git pull --ff-only`.
    - `git rev-parse HEAD`, `git log -1 --pretty=%s` → stored on the row.
-4. **Config files**: write `compose_content` (if set) to `<path>/<compose_path>`; for image Projects without content write generated compose. Write pending env (from `deployments.pending_env_enc`, if the trigger carried one) to `<env_file>` mode 0600 via temp file + rename. Assert compose file exists (else error naming the probed alternatives `compose.yml`, `compose.yaml`, `docker-compose.yaml`).
+4. **Config files**: write `compose_content` (if set) to `<path>/<compose_path>`; for image Projects without content write generated compose. Write pending env (from `deployments.pending_env_enc`, if the trigger carried one) to `<env_file>` mode 0600 via temp file + rename. Assert compose file exists (else error naming the probed alternatives `compose.yml`, `compose.yaml`, `docker-compose.yaml`). Store the compose content and the encrypted `.env` content on the Deployment row (D25).
 5. **Registry auth** (if the Project has a Registry Credential or its image is on the Hosted Registry): create `RUN/docker-<deployment_id>/` (0700) containing `config.json` with `auths` entries only, symlink `cli-plugins` to the system/real plugin dir if present; export `DOCKER_CONFIG=<that dir>` for steps 6 and 8; remove the dir in a drop-guard (also swept on startup). Details and justification: §4.7.
 6. **Image Projects**: `docker pull <image>` (or `docker compose pull` for Git Projects whose compose names private images).
 7. **Ports**: derive declared ports, run the collision check, reconcile with `project_ports` (a mismatch with the declared set fails the Deployment).
@@ -110,7 +110,7 @@ Per-step timeouts (ASSUMPTION): git 10 min, pull 30 min, build/up 60 min. Each c
 - [ ] Collision with another Project, a foreign container, and a host listener are each detected; a redeploy of the same Project does not collide with itself.
 - [ ] Two simultaneous triggers: one runs, one queues, a third returns the queued one; never two `running` for a Project.
 - [ ] Cancel of a running Deployment terminates the whole child process group within ~5 s and sets `cancelled`.
-- [ ] Rollback preview shows commit counts and ≤40 file diffstat; rollback deploys prior commit (Git) / prior digest (image).
+- [ ] Rollback preview shows commit counts, ≤40 file diffstat, and compose/env diffs; rollback deploys the prior commit (Git) / prior digest (image) with the exact compose and `.env` snapshots of that Deployment (D25).
 - [ ] `/deploy` rejects wrong/missing token; GitHub route rejects bad signature, accepts valid push on matching branch, ignores other branches/events, dedupes delivery IDs.
 - [ ] SSE stream shows live log, resumes after reconnect without duplicates/gaps, closes on `done`.
 - [ ] Yanto restart mid-Deployment yields `interrupted` with notice; queued ones resume.
@@ -149,7 +149,7 @@ Engine API calls only: list, stats, start, stop, restart, logs, exec create/star
 
 ### 2.5 Security notes
 - **Access control / privilege**: an exec shell is root in the container and, with socket-adjacent mounts, potentially on the Host. Gated by `runtime`, audited at start and end (container, account, exec id, duration, bytes in/out); keystrokes and output are **not** recorded (open question: optional session recording).
-- **Session security**: WS requires Origin check + session; tokens (`API Token`) may not open terminals in v1 (ASSUMPTION: interactive only).
+- **Session security**: WS requires Origin check + session; exec is dashboard-only in v1 (D24): no REST or MCP exec, API Tokens cannot open terminals.
 - **Resource limits**: session caps, idle timeout, frame size cap.
 
 ### 2.6 Acceptance criteria
@@ -318,14 +318,13 @@ Yanto owns exactly one cron file, `/etc/cron.d/yanto` (D11). Entries are stored 
 - Schedules: five fields or one of `@reboot @hourly @daily @weekly @monthly @yearly @annually @midnight` (macro support is **unverified** per cron implementation; Yanto allows `@reboot/@hourly/@daily/@weekly/@monthly/@yearly`).
 
 ### 5.3 Entries, validation, and the generated file
-Entry: `{id, name, schedule, user, command, enabled, record (default true), overlap (allow|skip), timeout_s?, comment}`.
-- **Validation of schedule**: Yanto parses with its own validator (ranges: min 0–59, hour 0–23, dom 1–31, mon 1–12 or `jan–dec`, dow 0–7 or `sun–sat`; lists `,`, ranges `-`, steps `/`, `*`); rejects empty fields, steps of 0, descending ranges, and wrong field count; shows "next 5 run times" (computed in the Host's timezone; note cron's dom/dow OR semantics when both are restricted). `user` must resolve via `getpwnam`; the UI shows a dropdown of login-capable users plus `root`. `command` must be non-empty, single-line (no `\n`/`\r`), no NUL, ≤ 4096 bytes.
+Entry (02 §4.4 `cron_entries`): `{id, name, schedule, run_as_user, command, enabled, overlap (allow|skip), timeout_s?}`; runs in `cron_runs` (D26). Every entry is wrapped; there is no unrecorded form.
+- **Validation of schedule**: Yanto parses with its own validator (ranges: min 0–59, hour 0–23, dom 1–31, mon 1–12 or `jan–dec`, dow 0–7 or `sun–sat`; lists `,`, ranges `-`, steps `/`, `*`); rejects empty fields, steps of 0, descending ranges, and wrong field count; shows "next 5 run times" (computed in the Host's timezone; note cron's dom/dow OR semantics when both are restricted). `run_as_user` must resolve via `getpwnam`; the UI shows a dropdown of login-capable users plus `root`. `command` must be non-empty, single-line (no `\n`/`\r`), no NUL, ≤ 4096 bytes.
 - **Generated file** (header comment, "managed by Yanto, edits are overwritten"):
-  - Recorded entry (default): `<schedule> root /usr/local/bin/yanto cron-run <id>` (binary path = `current_exe`).
-  - Unrecorded entry (`record=false`): `<schedule> <user> <command with % escaped as \%>`.
+  - Every enabled entry: `<schedule> root /usr/local/bin/yanto cron-run <id>` (binary path = `current_exe`). The user field is `root` on purpose; the entry's Unix user is `run_as_user` (see below and OQ-9).
   - Disabled entries are emitted as `# disabled: <id>` comments, or omitted (comment form; ASSUMPTION so the file documents state).
-- `yanto cron-run <id>` is invoked by cron as **root** (that is why the user field is `root`), loads the entry from SQLite (opens the DB directly; WAL + busy timeout), then drops privileges for the child: `initgroups` + `setgid` + `setuid` to `entry.user`, `HOME`, `LOGNAME`, `USER`, `SHELL`, `PATH` set as cron would, then runs `/bin/sh -c <command>`. Because the command is read from the DB, the cron file never contains user-controlled text, which removes `%`-escaping and injection issues for recorded entries.
-- **Run history decision (resolves the ASSUMPTION)**: cron discards output unless wrapped (mail disabled), so Yanto records runs through `cron-run`: `cron_runs(entry_id, started_at, finished_at, exit_code, timed_out, output_tail)`; output captured combined, tail 64 KiB, UTF-8 lossy. Retention: last 50 runs and 30 days per entry (ASSUMPTION). `overlap=skip` uses `flock` on `RUN/cron-<id>.lock` and records a `skipped` run. `timeout_s` → SIGTERM then SIGKILL after 5 s. If Yanto's DB is unreadable, `cron-run` still executes the command? **No** — it exits 75 and logs to syslog (journal) since it cannot know the command (fail closed).
+- `yanto cron-run <id>` is invoked by cron as **root** (that is why the user field is `root`), loads the entry from SQLite (opens the DB directly; WAL + busy timeout), then drops privileges for the child: `initgroups` + `setgid` + `setuid` to `run_as_user`, `HOME`, `LOGNAME`, `USER`, `SHELL`, `PATH` set as cron would, then runs `/bin/sh -c <command>`. Because the command is read from the DB, the cron file never contains user-controlled text, which removes `%`-escaping and injection issues entirely.
+- **Run history (D26)**: cron discards output unless wrapped (mail disabled), so Yanto records runs through `cron-run`: `cron_runs` (02 §4.4: `status`, `exit_code`, `started_at`, `finished_at`, `output_tail`); output captured combined, tail 64 KiB, UTF-8 lossy. Retention: last 50 runs and 30 days per entry (ASSUMPTION). `overlap=skip` uses `flock` on `RUN/cron-<id>.lock` and records a `skipped` run. `timeout_s` → SIGTERM then SIGKILL after 5 s. If Yanto's DB is unreadable, `cron-run` still executes the command? **No** — it exits 75 and logs to syslog (journal) since it cannot know the command (fail closed).
 - Rejected alternatives: keeping the user field as the real user and having `cron-run` talk to the daemon over a socket (more moving parts, needs a socket auth story); wrapping with `logger` (no structured history).
 
 ### 5.4 Host side effects (exact)
@@ -342,12 +341,12 @@ Entry: `{id, name, schedule, user, command, enabled, record (default true), over
 | `/etc/cron.d/yanto` is a symlink or wrong owner | Refuse with explanation; offer "replace" only for Owner |
 | Cron daemon not installed/running (`systemctl is-active cron`/`crond`) | Page warning "cron service inactive: entries will not run" (check only) |
 | External edit detected | Drift banner (above) |
-| Entry's user deleted from Host | Run history shows `unknown user`; entry flagged invalid |
+| Entry's `run_as_user` deleted from Host | Run recorded `failed` (`unknown user`); entry flagged invalid |
 | `cron-run` failure to open DB | Exit 75, journal line, run not recorded |
 
 ### 5.6 Security notes
 - **Privilege / access control**: entries run commands as any chosen user including root, from a root-run service: creating/editing needs a dedicated permission (`admin` scope / Owner; Members cannot, ASSUMPTION). Audit logs the full command text (no secrets expected; UI warns not to put secrets in commands).
-- **Input validation**: single-line commands, NUL/newline rejection; recorded form eliminates cron-file injection; unrecorded form escapes `%`.
+- **Input validation**: single-line commands, NUL/newline rejection; the wrapper form keeps user text out of the cron file.
 - **Integrity**: atomic replace, perms checked each write, symlink refusal.
 - **Privilege drop correctness**: `initgroups`, `setgid` before `setuid`; refuse if the target UID resolves to 0 while the entry user is not `root`.
 
@@ -356,7 +355,7 @@ Entry: `{id, name, schedule, user, command, enabled, record (default true), over
 - [ ] Invalid schedules (`61 * * * *`, `*/0 * * * *`, 4 fields) are rejected with field-level errors; the next-5-runs preview matches `cron` semantics on tested cases.
 - [ ] Temp file during write has a dotted name and is never executed by cron.
 - [ ] Recorded run stores exit code, duration, and output tail; `overlap=skip` prevents concurrent runs; timeouts kill the process group.
-- [ ] A command containing `%` runs correctly for both recorded and unrecorded entries.
+- [ ] A command containing `%` runs correctly.
 - [ ] Editing the file by hand triggers the drift banner; "re-apply" restores it.
 - [ ] Other cron files are visible but have no edit controls and are never written.
 
@@ -541,7 +540,7 @@ Settings (`config.toml`, 01 §8.1): `[frp] unit` (default `frps`) and `config_pa
   | `allowPorts` | list of `{start,end}` / `{single}` entries (documented shape) restricting remote ports |
 - Not owned (shown read-only as raw TOML): `vhostHTTPPort`, `vhostHTTPSPort`, `quicBindPort`, transport/log/plugins, etc.
 - **Write procedure**: read file → parse (reject if invalid TOML) → apply changes → validate (ports in range, `allowPorts` ranges ordered, no duplicate singles, no overlap with `bindPort`/`webServer.port`) → write `frps.toml.yanto.bak` of the old content (0600) → write temp `<dir>/.frps.toml.yanto.tmp` with the original mode/owner → `fsync` → `rename` → `fsync` dir. Optional syntax validation by the frp binary (`frps verify -c <file>`) is **unverified**; Yanto skips it if the subcommand is unavailable.
-- Applying requires a restart (frps reads config at start; hot-reload for frps is **unverified**). The UI shows "pending restart" until the restart succeeds; config is saved even if the restart is deferred.
+- Applying requires a restart (frps reads config at start; hot-reload for frps is **unverified**). The UI shows "pending restart" until the restart succeeds; config is saved even if the restart is deferred. **D28**: applying (restarting `frps`) drops every live tunnel, so the UI requires an explicit confirmation dialog with that warning; over REST/MCP the restart is `daemon_control` (`admin`, `confirm: true`).
 
 ### 8.5 Restart and listing
 - Restart: `systemctl restart <unit>` (also `start`, `stop`), then poll up to 10 s for `ActiveState=active` and a dashboard answer. On failure, show `systemctl status <unit> --no-pager -n 20` output and `journalctl -u <unit> -n 50`, and offer "restore previous config" from the `.bak` (restart again).
@@ -740,4 +739,3 @@ Columns and constraints are defined once in 02 §4.5: `actor_type` (`user|api_to
 5. Compose `config --format json` output stability for port derivation (§1.1).
 6. frps `/api/serverinfo` response shape and `frps verify` existence (§8).
 7. Lingering exec processes after terminal close (§2.2).
-8. Rollback does not version compose/env edits (§1.1).

@@ -33,6 +33,13 @@ Yanto v1.0.0 is a single static Rust binary. It runs as a root systemd service o
 | D19 | `install.sh` is thin: it downloads the latest release binary from GitHub Releases, verifies SHA256, and runs `yanto install`, an interactive wizard where every prompt has a flag (`--non-interactive`). Self-built binaries use the same `yanto install`. `yanto self-update` uses the release path. | — |
 | D20 | Targets: Linux + systemd, amd64/arm64, static musl. Tested on Debian 12+ and Ubuntu 22.04+. | — |
 | D21 | First Rust release is **v1.0.0**. | — |
+| D22 | Secrets at rest: envelope key at `/var/lib/yanto/keys/app.key`. The Yanto-DB Backup bundles the DB and `app.key` into one archive, downloadable by the Owner only and flagged sensitive in the UI. | Owner decision |
+| D23 | API Tokens belong to a user and inherit that user's per-Project permissions, capped by token scope (`read` < `write` < `admin`). No per-token Project list. | Owner decision |
+| D24 | Container exec is dashboard-only in v1 (no REST or MCP exec). | Owner decision |
+| D25 | Each Deployment snapshots its compose file and encrypted `.env`; rollback restores the exact config. | Owner decision |
+| D26 | Cron Entries run wrapped as `yanto cron-run <id>`, which records exit code, duration and output tail; the UI shows run history. | Owner decision |
+| D27 | The release workflow adds GitHub artifact attestations; `install.sh` verifies with `gh attestation verify` when `gh` is present, else falls back to SHA256. | Owner decision |
+| D28 | Applying `frps` config (restarts `frps`, drops live tunnels) requires an explicit confirmation with a warning. | Owner decision |
 
 ## Feature parity checklist
 

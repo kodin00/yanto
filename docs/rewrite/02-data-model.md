@@ -87,7 +87,7 @@ projects ──> deploy_keys (SET NULL), registry_credentials (SET NULL)
 deployment_logs ──> deployments
 hostnames ──> project_ports (RESTRICT), cloudflare_tunnels (RESTRICT), cloudflare_zones (SET NULL)
 cloudflare_zones, cloudflare_tunnels, cloudflare_dns_records ──> cloudflare_clients
-audit_logs ──> projects (SET NULL)       api_tokens ──> users (SET NULL)
+audit_logs ──> projects (SET NULL)       api_tokens ──> users (CASCADE)
 ```
 
 ### 4.1 Identity and access
@@ -174,14 +174,14 @@ Purpose: scoped bearer tokens for REST and MCP. Replaces `mcp_access_tokens`.
 | `token_hash` | TEXT | NOT NULL, UNIQUE (SHA-256 of the full token) |
 | `token_hint` | TEXT | NOT NULL, first 8 chars of the random id part, for display only |
 | `scope` | TEXT | NOT NULL, `CHECK (scope IN ('read','write','admin'))`; rank `read < write < admin` is applied in code |
-| `created_by` | TEXT | FK `users` ON DELETE SET NULL |
+| `user_id` | TEXT | NOT NULL, FK `users` ON DELETE CASCADE; the token acts as this user and inherits that user's per-Project permissions, capped by `scope` (D23) |
 | `expires_at` | INTEGER | NULL = no expiry (ASSUMPTION: optional expiry is new) |
 | `last_used_at` | INTEGER | NULL; updated at most once per minute |
 | `last_used_ip` | TEXT | NULL |
 | `revoked_at` | INTEGER | NULL; soft revoke keeps audit linkage |
 | `created_at` | INTEGER | NOT NULL |
 
-Format (ASSUMPTION): `yat_<id-part>_<secret>`; the `ymcp_` format is not reused. Lookup computes SHA-256 of the presented token and selects by `token_hash` where `revoked_at IS NULL` and not expired. API Tokens are not Project-scoped (see doc 03 open question).
+Format (ASSUMPTION): `yat_<id-part>_<secret>`; the `ymcp_` format is not reused. Lookup computes SHA-256 of the presented token and selects by `token_hash` where `revoked_at IS NULL` and not expired. There is no per-token Project list (D23); deleting the user deletes their tokens.
 
 ### 4.2 Projects and deployments
 
@@ -257,7 +257,8 @@ Purpose: one attempt to bring a Project to a revision; also the queue.
 | `commit_sha`, `commit_message` | TEXT | NULL, filled during run |
 | `rollback_from_deployment_id` | TEXT | FK `deployments(id)` ON DELETE SET NULL |
 | `image_digest` | TEXT | NULL, `RepoDigests[0]` after a successful image Deployment (rollback target) |
-| `compose_sha256`, `env_sha256` | TEXT | NULL, hashes of the compose and env content used (drift explanation) |
+| `compose_snapshot` | TEXT | NULL, the exact compose file content used (D25) |
+| `env_snapshot_enc` | TEXT | NULL, the exact `.env` content, AES-GCM envelope (D25); both snapshots are deleted with the Deployment's retention pruning |
 | `pending_env_enc` | TEXT | NULL; env payload carried by the deploy, nulled at run start |
 | `exit_code` | INTEGER | NULL |
 | `error` | TEXT | NULL, short failure reason |
@@ -357,12 +358,28 @@ Purpose: rows rendered into `/etc/cron.d/yanto` (D11). DB is the source of truth
 | `name` | TEXT | NOT NULL, UNIQUE (rendered as a comment line) |
 | `schedule` | TEXT | NOT NULL, 5-field cron or `@daily`-style alias, validated in code |
 | `run_as_user` | TEXT | NOT NULL (each entry names its Unix user, per CONTEXT.md); must exist in `/etc/passwd` at write time |
-| `command` | TEXT | NOT NULL, single line, no newline or `%` unescaped (cron treats `%` as newline; the renderer escapes it) |
+| `command` | TEXT | NOT NULL, single line, no NUL/newline, <= 4096 bytes. Never written to the cron file: the line is `<schedule> root <yanto path> cron-run <id>` and `yanto cron-run` reads the command from this row (D26), so `%` escaping and cron-file injection do not arise |
+| `overlap` | TEXT | NOT NULL default `'allow'`, `CHECK (overlap IN ('allow','skip'))` |
+| `timeout_s` | INTEGER | NULL = no timeout |
 | `enabled` | INTEGER | boolean default 1; disabled rows are omitted from the file |
 | `project_id` | TEXT | FK `projects` ON DELETE SET NULL (optional link, e.g. backup jobs) |
 | `created_at`, `updated_at` | INTEGER | NOT NULL |
 
-Command execution is a root-equivalent primitive: creation is Owner-only and `admin` scope (risk area: access control / command injection).
+Command execution is a root-equivalent primitive: creation is Owner-only and `admin` scope (risk area: access control / command injection). The cron file's user field is always `root`; `yanto cron-run` drops privileges to `run_as_user` before running the command (04 §5.3).
+
+#### `cron_runs`
+Purpose: run history written by `yanto cron-run` (D26).
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | TEXT | PK, `crr` |
+| `entry_id` | TEXT | NOT NULL, FK `cron_entries` ON DELETE CASCADE |
+| `status` | TEXT | NOT NULL, `CHECK (status IN ('running','success','failed','timeout','skipped'))` |
+| `exit_code` | INTEGER | NULL |
+| `started_at`, `finished_at` | INTEGER | started NOT NULL |
+| `output_tail` | TEXT | NULL, last 64 KiB, UTF-8 lossy; known secrets are not expected in commands (UI warns) |
+
+Index `cron_runs_entry_idx(entry_id, started_at DESC)`. Pruned to the last 50 runs and 30 days per entry (ASSUMPTION).
 
 #### `authorized_keys`
 Purpose: public keys allowed to SSH to the Host as the configured Unix user, rendered into a marked block (`# BEGIN YANTO MANAGED KEYS` / `# END YANTO MANAGED KEYS`, exact lines in 04 §6.1) of that user's `~/.ssh/authorized_keys`; text outside the block is never touched. The configured Unix user is `config.toml` `[ssh] authorized_keys_user` (01 §8.1).
