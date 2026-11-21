@@ -20,6 +20,7 @@ mod cron;
 mod exec;
 mod home;
 mod projects;
+mod registry;
 mod session;
 mod ssh;
 mod system;
@@ -49,6 +50,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .merge(ssh::routes())
         .merge(backups::routes())
         .merge(projects::routes())
+        .merge(registry::routes())
         .route_layer(from_fn_with_state(state.clone(), session::require_session));
     Router::new()
         .merge(auth::public_routes())

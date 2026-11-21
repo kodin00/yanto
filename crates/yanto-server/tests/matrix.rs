@@ -260,6 +260,7 @@ fn rest_routes(bob: &str, yb: &str, pb: &str) -> Vec<Rest> {
     ]
     .into_iter()
     .chain(rest_routes_m2())
+    .chain(rest_routes_m6())
     .collect()
 }
 
@@ -676,6 +677,7 @@ fn dash_routes() -> Vec<Dash> {
     ]
     .into_iter()
     .chain(dash_routes_m2())
+    .chain(dash_routes_m6())
     .collect()
 }
 
@@ -878,7 +880,13 @@ async fn dashboard_routes_against_every_principal() {
                     StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED | StatusCode::SEE_OTHER
                 ) && !matches!(
                     d.path,
-                    "/settings/password" | "/logout" | "/cron" | "/cron/reapply"
+                    "/settings/password"
+                        | "/logout"
+                        | "/cron"
+                        | "/cron/reapply"
+                        | "/registry/enable"
+                        | "/registry/settings"
+                        | "/registry/users"
                 ) {
                     failures.push(format!("{label}: expected success, got {status}"));
                 }
@@ -892,4 +900,159 @@ async fn dashboard_routes_against_every_principal() {
         "dashboard matrix violations:\n{}",
         failures.join("\n")
     );
+}
+
+/// M6 Hosted Registry REST routes: Owner only, scope per operation.
+fn rest_routes_m6() -> Vec<Rest> {
+    let owner_read = [true, true, true, false, false, false];
+    let owner_write = [false, true, true, false, false, false];
+    let owner_admin = [false, false, true, false, false, false];
+    let r = |method: Method, path: &str, body: serde_json::Value, allowed| Rest {
+        method,
+        path: path.to_owned(),
+        body,
+        allowed,
+    };
+    vec![
+        // M6 Hosted Registry (Owner only; scope per operation).
+        r(Method::GET, "/api/v1/registry", json!({}), owner_read),
+        r(
+            Method::PATCH,
+            "/api/v1/registry",
+            json!({"public_host": "registry.example.com"}),
+            owner_admin,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/registry/enable",
+            json!({}),
+            owner_admin,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/registry/disable",
+            json!({}),
+            owner_admin,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/registry/restart",
+            json!({}),
+            owner_admin,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/registry/rerender",
+            json!({}),
+            owner_admin,
+        ),
+        r(Method::GET, "/api/v1/registry/users", json!({}), owner_read),
+        r(
+            Method::POST,
+            "/api/v1/registry/users",
+            json!({"username": "mx"}),
+            owner_write,
+        ),
+        r(
+            Method::PUT,
+            "/api/v1/registry/users/rus_nope/password",
+            json!({}),
+            owner_write,
+        ),
+        r(
+            Method::DELETE,
+            "/api/v1/registry/users/rus_nope",
+            json!({}),
+            owner_admin,
+        ),
+        r(Method::GET, "/api/v1/registry/repos", json!({}), owner_read),
+        r(
+            Method::GET,
+            "/api/v1/registry/repos/app/tags",
+            json!({}),
+            owner_read,
+        ),
+        r(
+            Method::GET,
+            "/api/v1/registry/repos/app/tags/v1",
+            json!({}),
+            owner_read,
+        ),
+        r(
+            Method::DELETE,
+            "/api/v1/registry/repos/app/tags/v1",
+            json!({}),
+            owner_admin,
+        ),
+        r(Method::GET, "/api/v1/registry/gc", json!({}), owner_read),
+        r(Method::POST, "/api/v1/registry/gc", json!({}), owner_admin),
+        r(
+            Method::POST,
+            "/api/v1/registry/gc/preview",
+            json!({}),
+            owner_admin,
+        ),
+    ]
+}
+
+/// M6 Hosted Registry dashboard routes: Owner only.
+fn dash_routes_m6() -> Vec<Dash> {
+    let d = |method, path, form, htmx, member_ok| Dash {
+        method,
+        path,
+        form,
+        htmx,
+        member_ok,
+    };
+    vec![
+        // M6 Hosted Registry (Owner only).
+        d(Method::GET, "/registry", &[], false, false),
+        d(Method::GET, "/registry/remote-push", &[], false, false),
+        d(
+            Method::POST,
+            "/registry/enable",
+            &[("listen_port", "5055")],
+            false,
+            false,
+        ),
+        d(
+            Method::POST,
+            "/registry/disable",
+            &[("delete_data", "")],
+            false,
+            false,
+        ),
+        d(Method::POST, "/registry/restart", &[], false, false),
+        d(Method::POST, "/registry/rerender", &[], false, false),
+        d(
+            Method::POST,
+            "/registry/settings",
+            &[("public_host", "")],
+            false,
+            false,
+        ),
+        d(Method::GET, "/registry/users", &[], true, false),
+        d(
+            Method::POST,
+            "/registry/users",
+            &[("username", "mx")],
+            false,
+            false,
+        ),
+        d(Method::PUT, "/registry/users/rus_nope", &[], true, false),
+        d(Method::DELETE, "/registry/users/rus_nope", &[], true, false),
+        d(Method::GET, "/registry/repos", &[], true, false),
+        d(Method::GET, "/registry/repos/app/tags", &[], true, false),
+        d(Method::GET, "/registry/repos/app/tags/v1", &[], true, false),
+        d(
+            Method::DELETE,
+            "/registry/repos/app/tags/v1",
+            &[],
+            true,
+            false,
+        ),
+        d(Method::GET, "/registry/gc", &[], true, false),
+        d(Method::POST, "/registry/gc", &[], true, false),
+        d(Method::POST, "/registry/gc/preview", &[], true, false),
+    ]
 }

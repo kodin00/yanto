@@ -1,0 +1,8 @@
+<div class="card">
+  <p>Delete <code>{{ repo }}:{{ tag }}</code>?</p>
+  <p class="muted">The registry deletes by digest (<code>{{ digest }}</code>), so every tag pointing at it goes too.</p>
+  {% if !also.is_empty() %}
+  <p class="error">This will also remove the tags: {% for t in also %}<code>{{ t }}</code> {% endfor %}</p>
+  {% endif %}
+  <button class="danger" hx-delete="/registry/repos/{{ repo_enc }}/tags/{{ tag_enc }}" hx-target="#registry-confirm" hx-swap="innerHTML">Delete</button>
+</div>
