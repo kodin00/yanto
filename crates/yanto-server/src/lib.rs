@@ -12,6 +12,7 @@ mod error;
 pub mod mcp;
 mod nav;
 mod net;
+mod stream_guard;
 mod webhooks;
 
 #[cfg(feature = "testing")]

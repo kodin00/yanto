@@ -1,8 +1,10 @@
 //! [`TraefikFilesPort`]: the one dynamic file Yanto owns (`<dynamic_dir>/yanto.yml`).
 //!
-//! The temp file lives in the *parent* of the dynamic dir so Traefik's directory watcher never
-//! sees a partial or stray file (ASSUMPTION: same filesystem, 04 9.3); then `fsync`, `rename`,
-//! `fsync` of the directory. The previous content is kept as `<dir>/../yanto.yml.bak`.
+//! The temp file (`.yanto.yml.tmp`) and the backup (`yanto.yml.bak`) live *inside* the dynamic
+//! dir: the systemd unit (`ProtectSystem=strict`) only makes that dir writable, and a rename
+//! from its parent would cross the `ReadWritePaths` bind mount (EXDEV). Traefik's file provider
+//! only loads `.yml`/`.yaml`/`.toml` files, so neither is ever parsed; then `fsync`, `rename`,
+//! `fsync` of the directory.
 
 use std::path::{Path, PathBuf};
 
@@ -23,12 +25,6 @@ impl HostTraefik {
             dir: dynamic_dir.to_path_buf(),
             owner,
         }
-    }
-
-    fn parent(&self) -> PathBuf {
-        self.dir
-            .parent()
-            .map_or_else(|| PathBuf::from("/"), Path::to_path_buf)
     }
 }
 
@@ -53,10 +49,8 @@ impl TraefikFilesPort for HostTraefik {
 
     fn dir_status(&self) -> DirStatus {
         let exists = self.dir.is_dir();
-        // Writing needs the dynamic dir (rename target) and its parent (temp file).
-        let writable = exists
-            && access(&self.dir, AccessFlags::W_OK).is_ok()
-            && access(&self.parent(), AccessFlags::W_OK).is_ok();
+        // Temp file, backup and rename target all live in the dynamic dir.
+        let writable = exists && access(&self.dir, AccessFlags::W_OK).is_ok();
         DirStatus { exists, writable }
     }
 
@@ -71,18 +65,18 @@ impl TraefikFilesPort for HostTraefik {
     fn write_dynamic(&self, content: &str) -> Result<(), CoreError> {
         let dest = self.dynamic_file();
         refuse_symlink(&dest)?;
-        let parent = self.parent();
+        let dir = &self.dir;
         if let Some(old) = self.read_dynamic()? {
             atomic_write(
-                &parent.join(".yanto.yml.bak.tmp"),
-                &parent.join("yanto.yml.bak"),
+                &dir.join(".yanto.yml.bak.tmp"),
+                &dir.join("yanto.yml.bak"),
                 old.as_bytes(),
                 0o600,
                 self.owner,
             )?;
         }
         atomic_write(
-            &parent.join(".yanto.yml.tmp"),
+            &dir.join(".yanto.yml.tmp"),
             &dest,
             content.as_bytes(),
             0o644,
@@ -117,23 +111,40 @@ mod tests {
         t.write_dynamic("first\n").unwrap();
         t.write_dynamic("second\n").unwrap();
         assert_eq!(t.read_dynamic().unwrap().as_deref(), Some("second\n"));
-        let in_dir: Vec<_> = std::fs::read_dir(t.dynamic_dir())
+        let mut in_dir: Vec<_> = std::fs::read_dir(t.dynamic_dir())
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
+        in_dir.sort();
         assert_eq!(
             in_dir,
-            vec!["yanto.yml"],
-            "nothing but the managed file in the watched dir"
+            vec!["yanto.yml", "yanto.yml.bak"],
+            "only the managed file and its backup (not a .yml, so Traefik skips it)"
         );
-        let bak = std::fs::read_to_string(root.path().join("traefik/yanto.yml.bak")).unwrap();
+        let bak = std::fs::read_to_string(t.dynamic_dir().join("yanto.yml.bak")).unwrap();
         assert_eq!(bak, "first\n");
-        let leftovers: Vec<_> = std::fs::read_dir(root.path().join("traefik"))
+        // Nothing is staged outside the dynamic dir.
+        let outside: Vec<_> = std::fs::read_dir(root.path().join("traefik"))
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .filter(|n| n.contains(".tmp"))
             .collect();
-        assert!(leftovers.is_empty(), "{leftovers:?}");
+        assert_eq!(outside, vec!["dynamic"]);
+    }
+
+    #[test]
+    fn only_the_dynamic_dir_needs_to_be_writable() {
+        use std::os::unix::fs::PermissionsExt;
+        let (root, t) = setup();
+        t.write_dynamic("first\n").unwrap();
+        // ProtectSystem=strict: the parent is read-only, only the dynamic dir is a RW path.
+        let parent = root.path().join("traefik");
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let status = t.dir_status();
+        let r = t.write_dynamic("second\n");
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o755)).unwrap();
+        r.unwrap();
+        assert!(status.writable);
+        assert_eq!(t.read_dynamic().unwrap().as_deref(), Some("second\n"));
     }
 
     #[test]

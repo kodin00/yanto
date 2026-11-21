@@ -329,7 +329,13 @@ impl DeploymentService {
             .await?
             .ok_or_else(|| CoreError::not_found("project not found"))?;
         if let Some(q) = deployments::queued_for(&mut tx, &new.project_id).await? {
-            if new.rollback.is_some() {
+            // Only a plain trigger may coalesce into the queued row (04 1.3); a ref, an env
+            // payload or a rollback would otherwise be accepted and then silently dropped.
+            if new.rollback.is_some()
+                || new.target_ref.is_some()
+                || new.pending_env.is_some()
+                || new.trigger == "rollback"
+            {
                 return Err(CoreError::conflict(
                     "a deployment is already queued for this project; cancel it first",
                 ));
@@ -733,9 +739,7 @@ impl DeploymentService {
         match dep.status.as_str() {
             "queued" => {
                 let mut tx = self.ctx.db.begin_write().await?;
-                let changed =
-                    deployments::finish(&mut tx, id, "cancelled", Some(130), None, self.ctx.now())
-                        .await?;
+                let changed = deployments::cancel_queued(&mut tx, id, self.ctx.now()).await?;
                 if !changed {
                     return Err(CoreError::conflict(
                         "the deployment has just started; cancel it again",
@@ -1336,12 +1340,15 @@ impl DeploymentService {
         d: &GithubDelivery<'_>,
     ) -> Result<GithubOutcome, CoreError> {
         let who = Self::hook_actor("github", "github", Channel::Webhook, origin);
+        // Keyed by IP and Project (03 a.4): keyed by Project alone, anyone who knows the webhook
+        // URL could burn the budget with unsigned requests and block GitHub's real deliveries.
+        let key = format!("{}|{project_id}", origin.ip.as_deref().unwrap_or("unknown"));
         let now = self.ctx.now();
         self.hooks
             .github
-            .check(project_id, now)
+            .check(&key, now)
             .map_err(CoreError::rate_limited)?;
-        self.hooks.github.record_failure(project_id, now);
+        self.hooks.github.record_failure(&key, now);
         if d.body.len() > GITHUB_BODY_CAP {
             return Err(CoreError::validation("body", "payload too large"));
         }

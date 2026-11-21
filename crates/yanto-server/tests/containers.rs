@@ -476,6 +476,7 @@ async fn ws_idle_timeout_closes_the_session() {
     let l = live(Some(ExecLimits {
         idle: Duration::from_millis(200),
         max_session: Duration::from_secs(60),
+        recheck: Duration::from_secs(60),
     }))
     .await;
     let cookie = l.app.owner_client().await.cookie.unwrap();
@@ -505,6 +506,47 @@ async fn ws_idle_timeout_closes_the_session() {
             .await
             .unwrap();
     assert!(meta.contains("\"reason\":\"idle\""), "{meta}");
+}
+
+#[tokio::test]
+async fn ws_closes_the_terminal_when_the_session_is_revoked() {
+    let l = live(Some(ExecLimits {
+        idle: Duration::from_secs(60),
+        max_session: Duration::from_secs(60),
+        recheck: Duration::from_millis(100),
+    }))
+    .await;
+    let cookie = l.app.owner_client().await.cookie.unwrap();
+    let origin = format!("http://{}", l.addr);
+    let (mut ws, _) = connect_async(ws_request(l.addr, Some(&cookie), Some(&origin), ""))
+        .await
+        .unwrap();
+    // Still allowed: a few re-checks pass and the shell keeps working.
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    ws.send(Message::Binary(b"id\n".to_vec().into()))
+        .await
+        .unwrap();
+    // Sign out everywhere: the open shell must end too.
+    sqlx::query("DELETE FROM sessions")
+        .execute(l.app.core.db.writer())
+        .await
+        .unwrap();
+    let close = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            match ws.next().await {
+                Some(Ok(Message::Close(f))) => return f,
+                Some(Ok(_)) => {}
+                _ => return None,
+            }
+        }
+    })
+    .await
+    .expect("closed after revocation");
+    assert_eq!(close.unwrap().reason.as_str(), "authorization_revoked");
+    eventually("end audit", async || {
+        audit_n(&l.app, "container.exec_end").await == 1
+    })
+    .await;
 }
 
 #[tokio::test]

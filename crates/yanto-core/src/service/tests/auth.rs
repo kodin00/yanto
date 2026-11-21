@@ -201,6 +201,16 @@ async fn login_succeeds_and_failures_are_indistinguishable() {
     .await
     .unwrap();
     assert_eq!(label, "<unknown>");
+
+    // An over-long password whose byte 1024 falls inside a UTF-8 character must not panic.
+    let long = format!("{}{}", "a".repeat(1023), "\u{e9}".repeat(4));
+    let e = core
+        .services
+        .auth
+        .login(&core.origin(), "nobody", &long, None)
+        .await
+        .unwrap_err();
+    assert_eq!(e.kind, ErrorKind::Unauthenticated);
 }
 
 #[tokio::test]

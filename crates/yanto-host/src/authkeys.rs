@@ -1,7 +1,7 @@
 //! Read and atomically update a Unix user's `authorized_keys` (04 6.4).
 
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::os::unix::fs::MetadataExt;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
@@ -12,14 +12,19 @@ use yanto_core::ports::{
 };
 use yanto_core::{CoreError, ErrorKind};
 
-use crate::fsutil::{atomic_write, chown, io_err, sync_dir};
+use crate::fsutil::{DirHandle, io_err};
 
+const FILE_NAME: &str = "authorized_keys";
 const TMP_NAME: &str = ".authorized_keys.yanto.tmp";
 const BAK_NAME: &str = "authorized_keys.yanto.bak";
+const BAK_TMP_NAME: &str = ".authorized_keys.yanto.bak.tmp";
 
 /// File bytes plus `(size, mtime secs, mtime nanos, sha256)`.
 type Snapshot = (Vec<u8>, (u64, i64, i64, String));
 
+/// Yanto runs as root but `~/.ssh` belongs to the (untrusted) target user, who can rename and
+/// symlink entries in it at any time. Every step therefore goes through one [`DirHandle`]
+/// opened with `O_NOFOLLOW`: nothing is re-resolved by path after the checks.
 #[derive(Clone)]
 pub struct HostAuthorizedKeys {
     users: Arc<dyn HostUsers>,
@@ -34,52 +39,38 @@ impl HostAuthorizedKeys {
         user.home.join(".ssh")
     }
 
-    /// Create `~/.ssh` (`0700`, owned by the user) or check an existing one (6.4 step 2).
-    fn ensure_ssh_dir(user: &UnixUser) -> Result<PathBuf, CoreError> {
-        let dir = Self::ssh_dir(user);
-        match std::fs::symlink_metadata(&dir) {
-            Ok(m) if m.file_type().is_symlink() || !m.is_dir() => {
-                Err(CoreError::conflict(format!(
-                    "{} is not a plain directory; refusing to write there",
-                    dir.display()
-                )))
+    /// Open `~/.ssh` (creating it `0700`, owned by the user) and check it (6.4 step 2).
+    fn ensure_ssh_dir(user: &UnixUser) -> Result<DirHandle, CoreError> {
+        let path = Self::ssh_dir(user);
+        let dir = match DirHandle::open(&path)? {
+            Some(d) => d,
+            None => {
+                match std::fs::create_dir(&path) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(e) => return Err(io_err("cannot create ~/.ssh", e)),
+                }
+                let d = DirHandle::open(&path)?
+                    .ok_or_else(|| CoreError::conflict("~/.ssh disappeared while creating it"))?;
+                d.set_mode_owner(0o700, Some((user.uid, user.gid)))?;
+                d
             }
-            Ok(m) if m.mode() & 0o022 != 0 => Err(CoreError::conflict(format!(
+        };
+        if dir.metadata()?.mode() & 0o022 != 0 {
+            return Err(CoreError::conflict(format!(
                 "{} is writable by group or others (sshd StrictModes would reject the keys); fix its mode first",
-                dir.display()
-            ))),
-            Ok(_) => Ok(dir),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::create_dir(&dir).map_err(|e| io_err("cannot create ~/.ssh", e))?;
-                std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
-                    .map_err(|e| io_err("cannot set ~/.ssh mode", e))?;
-                chown(&dir, user.uid, user.gid)?;
-                Ok(dir)
-            }
-            Err(e) => Err(io_err("cannot stat ~/.ssh", e)),
+                path.display()
+            )));
         }
+        Ok(dir)
     }
 
     /// Snapshot of the file: bytes plus `(size, mtime, sha256)` for optimistic concurrency.
-    fn snapshot(path: &Path) -> Result<Option<Snapshot>, CoreError> {
-        match std::fs::symlink_metadata(path) {
-            Ok(m) if m.file_type().is_symlink() => Err(CoreError::conflict(format!(
-                "{} is a symbolic link; refusing to write through it",
-                path.display()
-            ))),
-            Ok(m) if !m.is_file() => Err(CoreError::conflict(format!(
-                "{} is not a regular file",
-                path.display()
-            ))),
-            Ok(m) => {
-                let bytes =
-                    std::fs::read(path).map_err(|e| io_err("cannot read authorized_keys", e))?;
-                let sha = yanto_core::crypto::hex(&Sha256::digest(&bytes));
-                Ok(Some((bytes, (m.len(), m.mtime(), m.mtime_nsec(), sha))))
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(io_err("cannot stat authorized_keys", e)),
-        }
+    fn snapshot(dir: &DirHandle) -> Result<Option<Snapshot>, CoreError> {
+        Ok(dir.read_file(FILE_NAME)?.map(|(bytes, m)| {
+            let sha = yanto_core::crypto::hex(&Sha256::digest(&bytes));
+            (bytes, (m.len(), m.mtime(), m.mtime_nsec(), sha))
+        }))
     }
 }
 
@@ -101,24 +92,24 @@ impl AuthorizedKeysPort for HostAuthorizedKeys {
     }
 
     fn file_path(&self, user: &UnixUser) -> PathBuf {
-        Self::ssh_dir(user).join("authorized_keys")
+        Self::ssh_dir(user).join(FILE_NAME)
     }
 
     fn read(&self, user: &str) -> Result<Option<Vec<u8>>, CoreError> {
         let u = self.resolve(user)?;
-        Ok(Self::snapshot(&self.file_path(&u))?.map(|(b, _)| b))
+        let Some(dir) = DirHandle::open(&Self::ssh_dir(&u))? else {
+            return Ok(None);
+        };
+        Ok(Self::snapshot(&dir)?.map(|(b, _)| b))
     }
 
     fn update(&self, user: &str, edit: &mut KeysEditFn<'_>) -> Result<KeysUpdated, CoreError> {
         let u = self.resolve(user)?;
         let dir = Self::ensure_ssh_dir(&u)?;
-        let path = dir.join("authorized_keys");
-        let tmp = dir.join(TMP_NAME);
-        let bak = dir.join(BAK_NAME);
         let owner = Some((u.uid, u.gid));
 
         for attempt in 0..2 {
-            let before = Self::snapshot(&path)?;
+            let before = Self::snapshot(&dir)?;
             let current = before
                 .as_ref()
                 .map(|(b, _)| b.as_slice())
@@ -135,15 +126,9 @@ impl AuthorizedKeysPort for HostAuthorizedKeys {
                     backup_path: None,
                 });
             }
-            // Stage the new content, then make sure nobody edited the file in the meantime.
-            let _ = std::fs::remove_file(&tmp);
-            std::fs::write(&tmp, &new.bytes)
-                .map_err(|e| io_err("cannot stage authorized_keys", e))?;
-            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
-                .map_err(|e| io_err("cannot set file mode", e))?;
-            let again = Self::snapshot(&path)?;
+            // Make sure nobody edited the file while the new content was computed.
+            let again = Self::snapshot(&dir)?;
             if again.as_ref().map(|(_, s)| s) != before.as_ref().map(|(_, s)| s) {
-                let _ = std::fs::remove_file(&tmp);
                 if attempt == 0 {
                     continue;
                 }
@@ -151,32 +136,23 @@ impl AuthorizedKeysPort for HostAuthorizedKeys {
                     "authorized_keys changed while writing; reload and retry",
                 ));
             }
-            let _ = std::fs::remove_file(&tmp);
 
             let backup_path = if let Some((old, _)) = &before {
-                atomic_write(
-                    &dir.join(".authorized_keys.yanto.bak.tmp"),
-                    &bak,
-                    old,
-                    0o600,
-                    owner,
-                )?;
-                Some(bak.clone())
+                dir.write_atomic(BAK_TMP_NAME, BAK_NAME, old, 0o600, owner)?;
+                Some(dir.path().join(BAK_NAME))
             } else {
                 None
             };
-            atomic_write(&tmp, &path, &new.bytes, 0o600, owner)?;
+            dir.write_atomic(TMP_NAME, FILE_NAME, &new.bytes, 0o600, owner)?;
 
             // Verify; on any mismatch put the previous content back and fail loudly (6.4 step 7).
-            let written =
-                std::fs::read(&path).map_err(|e| io_err("cannot re-read authorized_keys", e))?;
+            let written = Self::snapshot(&dir)?.map(|(b, _)| b).unwrap_or_default();
             let outside_ok = outside_block(&written).is_ok_and(|o| o == new.expected_outside);
             if written != new.bytes || !outside_ok {
                 if let Some((old, _)) = &before {
-                    atomic_write(&tmp, &path, old, 0o600, owner)?;
+                    dir.write_atomic(TMP_NAME, FILE_NAME, old, 0o600, owner)?;
                 } else {
-                    let _ = std::fs::remove_file(&path);
-                    let _ = sync_dir(&dir);
+                    dir.remove(FILE_NAME)?;
                 }
                 return Err(CoreError::new(
                     ErrorKind::Internal,

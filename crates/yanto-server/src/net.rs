@@ -102,20 +102,27 @@ pub fn resolve_origin(
     origin
 }
 
+/// `X-Forwarded-For` first: every proxy *appends* the peer it saw, so its right-most untrusted
+/// entry cannot be forged by the client. `CF-Connecting-IP` is a single header a non-Cloudflare
+/// proxy (Traefik, nginx) passes through verbatim, so a client could rotate it per request to
+/// dodge the per-IP limits; it is only a fallback when no forwarded chain is present.
 fn forwarded_ip(headers: &HeaderMap, trusted: &[Cidr]) -> Option<IpAddr> {
-    if let Some(v) = headers
-        .get("cf-connecting-ip")
+    let from_xff = headers
+        .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
-        && let Ok(ip) = v.trim().parse()
-    {
-        return Some(ip);
-    }
-    let xff = headers.get("x-forwarded-for")?.to_str().ok()?;
-    // Right to left: the first address that is not itself a trusted proxy is the client.
-    xff.split(',')
-        .rev()
-        .filter_map(|s| s.trim().parse::<IpAddr>().ok())
-        .find(|ip| !trusted.iter().any(|c| c.contains(*ip)))
+        .and_then(|xff| {
+            // Right to left: the first address that is not itself a trusted proxy is the client.
+            xff.split(',')
+                .rev()
+                .filter_map(|s| s.trim().parse::<IpAddr>().ok())
+                .find(|ip| !trusted.iter().any(|c| c.contains(*ip)))
+        });
+    from_xff.or_else(|| {
+        headers
+            .get("cf-connecting-ip")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse().ok())
+    })
 }
 
 /// Same-origin check for state-changing dashboard requests (docs/rewrite/03 a.3).
@@ -203,6 +210,20 @@ mod tests {
         let none = resolve_origin(&h, None, &trusted, Channel::Dashboard);
         assert_eq!(none.ip, None);
         assert!(from_proxy.request_id.unwrap().starts_with("req_"));
+
+        // Behind a local proxy that appends X-Forwarded-For, a client-set CF-Connecting-IP
+        // cannot replace the address the proxy saw.
+        let peer = Some("127.0.0.1:5000".parse().unwrap());
+        let forged = headers(&[
+            ("cf-connecting-ip", "192.0.2.77"),
+            ("x-forwarded-for", "203.0.113.9"),
+        ]);
+        let o = resolve_origin(&forged, peer, &trusted, Channel::Dashboard);
+        assert_eq!(o.ip.as_deref(), Some("203.0.113.9"));
+        // Without a forwarded chain CF-Connecting-IP is still used (cloudflared).
+        let cf = headers(&[("cf-connecting-ip", "192.0.2.77")]);
+        let o = resolve_origin(&cf, peer, &trusted, Channel::Dashboard);
+        assert_eq!(o.ip.as_deref(), Some("192.0.2.77"));
     }
 
     #[test]

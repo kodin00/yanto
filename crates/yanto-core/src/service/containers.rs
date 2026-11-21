@@ -626,6 +626,29 @@ impl ExecTicket {
         &self.container.name
     }
 
+    /// Re-check, for a freshly loaded `actor`, that it may still hold this terminal (03 a.3:
+    /// streams re-check every 15 s). Same rules as opening it: `runtime` on the container's
+    /// Project, or the Owner for containers outside any Project; and it must be the same user.
+    pub fn still_allowed(&self, actor: &Actor) -> Result<(), CoreError> {
+        if self.who.actor_id != actor.user_id {
+            return Err(CoreError::forbidden(
+                "the terminal belongs to another account",
+            ));
+        }
+        actor.authorize(&OP_CONTAINER_EXEC_SESSION, None)?;
+        match &self.project {
+            Some(p) => actor.authorize(
+                &OpSpec {
+                    access: Access::Project(Need::Permission(Permission::Runtime)),
+                    ..OP_CONTAINER_EXEC_SESSION
+                },
+                Some(p),
+            ),
+            None if actor.is_owner() => Ok(()),
+            None => Err(CoreError::not_found("container not found")),
+        }
+    }
+
     pub async fn resize(&self, cols: u16, rows: u16) -> Result<(), CoreError> {
         self.svc
             .docker

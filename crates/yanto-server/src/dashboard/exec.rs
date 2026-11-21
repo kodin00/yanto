@@ -16,7 +16,9 @@ use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
 use tokio::time::Instant;
 use yanto_core::CoreError;
+use yanto_core::actor::{Channel, Origin};
 use yanto_core::ports::ExecIo;
+use yanto_core::service::Services;
 use yanto_core::service::containers::ExecTicket;
 
 use super::session::Session;
@@ -34,6 +36,8 @@ const WS_CLOSE_POLICY: u16 = 1008;
 pub struct ExecLimits {
     pub idle: Duration,
     pub max_session: Duration,
+    /// How often the session and the `runtime` grant are re-checked (03 a.3: 15 s).
+    pub recheck: Duration,
 }
 
 impl Default for ExecLimits {
@@ -41,6 +45,7 @@ impl Default for ExecLimits {
         Self {
             idle: Duration::from_secs(15 * 60),
             max_session: Duration::from_secs(4 * 3600),
+            recheck: Duration::from_secs(15),
         }
     }
 }
@@ -79,10 +84,17 @@ pub async fn ws(
         .await
         .map_err(|e| DashError::new(e, &headers))?;
     let limits = s.exec_limits;
+    // Re-authenticate with the same cookie later: logout, revocation, a disabled account or a
+    // removed `runtime` grant must end the shell, not just future requests.
+    let recheck = Recheck {
+        services: s.services.clone(),
+        cookie: super::session::cookie_value(&headers).unwrap_or_default(),
+        origin: Origin::new(Channel::Dashboard, session.0.actor.ip.clone()),
+    };
     Ok(upgrade
         .max_frame_size(MAX_FRAME)
         .max_message_size(MAX_FRAME)
-        .on_upgrade(move |socket| pump(socket, io, ticket, limits)))
+        .on_upgrade(move |socket| pump(socket, io, ticket, limits, recheck)))
 }
 
 #[derive(Deserialize)]
@@ -91,8 +103,34 @@ enum Control {
     Resize { cols: u16, rows: u16 },
 }
 
+struct Recheck {
+    services: std::sync::Arc<Services>,
+    cookie: String,
+    origin: Origin,
+}
+
+impl Recheck {
+    async fn still_allowed(&self, ticket: &ExecTicket) -> bool {
+        match self
+            .services
+            .auth
+            .authenticate_session(&self.origin, &self.cookie)
+            .await
+        {
+            Ok(s) => ticket.still_allowed(&s.actor).is_ok(),
+            Err(_) => false,
+        }
+    }
+}
+
 /// Move bytes both ways until either side ends, then hang the shell up and audit.
-async fn pump(mut socket: WebSocket, io: ExecIo, ticket: ExecTicket, limits: ExecLimits) {
+async fn pump(
+    mut socket: WebSocket,
+    io: ExecIo,
+    ticket: ExecTicket,
+    limits: ExecLimits,
+    recheck: Recheck,
+) {
     let ExecIo {
         mut output,
         mut input,
@@ -102,6 +140,7 @@ async fn pump(mut socket: WebSocket, io: ExecIo, ticket: ExecTicket, limits: Exe
     let started = Instant::now();
     let mut idle_deadline = started + limits.idle;
     let hard_deadline = started + limits.max_session;
+    let mut recheck_tick = tokio::time::interval_at(started + limits.recheck, limits.recheck);
 
     let reason: &str = loop {
         let deadline = idle_deadline.min(hard_deadline);
@@ -136,6 +175,11 @@ async fn pump(mut socket: WebSocket, io: ExecIo, ticket: ExecTicket, limits: Exe
                 None => break "exited",
                 Some(Err(_)) => break "error",
             },
+            _ = recheck_tick.tick() => {
+                if !recheck.still_allowed(&ticket).await {
+                    break "revoked";
+                }
+            }
             () = tokio::time::sleep_until(deadline) => {
                 break if Instant::now() >= hard_deadline { "max_duration" } else { "idle" };
             }
@@ -145,6 +189,7 @@ async fn pump(mut socket: WebSocket, io: ExecIo, ticket: ExecTicket, limits: Exe
     let (code, text) = match reason {
         "idle" => (WS_CLOSE_POLICY, "idle timeout"),
         "max_duration" => (WS_CLOSE_POLICY, "session time limit reached"),
+        "revoked" => (WS_CLOSE_POLICY, "authorization_revoked"),
         _ => (WS_CLOSE_NORMAL, "session ended"),
     };
     let _ = socket

@@ -598,7 +598,7 @@ impl HostnameService {
         }
         audit::write(&self.ctx, &mut tx, &AuditActor::from_actor(actor), &ev).await?;
         tx.commit().await.map_err(db_err)?;
-        self.publish(&id).await
+        self.publish(&id, actor.is_owner()).await
     }
 
     // ---- state changes -------------------------------------------------------------------
@@ -607,7 +607,7 @@ impl HostnameService {
         Self::scope_guard(actor, &OP_HOSTNAME_RETRY)?;
         let row = self.load(id).await?;
         self.authorize_row(actor, &OP_HOSTNAME_RETRY, &row)?;
-        self.publish(id).await
+        self.publish(id, actor.is_owner()).await
     }
 
     pub async fn enable(&self, actor: &Actor, id: &str) -> Result<PublishOutcome, CoreError> {
@@ -649,7 +649,7 @@ impl HostnameService {
         }
         audit::write(&self.ctx, &mut tx, &AuditActor::from_actor(actor), &ev).await?;
         tx.commit().await.map_err(db_err)?;
-        self.publish(id).await
+        self.publish(id, actor.is_owner()).await
     }
 
     /// Remove the Hostname from its provider first (a failure keeps the row so it can be retried),
@@ -698,7 +698,8 @@ impl HostnameService {
             }
         }
         for r in &rows {
-            let res = self.publish_row_state(r, &rows, true).await;
+            // Re-sync only refreshes records Yanto owns; it never adopts foreign ones.
+            let res = self.publish_row_state(r, false).await;
             match res {
                 Ok(w) => warnings.extend(w),
                 Err(e) => errors.push(format!("{}: {e}", r.hostname)),
@@ -903,7 +904,8 @@ impl HostnameService {
     }
 
     /// Apply the provider for one row, then DNS, verify, and record the result on the row.
-    async fn publish(&self, id: &str) -> Result<PublishOutcome, CoreError> {
+    /// `takeover`: the actor may replace a DNS record Yanto did not create (Owner only).
+    async fn publish(&self, id: &str, takeover: bool) -> Result<PublishOutcome, CoreError> {
         let _g = self.lock.lock().await;
         let rows = self.all_rows().await?;
         let row = rows
@@ -913,7 +915,7 @@ impl HostnameService {
             .ok_or_else(|| CoreError::not_found("hostname not found"))?;
         let mut warnings = Vec::new();
         match self.apply_provider(&row, &rows, None).await {
-            Ok(()) => match self.publish_row_state(&row, &rows, false).await {
+            Ok(()) => match self.publish_row_state(&row, takeover).await {
                 Ok(w) => warnings = w,
                 Err(e) => warnings.push(e.to_string()),
             },
@@ -946,10 +948,8 @@ impl HostnameService {
     async fn publish_row_state(
         &self,
         row: &repo::HostnameRow,
-        rows: &[repo::HostnameRow],
-        _resync: bool,
+        takeover: bool,
     ) -> Result<Vec<String>, CoreError> {
-        let _ = rows;
         let mut warnings = Vec::new();
         if !row.enabled {
             self.record(&row.id, "disabled", None, false).await?;
@@ -963,7 +963,7 @@ impl HostnameService {
             }
         };
         if row.manage_dns {
-            match self.dns_ensure(row).await {
+            match self.dns_ensure(row, takeover).await {
                 Ok(owned) => {
                     if let Some(rid) = owned {
                         let mut tx = self.ctx.db.begin_write().await?;
@@ -1061,8 +1061,14 @@ impl HostnameService {
     }
 
     /// Create or update the managed records. Returns the id of a record Yanto owns (created by it
-    /// or carrying its marker), to be stored as `dns_record_id`.
-    async fn dns_ensure(&self, row: &repo::HostnameRow) -> Result<Option<String>, CoreError> {
+    /// or carrying its marker), to be stored as `dns_record_id`. A same-type record without the
+    /// marker is replaced only with `takeover` (the Owner): a Member's `hostnames` permission must
+    /// not repoint the Owner's existing records.
+    async fn dns_ensure(
+        &self,
+        row: &repo::HostnameRow,
+        takeover: bool,
+    ) -> Result<Option<String>, CoreError> {
         let zone_id = row
             .zone_id
             .as_deref()
@@ -1129,6 +1135,15 @@ impl HostnameService {
                 Some(r) if r.content == content && r.proxied == proxied => {
                     CloudflareService::is_managed_comment(r.comment.as_deref())
                         .then(|| r.id.clone())
+                }
+                Some(r)
+                    if !takeover
+                        && !CloudflareService::is_managed_comment(r.comment.as_deref()) =>
+                {
+                    return Err(CoreError::conflict(format!(
+                        "DNS conflict: {} record {} -> {} was not created by Yanto; only the Owner can replace it",
+                        r.record_type, r.name, r.content
+                    )));
                 }
                 Some(r) => Some(
                     cf.update_dns(&token, &zone.id, &r.id, &input)

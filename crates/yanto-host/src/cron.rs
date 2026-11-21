@@ -165,8 +165,9 @@ impl CronPort for HostCron {
                 self.managed_path().display()
             )));
         }
-        // Dotted temp name in /etc (not /etc/cron.d): cron never reads it (5.4, OQ-26).
-        let tmp = self.etc_dir.join(CRON_TEMP_NAME);
+        // Dotted temp name inside /etc/cron.d, the only writable dir under ProtectSystem=strict;
+        // cron skips dotted names (5.4, OQ-26).
+        let tmp = self.cron_d().join(CRON_TEMP_NAME);
         atomic_write(
             &tmp,
             &self.managed_path(),

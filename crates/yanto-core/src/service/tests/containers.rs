@@ -343,6 +343,19 @@ async fn exec_rules_runtime_running_session_only_and_caps() {
         kind(w.svc.exec_open(&runner, &w.stray, 80, 24).await),
         ErrorKind::NotFound
     );
+    // An open terminal stays allowed only while the grant does (re-checked by the adapter).
+    let (io, ticket) = w.svc.exec_open(&runner, &w.shop, 80, 24).await.unwrap();
+    assert!(ticket.still_allowed(&runner).is_ok());
+    let demoted = member(&w, "demoted", &[]).await;
+    let mut revoked = runner.clone();
+    revoked.grants = demoted.grants.clone();
+    assert_eq!(
+        ticket.still_allowed(&revoked).unwrap_err().kind,
+        ErrorKind::Forbidden
+    );
+    assert!(ticket.still_allowed(&viewer).is_err(), "another account");
+    ticket.finish(io.input, 0, 0, "closed").await;
+
     // Tokens never open terminals (D24), even an Owner admin token.
     let owner_user = crate::testing::TestUser {
         id: String::new(),

@@ -449,6 +449,45 @@ async fn delete_stops_containers_removes_files_and_detaches_audit() {
         matches!(kind(vol), ErrorKind::Validation(_)),
         "volumes need the typed slug"
     );
+    // A queued Deployment is cancelled before `compose down`, so the worker cannot claim it and
+    // bring the stack back up mid-delete (here `down` fails, and the queue stays cleared).
+    let queued = core
+        .services
+        .deployments
+        .deploy(&o, &p.id, &Default::default())
+        .await
+        .unwrap()
+        .deployment
+        .id;
+    core.commands.on(
+        "compose -p gone down",
+        crate::testing::command::Reply::fail(1, "boom"),
+    );
+    assert_eq!(
+        kind(
+            core.services
+                .projects
+                .delete(
+                    &o,
+                    &p.id,
+                    &DeleteOptions {
+                        stop_containers: true,
+                        delete_volumes: false,
+                        confirm_slug: None,
+                    },
+                )
+                .await
+        ),
+        ErrorKind::Conflict
+    );
+    let status: String = sqlx::query_scalar("SELECT status FROM deployments WHERE id = ?")
+        .bind(&queued)
+        .fetch_one(core.db.reader())
+        .await
+        .unwrap();
+    assert_eq!(status, "cancelled");
+    core.commands
+        .on("compose -p gone down", crate::testing::command::Reply::ok());
     core.services
         .projects
         .delete(
@@ -507,6 +546,12 @@ async fn declared_databases_validate_names_and_keep_ids_across_edits() {
             database: Some("x'y".into()),
             ..db("db")
         },
+        // Would be read as a dump-tool option.
+        DatabaseInput {
+            database: Some("-rdump".into()),
+            ..db("db")
+        },
+        db("-svc"),
         DatabaseInput {
             password_env: Some("hunter2 $(id)".into()),
             ..db("db")

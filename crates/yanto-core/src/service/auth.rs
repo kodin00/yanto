@@ -288,16 +288,17 @@ impl AuthService {
             let mut conn = ctx.db.reader().acquire().await.map_err(db_err)?;
             users::by_username(&mut conn, username.trim()).await?
         };
-        let valid = match &user {
-            Some(u) if u.status() == UserStatus::Active && password.len() <= MAX_PASSWORD_BYTES => {
-                match &u.password_hash {
-                    Some(h) => ctx.passwords.verify(password, h).await,
-                    None => false,
-                }
-            }
-            _ => {
+        let hash = user
+            .as_ref()
+            .filter(|u| u.status() == UserStatus::Active && password.len() <= MAX_PASSWORD_BYTES)
+            .and_then(|u| u.password_hash.as_ref());
+        // Unknown, disabled and not-yet-set-up users (and over-long passwords) burn the same
+        // Argon2 work so timing does not tell them apart (03 a.3).
+        let valid = match hash {
+            Some(h) => ctx.passwords.verify(password, h).await,
+            None => {
                 ctx.passwords
-                    .verify_dummy(&password[..password.len().min(MAX_PASSWORD_BYTES)])
+                    .verify_dummy(truncate_on_char(password, MAX_PASSWORD_BYTES))
                     .await;
                 false
             }
@@ -763,6 +764,19 @@ async fn code_matches(
     let expires: i64 = expires.parse().unwrap_or(0);
     let given = sha256_hex(&normalize_code(code));
     Ok(ct_eq(&stored, &given) && now < expires)
+}
+
+/// At most `max` bytes of `s`, cut on a char boundary (a byte slice could split a code point
+/// and panic on attacker-supplied input).
+fn truncate_on_char(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 #[cfg(test)]

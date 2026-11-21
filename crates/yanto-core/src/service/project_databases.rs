@@ -63,10 +63,13 @@ pub struct DatabaseInput {
     pub password_env: Option<String>,
 }
 
-/// Compose service and database names end up in `docker exec` arguments: `^[A-Za-z0-9._-]+$`.
+/// Compose service and database names end up in `docker exec` / dump-tool arguments:
+/// `^[A-Za-z0-9_][A-Za-z0-9._-]*$`. No leading `-` (it would be read as an option, e.g.
+/// `mysqldump --databases -r<file>`) and no leading `.`.
 fn name_ok(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 100
+        && !s.starts_with(['-', '.'])
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }

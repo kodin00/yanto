@@ -19,6 +19,7 @@ use yanto_core::service::system::{CONFIRM_CONTAINERS, CleanupSelection, HealthSt
 use super::session::Session;
 use super::view::{DashError, PageCtx, render};
 use crate::app::AppState;
+use crate::stream_guard::{RECHECK, revocable, session_check};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -313,7 +314,13 @@ async fn logs_stream(
                 .unwrap_or_else(|_| Event::default().event("error").data("encode failed")))
         }))
     });
-    Ok(Sse::new(events).keep_alive(KeepAlive::default()))
+    let check = session_check(
+        s.services.clone(),
+        super::session::cookie_value(&headers).unwrap_or_default(),
+        session.0.actor.ip.clone(),
+        |_, a| async move { a.is_owner() },
+    );
+    Ok(Sse::new(revocable(events, check, RECHECK)).keep_alive(KeepAlive::default()))
 }
 
 #[derive(Deserialize)]

@@ -247,6 +247,15 @@ async fn one_running_one_queued_and_the_third_trigger_reuses_the_queued_one() {
         .unwrap();
     assert!(!second.reused && third.reused);
     assert_eq!(second.deployment.id, third.deployment.id);
+    // A trigger carrying a payload is refused instead of being folded in and dropped.
+    let with_env = DeployRequest {
+        env: Some(crate::secrets::Secret::new("A=1\n".to_owned())),
+        ..DeployRequest::default()
+    };
+    assert_eq!(
+        kind(d.deploy(&c.owner, &p.id, &with_env).await),
+        ErrorKind::Conflict
+    );
     // While the first runs, the queued one cannot be claimed.
     let mut tx = c.core.db.begin_write().await.unwrap();
     assert!(
@@ -274,6 +283,27 @@ async fn cancel_queued_and_running() {
     let out = d.cancel(&c.owner, &queued).await.unwrap();
     assert_eq!(out.status, "cancelled");
     assert_eq!(kind(d.cancel(&c.owner, &queued).await), ErrorKind::Conflict);
+
+    // A row the worker claimed between the status read and the write is not relabelled.
+    let raced = c.deploy(&p.id).await;
+    sqlx::query("UPDATE deployments SET status = 'running' WHERE id = ?")
+        .bind(&raced)
+        .execute(c.core.db.writer())
+        .await
+        .unwrap();
+    let mut tx = c.core.db.begin_write().await.unwrap();
+    assert!(
+        !crate::db::repo::deployments::cancel_queued(&mut tx, &raced, 1)
+            .await
+            .unwrap()
+    );
+    tx.commit().await.unwrap();
+    assert_eq!(c.status(&raced).await.status, "running");
+    sqlx::query("UPDATE deployments SET status = 'failed' WHERE id = ?")
+        .bind(&raced)
+        .execute(c.core.db.writer())
+        .await
+        .unwrap();
 
     // Running: the pull hangs until the cancellation token trips.
     c.core.commands.on("pull nginx:alpine", Reply::hang());
@@ -808,6 +838,46 @@ async fn deploy_webhook_is_rate_limited_per_ip_and_project() {
     assert!(e.retry_after_secs.is_some());
 }
 
+#[tokio::test]
+async fn github_webhook_flood_from_one_ip_does_not_block_github() {
+    let c = ctx().await;
+    let created = c
+        .core
+        .services
+        .projects
+        .create(&c.owner, &git_input("Gh", "https://github.com/o/gh.git"))
+        .await
+        .unwrap();
+    let d = &c.core.services.deployments;
+    let body = push("master");
+    let call = |ip: &'static str, sig: Option<String>| {
+        let (d, id, body) = (d.clone(), created.project.id.clone(), body.clone());
+        async move {
+            d.github_webhook(
+                &Origin::new(Channel::Webhook, Some(ip.into())),
+                &id,
+                &GithubDelivery {
+                    signature: sig.as_deref(),
+                    event: Some("push"),
+                    delivery_id: None,
+                    form_encoded: false,
+                    body: &body,
+                },
+            )
+            .await
+        }
+    };
+    for _ in 0..60 {
+        let _ = call("203.0.113.66", None).await;
+    }
+    assert_eq!(
+        kind(call("203.0.113.66", None).await),
+        ErrorKind::RateLimited
+    );
+    let sig = github_signature(created.deploy_token.expose(), &body);
+    assert!(call("192.30.252.1", Some(sig)).await.is_ok());
+}
+
 fn push(branch: &str) -> Vec<u8> {
     format!(
         r#"{{"ref":"refs/heads/{branch}","after":"{}","deleted":false}}"#,
@@ -1067,6 +1137,25 @@ async fn log_stream_replays_resumes_without_gaps_and_closes_on_done() {
 }
 
 #[tokio::test]
+async fn a_deployment_whose_project_vanished_releases_its_cancel_token() {
+    let c = ctx().await;
+    let p = c.image_project("Gone").await.project;
+    let id = c.deploy(&p.id).await;
+    let mut row = {
+        let mut conn = c.core.db.reader().acquire().await.unwrap();
+        crate::db::repo::deployments::get(&mut conn, &id)
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    row.project_id = "prj_gone".into();
+    let eng = c.core.services.engine();
+    let token = eng.register_cancel(&id);
+    crate::deploy::runner::execute(eng.clone(), row, token).await;
+    assert!(!eng.cancel(&id), "token unregistered on the early return");
+}
+
+#[tokio::test]
 async fn stored_logs_are_capped_with_a_truncation_marker() {
     let core = TestCore::with_config(|c| c.deploy.log_max_bytes = 600).await;
     let u = core.setup_owner().await;
@@ -1091,6 +1180,21 @@ async fn stored_logs_are_capped_with_a_truncation_marker() {
     assert!(log.contains("[earlier log output was truncated]"));
     assert!(log.contains("Deployment succeeded"), "the tail is kept");
     assert!(log.len() < 2500, "{}", log.len());
+    // Every flush past the cap truncates again, but only one marker survives.
+    assert_eq!(
+        log.matches("[earlier log output was truncated]").count(),
+        1,
+        "{log}"
+    );
+    let (stored, counted): (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT SUM(length(CAST(data AS BLOB))) FROM deployment_logs WHERE deployment_id = ?1),
+                (SELECT log_bytes FROM deployments WHERE id = ?1)",
+    )
+    .bind(&id)
+    .fetch_one(c.core.db.reader())
+    .await
+    .unwrap();
+    assert_eq!(stored, counted);
 }
 
 #[tokio::test]

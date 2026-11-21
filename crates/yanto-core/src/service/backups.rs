@@ -187,11 +187,12 @@ impl std::fmt::Debug for BackupService {
     }
 }
 
-/// Slugs end up in paths and lock names: restrict them (7.9).
-fn valid_slug(s: &str) -> bool {
+/// Project slugs and backup target names (volumes, Compose services) end up in paths, lock
+/// names and `docker` arguments: one safe path component, no leading `.` or `-` (7.9).
+fn safe_component(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 64
-        && !s.starts_with('.')
+        && !s.starts_with(['.', '-'])
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
@@ -463,7 +464,7 @@ impl BackupService {
     fn series_dir(&self, job: &Job<'_>) -> Result<PathBuf, CoreError> {
         match job.project {
             None => Ok(backup::yanto_dir(&self.data_dir)),
-            Some((_, slug)) if valid_slug(slug) => Ok(backup::backups_dir(&self.data_dir)
+            Some((_, slug)) if safe_component(slug) => Ok(backup::backups_dir(&self.data_dir)
                 .join("projects")
                 .join(slug)),
             Some(_) => Err(CoreError::validation("project", "invalid Project slug")),
@@ -494,7 +495,7 @@ impl BackupService {
             ),
         };
         if let Some(t) = job.target
-            && !valid_slug(t)
+            && !safe_component(t)
         {
             return Err(CoreError::validation("target", "invalid target name"));
         }
@@ -890,7 +891,7 @@ impl BackupService {
                 "type the Project name to confirm",
             ));
         }
-        if !valid_slug(&slug) || !valid_slug(&target) {
+        if !safe_component(&slug) || !safe_component(&target) {
             return Err(CoreError::validation("backup", "invalid Project or target"));
         }
         // Checksum before any change.

@@ -220,8 +220,9 @@ pub async fn set_image_digest(
         .map_err(db_err)
 }
 
-/// Move a Deployment to a terminal state. Only a `running` (or, for cancel, `queued`)
-/// row changes, so a late finish cannot overwrite a cancel. Returns whether it changed.
+/// Move a Deployment to a terminal state. Only a `queued` or `running` row changes, so a late
+/// finish cannot overwrite a cancel. Returns whether it changed. Cancelling a queued row goes
+/// through [`cancel_queued`] instead.
 #[allow(clippy::too_many_arguments)]
 pub async fn finish(
     conn: &mut SqliteConnection,
@@ -238,6 +239,27 @@ pub async fn finish(
     .bind(status)
     .bind(exit_code)
     .bind(error)
+    .bind(now)
+    .bind(id)
+    .execute(conn)
+    .await
+    .map_err(db_err)?;
+    Ok(r.rows_affected() == 1)
+}
+
+/// Cancel a Deployment that is still `queued`. `false` when the worker claimed it first: a
+/// `running` row must be cancelled through its token, never just relabelled (the process would
+/// keep running and the Project's running slot would be freed under it).
+pub async fn cancel_queued(
+    conn: &mut SqliteConnection,
+    id: &str,
+    now: i64,
+) -> Result<bool, CoreError> {
+    let r = sqlx::query(
+        "UPDATE deployments SET status = 'cancelled', exit_code = 130, error = NULL, finished_at = ?,
+         pending_env_enc = NULL
+         WHERE id = ? AND status = 'queued'",
+    )
     .bind(now)
     .bind(id)
     .execute(conn)
@@ -371,6 +393,8 @@ pub async fn add_log_bytes(
     .map_err(db_err)
 }
 
+pub const TRUNCATION_MARKER: &str = "[earlier log output was truncated]\n";
+
 /// Drop the oldest chunks until at most `max_bytes` remain; keeps a truncation marker
 /// in place of the dropped head and flags the Deployment.
 pub async fn truncate_logs(
@@ -407,7 +431,16 @@ pub async fn truncate_logs(
     .execute(&mut *conn)
     .await
     .map_err(db_err)?;
-    let marker = "[earlier log output was truncated]\n";
+    // One marker at the current cut: drop the ones earlier truncations left behind.
+    sqlx::query(
+        "DELETE FROM deployment_logs WHERE deployment_id = ? AND stream = 'system' AND data = ?",
+    )
+    .bind(id)
+    .bind(TRUNCATION_MARKER)
+    .execute(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    let marker = TRUNCATION_MARKER;
     sqlx::query(
         "INSERT OR REPLACE INTO deployment_logs (deployment_id, seq, ts, stream, data) VALUES (?, ?, ?, 'system', ?)",
     )
@@ -418,11 +451,16 @@ pub async fn truncate_logs(
     .execute(&mut *conn)
     .await
     .map_err(db_err)?;
-    sqlx::query("UPDATE deployments SET log_bytes = ?, log_truncated = 1 WHERE id = ?")
-        .bind(kept + i64::try_from(marker.len()).unwrap_or(0))
-        .bind(id)
-        .execute(conn)
-        .await
-        .map(|_| ())
-        .map_err(db_err)
+    // Recount everything stored (system lines included) so the cap stays honest.
+    sqlx::query(
+        "UPDATE deployments SET log_truncated = 1, log_bytes = (
+             SELECT COALESCE(SUM(length(CAST(data AS BLOB))), 0) FROM deployment_logs
+             WHERE deployment_id = ?1)
+         WHERE id = ?1",
+    )
+    .bind(id)
+    .execute(conn)
+    .await
+    .map(|_| ())
+    .map_err(db_err)
 }

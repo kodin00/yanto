@@ -21,6 +21,7 @@ use super::exec;
 use super::session::Session;
 use super::view::{DashError, PageCtx, fmt_ts, render};
 use crate::app::AppState;
+use crate::stream_guard::{RECHECK, lost_access, revocable, session_check};
 
 const TERMINAL_CSP: &str = "default-src 'self'; style-src 'self' 'unsafe-inline'; \
 connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
@@ -342,7 +343,21 @@ async fn logs_stream(
                 .data(crate::error::public_message(&e)),
         })
     });
-    Ok(Sse::new(events).keep_alive(KeepAlive::default()))
+    let check = session_check(
+        s.services.clone(),
+        super::session::cookie_value(&headers).unwrap_or_default(),
+        session.0.actor.ip.clone(),
+        move |svc, a| {
+            let id = id.clone();
+            async move {
+                match svc.containers.get(&a, &id).await {
+                    Ok(_) => true,
+                    Err(e) => !lost_access(&e),
+                }
+            }
+        },
+    );
+    Ok(Sse::new(revocable(events, check, RECHECK)).keep_alive(KeepAlive::default()))
 }
 
 #[derive(Template)]

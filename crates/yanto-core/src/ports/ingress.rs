@@ -198,8 +198,8 @@ pub trait TraefikFilesPort: Send + Sync + 'static {
     fn dir_status(&self) -> DirStatus;
     /// Current content of `yanto.yml`; `None` when absent.
     fn read_dynamic(&self) -> Result<Option<String>, CoreError>;
-    /// Atomic write: temp file in the *parent* of the dynamic dir, fsync, rename, fsync dir. The
-    /// previous content is kept as `<dir>/../yanto.yml.bak`.
+    /// Atomic write: dotted temp file in the dynamic dir, fsync, rename, fsync dir. The previous
+    /// content is kept as `<dir>/yanto.yml.bak` (neither is a `.yml`, so Traefik ignores both).
     fn write_dynamic(&self, content: &str) -> Result<(), CoreError>;
     /// Content of the operator's static config; `None` when the file does not exist.
     fn read_static(&self, path: &std::path::Path) -> Result<Option<String>, CoreError>;
