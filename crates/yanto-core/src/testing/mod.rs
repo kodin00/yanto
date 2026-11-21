@@ -13,6 +13,7 @@ pub mod cron;
 pub mod docker;
 pub mod host_stats;
 pub mod hostmgmt;
+pub mod ingress;
 pub mod users;
 
 use std::sync::Arc;

@@ -9,6 +9,7 @@ pub mod crypto;
 pub mod db;
 pub mod deploy;
 pub mod error;
+pub mod ingress;
 pub mod password;
 pub mod ports;
 pub mod ratelimit;
