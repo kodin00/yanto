@@ -4,6 +4,7 @@ pub mod actor;
 pub mod config;
 pub mod crypto;
 pub mod db;
+pub mod deploy;
 pub mod error;
 pub mod password;
 pub mod ports;
