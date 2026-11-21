@@ -249,11 +249,13 @@ impl Services {
             engine,
             ctx,
         };
-        // Other areas add their own checks here (`system.register_health(...)`): Host Daemons
-        // (frps, cloudflared, Traefik) and the Hosted Registry arrive with their services.
+        // Other areas add their own checks here (`system.register_health(...)`).
         services
             .system
             .register_health(Arc::new(system::ComposeHealth::new(compose_command)));
+        services
+            .system
+            .register_health(Arc::new(daemons::DaemonHealth::new(inspector.clone())));
         services
     }
 

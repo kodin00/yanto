@@ -148,7 +148,7 @@ async fn health_reports_each_dependency_independently() {
     let o = owner(&core).await;
     let ok = core.services.system.health(&o).await.unwrap();
     assert_eq!(ok.status, HealthStatus::Ok);
-    assert_eq!(ok.checks.len(), 4);
+    assert_eq!(ok.checks.len(), 7);
     let compose = ok.checks.iter().find(|c| c.name == "compose").unwrap();
     assert!(compose.detail.starts_with("docker compose "), "{compose:?}");
 
@@ -259,4 +259,30 @@ async fn app_logs_are_owner_only_capped_and_followable() {
         sys.logs_stream(&m, None).await,
         Err(e) if e.kind == ErrorKind::Forbidden
     ));
+}
+
+#[tokio::test]
+async fn health_reports_host_daemons_from_systemd() {
+    let core = TestCore::new().await;
+    let o = owner(&core).await;
+    core.commands
+        .on("docker compose version", Reply::stdout("v2.40.0\n"));
+    let find = |r: &crate::service::system::HealthReport, n: &str| {
+        r.checks.iter().find(|c| c.name == n).cloned().unwrap()
+    };
+    // Not installed is optional: all three listed, none degrading the report.
+    let r = core.services.system.health(&o).await.unwrap();
+    for n in ["cloudflared", "traefik", "frps"] {
+        assert_eq!(find(&r, n).status, HealthStatus::Ok, "{n}");
+    }
+    assert_eq!(r.status, HealthStatus::Ok);
+    // Installed but stopped degrades; running is ok.
+    core.ingress
+        .systemd
+        .install("frps", false, "/usr/local/bin/frps -c /etc/frp/frps.toml");
+    core.enable_traefik();
+    let r = core.services.system.health(&o).await.unwrap();
+    assert_eq!(find(&r, "frps").status, HealthStatus::Degraded);
+    assert_eq!(find(&r, "traefik").status, HealthStatus::Ok);
+    assert_eq!(r.status, HealthStatus::Degraded);
 }

@@ -271,3 +271,44 @@ impl DaemonService {
         })
     }
 }
+
+/// Health page checks for the Host Daemons (`cloudflared`, `traefik`, `frps`): reads the systemd
+/// unit state only. A daemon that is not installed is optional and stays `ok`; an installed one
+/// that is stopped is `degraded`, a failed one is `down`.
+pub struct DaemonHealth {
+    inspector: DaemonInspector,
+}
+
+impl DaemonHealth {
+    pub fn new(inspector: DaemonInspector) -> Self {
+        Self { inspector }
+    }
+}
+
+#[async_trait::async_trait]
+impl super::system::HealthContributor for DaemonHealth {
+    async fn checks(&self) -> Vec<super::system::HealthCheck> {
+        use super::system::{HealthCheck, HealthStatus};
+        let mut out = Vec::new();
+        for d in Daemon::ALL {
+            let (status, detail) = match self.inspector.props(d).await {
+                Ok((unit, props)) => {
+                    let state = DaemonState::from_props(&props);
+                    let status = match state {
+                        DaemonState::Running | DaemonState::NotInstalled => HealthStatus::Ok,
+                        DaemonState::Inactive => HealthStatus::Degraded,
+                        DaemonState::Failed => HealthStatus::Down,
+                    };
+                    (status, format!("{unit}: {}", state.label()))
+                }
+                Err(e) => (HealthStatus::Degraded, format!("unreadable: {e}")),
+            };
+            out.push(HealthCheck {
+                name: d.as_str(),
+                status,
+                detail,
+            });
+        }
+        out
+    }
+}
