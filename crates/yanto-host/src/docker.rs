@@ -677,3 +677,60 @@ impl DockerPort for BollardDocker {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_frames_split_into_lines_with_timestamps() {
+        let lines = frame_lines(
+            LogStream::Stderr,
+            b"2026-01-01T00:00:00.123456789Z first\n2026-01-01T00:00:01Z second\r\nno timestamp here\n",
+        );
+        assert_eq!(lines.len(), 3);
+        assert_eq!(
+            lines[0].timestamp.as_deref(),
+            Some("2026-01-01T00:00:00.123456789Z")
+        );
+        assert_eq!(lines[0].text, "first");
+        assert_eq!(lines[1].text, "second");
+        assert_eq!(lines[2].timestamp, None);
+        assert_eq!(lines[2].text, "no timestamp here");
+        assert_eq!(lines[0].stream, LogStream::Stderr);
+        assert!(frame_lines(LogStream::Stdout, b"\n").is_empty());
+    }
+
+    #[test]
+    fn rfc3339_to_unix() {
+        assert_eq!(chrono_like_unix("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(
+            chrono_like_unix("2026-01-01T00:00:00.5Z"),
+            Some(1_767_225_600)
+        );
+        assert_eq!(chrono_like_unix("garbage"), None);
+    }
+
+    #[test]
+    fn cpu_percent_uses_the_delta_formula() {
+        use bollard::models::{ContainerCpuStats, ContainerCpuUsage, ContainerStatsResponse};
+        let sample = |total, system| ContainerStatsResponse {
+            cpu_stats: Some(ContainerCpuStats {
+                cpu_usage: Some(ContainerCpuUsage {
+                    total_usage: Some(total),
+                    ..Default::default()
+                }),
+                system_cpu_usage: Some(system),
+                online_cpus: Some(4),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let pct = cpu_percent(&sample(1_000, 10_000), &sample(1_500, 12_000)).unwrap();
+        assert!(
+            (pct - 100.0).abs() < 1e-9,
+            "500/2000 * 4 cpus * 100 = {pct}"
+        );
+        assert!(cpu_percent(&sample(1, 5), &sample(2, 5)).is_none());
+    }
+}
