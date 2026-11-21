@@ -74,6 +74,22 @@ fn remove_file_if(path: &Path, steps: &mut Vec<String>) -> anyhow::Result<bool> 
     Ok(false)
 }
 
+/// Project slugs, read from the Project directories (the DB may already be unreadable). Names
+/// that are not a valid slug are skipped so nothing odd reaches `docker` argv.
+fn project_slugs(root: &Path) -> Vec<String> {
+    let Ok(rd) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = rd
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| yanto_core::deploy::validate::slug(n).is_ok())
+        .collect();
+    out.sort();
+    out
+}
+
 pub fn run(
     host: &dyn Host,
     layout: &Layout,
@@ -156,16 +172,26 @@ pub fn run(
     }
 
     // 4. workloads: left alone unless asked.
+    // Runs before `--purge`, which deletes the Project directories these are found from.
     if opts.stop_projects {
-        // TODO(M2): `docker compose down` per Project once Projects exist.
-        steps.push("WARNING: --stop-projects is not implemented yet (needs Projects, M2); projects left running".into());
+        for slug in project_slugs(&layout.path(cfg.paths.data_dir.join("projects"))) {
+            // `-p` alone is enough: Compose finds the stack by its project label. No `--volumes`.
+            let line = format!("docker compose -p {slug} down");
+            match host.run("docker", &["compose", "-p", &slug, "down"]) {
+                Ok(o) if o.success => steps.push(line),
+                Ok(o) => steps.push(format!("WARNING: {line} failed: {}", o.stderr.trim())),
+                Err(e) => steps.push(format!("WARNING: {line} failed: {e}")),
+            }
+        }
     }
     if opts.remove_registry {
-        // TODO(M6): stop/remove the Hosted Registry container.
-        steps.push(
-            "WARNING: --remove-registry is not implemented yet (needs the Hosted Registry, M6)"
-                .into(),
-        );
+        let name = yanto_core::hosted_registry::DEFAULT_CONTAINER;
+        let line = format!("docker rm -f {name}");
+        match host.run("docker", &["rm", "-f", name]) {
+            Ok(o) if o.success => steps.push(line),
+            Ok(o) => steps.push(format!("WARNING: {line} failed: {}", o.stderr.trim())),
+            Err(e) => steps.push(format!("WARNING: {line} failed: {e}")),
+        }
     }
 
     // 5. purge
@@ -333,6 +359,43 @@ mod tests {
         .unwrap();
         assert!(!l.path("/var/lib/yanto").exists());
         assert!(!l.path("/etc/yanto").exists());
+    }
+
+    #[test]
+    fn stop_projects_and_remove_registry_run_docker() {
+        let (_d, l) = installed();
+        let projects = l.path("/var/lib/yanto/projects");
+        fs::create_dir_all(projects.join("web")).unwrap();
+        fs::create_dir_all(projects.join("-oops")).unwrap();
+        let mut h = FakeHost::default();
+        h.respond(
+            "docker compose -p web down",
+            crate::ops::host::CmdOutput::ok(""),
+        );
+        h.respond(
+            "docker rm -f yanto-registry",
+            crate::ops::host::CmdOutput::ok(""),
+        );
+        let opts = UninstallOpts {
+            yes: true,
+            stop_projects: true,
+            remove_registry: true,
+            ..Default::default()
+        };
+        let steps = run(
+            &h,
+            &l,
+            Path::new("/etc/yanto/config.toml"),
+            false,
+            &opts,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            *h.calls.borrow(),
+            vec!["docker compose -p web down", "docker rm -f yanto-registry"]
+        );
+        assert!(!steps.iter().any(|s| s.contains("WARNING")), "{steps:?}");
     }
 
     #[test]
