@@ -1,0 +1,49 @@
+---
+source: crates/yanto-cli/src/ops/render.rs
+expression: text
+---
+# Written by `yanto install`. No secrets live in this file.
+# Paths that appear in the systemd unit's ReadWritePaths are only changed via
+# `yanto install --reconfigure`, which re-renders the unit.
+config_version = 1
+
+[server]
+bind = "127.0.0.1"
+port = 9197
+public_url = ""
+
+[paths]
+data_dir = "/var/lib/yanto"
+
+[ssh]
+authorized_keys_user = "deploy"
+
+[docker]
+socket = "/var/run/docker.sock"
+
+[registry]
+enabled = false
+
+[ingress]
+providers = ["cloudflare-tunnel", "traefik"]
+
+[ingress.traefik]
+dynamic_dir = "/etc/traefik/dynamic"
+cert_resolver = "letsencrypt"
+
+[ingress.cloudflared]
+unit = "cloudflared"
+
+[frp]
+enabled = false
+config_path = "/etc/frp/frps.toml"
+unit = "frps"
+
+[deploy]
+max_concurrent = 2
+command_timeout = "1h"
+log_max_bytes = 500000
+
+[log]
+level = "info"
+format = "json"
