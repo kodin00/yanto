@@ -80,7 +80,7 @@ impl AuthorizedKeysPort for Unsupported {
     fn update(
         &self,
         _: &str,
-        _: &mut dyn FnMut(&[u8]) -> Result<Option<super::KeysEdit>, crate::CoreError>,
+        _: &mut super::KeysEditFn<'_>,
     ) -> Result<super::KeysUpdated, crate::CoreError> {
         unsupported()
     }

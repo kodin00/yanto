@@ -12,7 +12,7 @@ mod cron;
 mod hostmgmt;
 mod users;
 
-pub use authkeys::{AuthorizedKeysPort, KeysEdit, KeysUpdated, SshdInfo};
+pub use authkeys::{AuthorizedKeysPort, KeysEdit, KeysEditFn, KeysUpdated, SshdInfo};
 pub use backup::{
     BackupHost, LockGuard, ProjectBackupPort, ProjectBackupRequest, UnavailableProjectBackups,
 };

@@ -31,6 +31,9 @@ pub struct SshdInfo {
     pub authorized_keys_files: Vec<String>,
 }
 
+/// The caller's edit function handed to [`AuthorizedKeysPort::update`].
+pub type KeysEditFn<'a> = dyn FnMut(&[u8]) -> Result<Option<KeysEdit>, CoreError> + 'a;
+
 pub trait AuthorizedKeysPort: Send + Sync + 'static {
     /// The account behind `user`; errors when it does not exist or has a non-absolute home.
     fn resolve(&self, user: &str) -> Result<UnixUser, CoreError>;
@@ -45,11 +48,7 @@ pub trait AuthorizedKeysPort: Send + Sync + 'static {
     /// new content, or `None` to leave the file alone; it may be called twice when the file changed
     /// under the writer (retry once, 6.4 step 5). The port verifies the result and restores the
     /// `.bak` on mismatch.
-    fn update(
-        &self,
-        user: &str,
-        edit: &mut dyn FnMut(&[u8]) -> Result<Option<KeysEdit>, CoreError>,
-    ) -> Result<KeysUpdated, CoreError>;
+    fn update(&self, user: &str, edit: &mut KeysEditFn<'_>) -> Result<KeysUpdated, CoreError>;
 
     fn sshd_info(&self) -> Option<SshdInfo>;
 }

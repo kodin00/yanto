@@ -10,5 +10,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-nix = { version = "0.32.0", features = ["user", "fs", "signal", "process"] }
 yanto-core.workspace = true
+nix = { version = "0.32.0", features = ["user", "fs", "signal", "process"] }
+sha2.workspace = true
+
+[dev-dependencies]
+base64.workspace = true
+tempfile.workspace = true
+yanto-core = { workspace = true, features = ["testing"] }

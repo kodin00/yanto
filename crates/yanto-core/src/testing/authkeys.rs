@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use crate::error::CoreError;
-use crate::ports::{AuthorizedKeysPort, HostUsers, KeysEdit, KeysUpdated, SshdInfo, UnixUser};
+use crate::ports::{AuthorizedKeysPort, HostUsers, KeysEditFn, KeysUpdated, SshdInfo, UnixUser};
 
 #[derive(Debug)]
 pub struct FakeAuthorizedKeys {
@@ -65,11 +65,7 @@ impl AuthorizedKeysPort for FakeAuthorizedKeys {
         Ok(self.content())
     }
 
-    fn update(
-        &self,
-        user: &str,
-        edit: &mut dyn FnMut(&[u8]) -> Result<Option<KeysEdit>, CoreError>,
-    ) -> Result<KeysUpdated, CoreError> {
+    fn update(&self, user: &str, edit: &mut KeysEditFn<'_>) -> Result<KeysUpdated, CoreError> {
         self.resolve(user)?;
         if let Some(e) = self.fail_next.lock().expect("lock").take() {
             return Err(e);
