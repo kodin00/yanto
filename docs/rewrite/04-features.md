@@ -364,3 +364,157 @@ Entry: `{id, name, schedule, user, command, enabled, record (default true), over
 - [ ] A command containing `%` runs correctly for both recorded and unrecorded entries.
 - [ ] Editing the file by hand triggers the drift banner; "re-apply" restores it.
 - [ ] Other cron files are visible but have no edit controls and are never written.
+
+---
+
+## 6. Authorized Keys
+
+### 6.1 Behavior
+Yanto manages Authorized Keys for **one configured Unix user** (setting `ssh.authorized_keys_user`, default `root`, ASSUMPTION; D12) inside a marked block of that user's `~/.ssh/authorized_keys`. Everything outside the block is opaque and preserved byte-for-byte.
+
+Block markers (exact lines):
+```
+# BEGIN YANTO MANAGED KEYS (do not edit between these lines)
+...one key per line...
+# END YANTO MANAGED KEYS
+```
+
+### 6.2 Inputs / state
+- `authorized_keys(id, label, key_type, public_key, fingerprint_sha256, added_by, created_at)`; SQLite is the source of truth for the block's content.
+- Home dir from `getpwnam(user)`, never from `$HOME`.
+
+### 6.3 Key parsing and validation
+- Input: one OpenSSH public key line `type base64 [comment]`. Reject: multiple lines, leading **options** (`command=`, `from=`, etc. — options can change what a key may execute; not supported in v1, ASSUMPTION), private key material (`-----BEGIN`), control characters, >8 KiB.
+- Accepted types: `ssh-ed25519`, `sk-ssh-ed25519@openssh.com`, `ecdsa-sha2-nistp256|384|521`, `sk-ecdsa-sha2-nistp256@openssh.com`, `ssh-rsa` (RSA ≥ 3072 bits accepted, 2048–3071 accepted with warning, <2048 rejected — ASSUMPTION policy). `ssh-dss` rejected.
+- Decode base64, check the embedded type string equals the declared type, check blob length sanity; compute `SHA256:<base64>` fingerprint (as `ssh-keygen -lf`). Implementation may use a Rust SSH-key parsing crate or `ssh-keygen -l -f -` (decision for implementation; both acceptable).
+- The stored line is rebuilt canonically: `type base64 yanto:<id>:<label>` where the label is sanitized to `[A-Za-z0-9._@ -]{1,64}` (the user's original comment is kept only as label).
+- Duplicate fingerprint → rejected ("already present", also when present outside the block, shown as a warning rather than blocking).
+
+### 6.4 Host side effects (exact)
+1. Resolve user and home; refuse if the user does not exist or has a non-absolute home.
+2. Ensure `~/.ssh` exists (create `0700`, chown user); if it exists with group/other write, refuse (sshd StrictModes would reject the file — ASSUMPTION about `StrictModes`; `sshd -T` reveals it).
+3. Read `authorized_keys` (if absent, treat as empty). If it is a symlink, refuse (ASSUMPTION; avoids writing through to unexpected targets). Record `(size, mtime, sha256)`.
+4. Parse into lines. Find marker lines: zero blocks → append (ensuring the prior content ends with `\n`, then the block); one well-formed block → replace the lines strictly between the markers; **anything else** (BEGIN without END, END before BEGIN, two blocks) → refuse with "ambiguous markers; fix manually" and write nothing.
+5. Write temp file `~/.ssh/.authorized_keys.yanto.tmp` (same dir, mode 0600, chown user:primary-group), `fsync`; re-stat the original — if `(size, mtime, sha256)` changed since step 3, abort and retry once (optimistic concurrency against manual edits); copy previous content to `~/.ssh/authorized_keys.yanto.bak` (0600) once per write; `rename` over `authorized_keys`; `fsync` dir.
+6. Final perms: file `0600` owned by the user. Directory unchanged except creation.
+7. Verification after write: re-read, confirm outside-block content hash equals the pre-write hash and the block equals the expected lines. If not, restore from `.bak` and fail loudly.
+8. Informational check (no writes): `sshd -T` (if available) to read `authorizedkeysfile`, `pubkeyauthentication`, and `strictmodes`; warn if effective `AuthorizedKeysFile` does not include `.ssh/authorized_keys` or pubkey auth is disabled (the managed keys would then have no effect).
+
+### 6.5 Lockout prevention
+Goal: Yanto never removes the operator's last way in.
+- **Rule 1 (hard)**: a change is refused if, after applying it, the target file would contain **zero** valid key lines in total (inside the block plus outside). Message names the rule. Override only by Owner with typed confirmation of the Unix username, audited as `authkeys.force`.
+- **Rule 2**: never edits or removes lines outside the block, including keys the operator added by hand (so those stay as an independent way in).
+- **Rule 3**: `.bak` of the previous file kept; the UI shows the path and a one-line restore command.
+- **Rule 4**: removing a key shows its fingerprint and label and the count of remaining keys; deleting the *only* Yanto-managed key when outside keys exist is allowed.
+- **Rule 5** (ASSUMPTION): Yanto does not touch `sshd_config`, does not restart `sshd`, and does not manage password authentication.
+- It cannot know which key the current SSH session uses; hence the count-based rule instead of identity-based.
+
+### 6.6 Failure modes
+| Failure | UI |
+|---|---|
+| Unparseable/unsupported key | Field error naming the reason (type, options, length) |
+| Ambiguous markers | Banner, read-only mode for the block until fixed |
+| External change during write | Retry once, then error "authorized_keys changed, reload and retry" |
+| Verification mismatch | Auto-restore from `.bak`, error with diff summary |
+| User missing / home missing | Settings page error; feature disabled |
+| Lockout rule violation | Refusal message (Rule 1) |
+
+### 6.7 Security notes
+- **Access control**: Authorized Keys grant Host shell access (as the configured user, likely root); gate on Owner/`admin` only. Audit add/remove with fingerprint and label (not the key body is fine; fingerprint suffices).
+- **Input validation**: single-line canonical rebuild defeats option injection and newline smuggling (a key comment containing `\n` could otherwise add a second line).
+- **Integrity / availability**: atomic replace, verification, lockout rules.
+- **File permissions**: 0600/0700 enforcement; sshd StrictModes interplay.
+
+### 6.8 Acceptance criteria
+- [ ] Adding a valid ed25519 key creates the block with markers when absent; file is `0600`, owned by the user; SSH login works.
+- [ ] Content outside the block is byte-identical before/after any add/remove (hash test), including files without a trailing newline and with CRLF lines.
+- [ ] Keys with options, multiple lines, DSA, short RSA, or private key text are rejected with specific errors.
+- [ ] Ambiguous markers cause refusal with no write.
+- [ ] Removing the last key when no keys exist outside the block is refused; with outside keys it succeeds.
+- [ ] A concurrent manual edit during a write is detected and not clobbered.
+- [ ] `.bak` is written; verification failure restores it.
+
+---
+
+## 7. Backups
+
+### 7.1 Behavior (D14)
+Backups are **local only** and **downloadable** (R2 dropped). Four kinds:
+1. **Volume archive**: all named Docker volumes of a Project (or selected ones) as `.tar.zst`.
+2. **Postgres dump** and 3. **MySQL/MariaDB dump** from the Project's declared database service.
+4. **Yanto SQLite**: online snapshot of Yanto's own database.
+
+Storage: `DATA/backups/` (0700), files 0600, named `<owner>-<kind>-<UTC timestamp>.<ext>`; free-space guard before start (refuse if free < max(1 GiB, 2× the previous backup of the same series) — ASSUMPTION). Each backup row stores size and SHA-256 (shown for download verification). Manual backups are never auto-deleted.
+
+### 7.2 Inputs / state
+- `backups(id, project_id?, kind [volume|postgres|mysql|yanto-db], target, status [running|success|failed], filename, size_bytes, sha256, source [manual|scheduled|pre-restore], error, created_at, finished_at, downloaded_at, download_count)`.
+- Project setting `databases: [{service, engine: postgres|mysql, database?, user?}]` (a Project **declares** DB services; D14). Container = the one with labels `com.docker.compose.project=<folder_name>` and `com.docker.compose.service=<service>`.
+- Helper image setting `backup.helper_image` (default `busybox:stable`, ASSUMPTION; needs only `tar`, `sh`).
+
+### 7.3 Side effects (exact)
+**Volume archive**
+- Enumerate volumes: Engine `list_volumes` filtered by label `com.docker.compose.project=<folder_name>` (bind mounts are not backed up; the UI says so).
+- Optional "stop Project during backup" (default off; warning that unstopped volumes are crash-consistent only; prefer DB dumps for databases): `docker compose -p <name> stop` before, `start` after (guaranteed by drop-guard).
+- For each volume: create a throwaway container from the helper image: `Cmd: ["tar","-C","/data","-cf","-","."]`, `HostConfig.Binds: ["<volume>:/data:ro"]`, `AutoRemove`, no network (`NetworkMode: none`), labels `yanto.managed=backup-helper`. Attach logs; Yanto reads stdout (the tar stream) and compresses it with zstd in-process, writing to a temp file `DATA/backups/.<name>.partial`; stderr is collected for errors. Archive layout: one archive per Project containing a top-level directory per volume (tar built by streaming each volume's tar into a combined container-less writer, ASSUMPTION), or one file per volume (simpler; **decision**: one `.tar.zst` per volume, grouped under a Backup Set id in the UI).
+- Success: container exit code 0, then `rename` partial → final, compute SHA-256 while writing. Failure: delete partial, mark `failed` with the stderr tail.
+- Compression level 3 default (ASSUMPTION), configurable.
+
+**Postgres**
+- `exec` into the DB container via bollard: `sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" exec pg_dump -U "${POSTGRES_USER:-postgres}" -d "${db}" --clean --if-exists --no-owner'` where `${db}` is the declared database or `$POSTGRES_DB`. Credentials come from the container's own environment, so no secret is read into Yanto or placed in argv. Output (plain SQL) streamed to a zstd writer → `<owner>-postgres-<ts>.sql.zst`. Exit code via `inspect_exec`; non-zero → failed.
+- Requires the container `running`.
+
+**MySQL/MariaDB**
+- `exec`: `sh -c 'MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}" exec "$(command -v mariadb-dump || command -v mysqldump)" -u root --single-transaction --routines --triggers --databases "$db"'`; DB name from declaration or `$MYSQL_DATABASE`/`$MARIADB_DATABASE`. Binary names and env var names are image-dependent (**unverified** across images); failures surface the exec stderr. `.sql.zst`.
+
+**Yanto SQLite**
+- `VACUUM INTO 'DATA/backups/.yanto-<ts>.db.partial'` through the live connection (consistent snapshot of a WAL database, requires SQLite ≥ 3.27; the alternative is the SQLite online backup API — either satisfies "online backup", implementation choice). Then `PRAGMA integrity_check` on the copy, zstd → `yanto-db-<ts>.db.zst`, delete the intermediate. File is 0600.
+- Content class: **CONFIDENTIAL** (contains password hashes, encrypted secrets, audit log). The encryption **master key is not inside the database** (ASSUMPTION; see security doc); restoring on a different Host requires the key separately — the backup page says so (open question whether `yanto backup` should optionally include the key file).
+
+### 7.4 Retention
+- Schedules are Cron Entries (§5) running `yanto backup …`; retention policy is a flag, not a separate scheduler: `--keep-last N` (default 7) and/or `--keep-days D`. After a **successful** scheduled run, Yanto deletes older `source=scheduled` backups of the same (project, kind, target) series beyond the policy and removes their files. Manual and `pre-restore` backups are exempt (pre-restore: keep last 3 per target).
+- Failed backups older than 7 days are purged. Deleting a `running` backup is refused. `downloaded_at/count` kept.
+- Space alarm: `/health` degrades when backups dir free space < 10% (ASSUMPTION).
+
+### 7.5 CLI for cron (`yanto backup`)
+- `yanto backup yanto-db [--keep-last N] [--keep-days D]`
+- `yanto backup project <folder_name> (--volumes | --db <service>) [--stop-project] [--keep-last N] [--keep-days D]`
+- Runs in-process as root against the same `DATA` dir and Docker socket (does not require the daemon to be up, except for DB/audit writes it opens SQLite directly). Takes an advisory lock `RUN/backup-<series>.lock` (`flock`); a second invocation exits 75 ("busy"). Exit codes: 0 success, 1 failure, 75 busy. Writes an Audit entry (actor `cli`, source `cron` if `YANTO_CRON_RUN` is set by `cron-run`). Stdout one-line summary; verbose with `-v`.
+- Intended Cron Entry command: `yanto backup yanto-db --keep-last 14` (recorded via `cron-run`, so history includes output and exit code).
+
+### 7.6 Restore flow
+Restores are explicit, confirmed, and always take a `pre-restore` backup of the current state first (same series).
+- **Volume**: confirm by typing the Project name. Steps: pre-restore archive of the target volume; `docker compose -p <name> stop`; throwaway helper container with the volume mounted rw, `Cmd: sh -c 'find /data -mindepth 1 -delete; tar -C /data -xf -'` fed the decompressed stream on stdin (attached stdin through bollard); verify exit code; `docker compose -p <name> start`. Option "restore into a new volume `<vol>-restore-<ts>`" (no stop, no deletion) is offered first and is the default.
+- **Postgres/MySQL**: container must be running; pre-restore dump; decompress and stream into `psql -U … -d … -v ON_ERROR_STOP=1 --single-transaction` or `mysql -u root` via exec stdin (the dumps contain `DROP … IF EXISTS`/`--clean`). Failure leaves the pre-restore dump available.
+- **Yanto SQLite**: **not** done from the UI (the DB is open). CLI only: `systemctl stop yanto && yanto restore yanto-db <file> && systemctl start yanto`; the command checks the daemon is stopped (lock file / `systemctl is-active`), moves the current DB aside as `yanto.db.pre-restore-<ts>`, writes the restored file, runs `integrity_check`. Sessions and API Tokens in the restored DB reflect the backup time.
+- Restore from an uploaded file is out of scope for v1 (ASSUMPTION): only Yanto-created backups (checksum verified before use).
+
+### 7.7 Download
+`GET /backups/{id}/download` streams the file (`Content-Disposition: attachment`, `Content-Length`, `X-Content-SHA256`), range requests supported (ASSUMPTION), `backups` permission on the Project (Owner for `yanto-db`), increments counters, writes Audit entry. No signed public links.
+
+### 7.8 Failure modes
+| Failure | UI |
+|---|---|
+| DB container stopped | Backup refused "service must be running"; scheduled run exits 1 |
+| `pg_dump` non-zero (auth, version) | Row `failed` with exec stderr tail; partial deleted |
+| Helper image missing/offline | Pull attempted once; failure shows registry error |
+| Disk full / low space | Pre-check refusal; mid-run ENOSPC → `failed`, partial removed |
+| Yanto crash mid-backup | Startup marks `running` rows `failed` ("interrupted"), removes `.partial` files |
+| Restore tar/exit error | Restore aborts, pre-restore backup retained, Project left stopped with banner |
+| Concurrent runs | Second run refused (lock) |
+
+### 7.9 Security notes
+- **Data protection**: backup files contain customer data and (for Yanto DB) secret material; 0700/0600, downloads authenticated and audited, no remote copy in v1; UI warns that downloaded files should be encrypted at rest by the operator (age/gpg not provided by Yanto).
+- **Secrets management**: DB passwords come from the container environment inside the container only; never logged. Helper containers have no network and mount volumes read-only for backups.
+- **Input validation**: service/database names validated `^[A-Za-z0-9._-]+$` before interpolation into `sh -c` strings (database name is passed as a positional/env value rather than interpolated where possible — implement via `Env` of the exec, e.g. `YANTO_DB=<name>`).
+- **Availability**: space guard, locks, zstd level cap.
+- **Integrity**: SHA-256 recorded and verified before restore.
+
+### 7.10 Acceptance criteria
+- [ ] Volume backup of a Project with two named volumes yields two `.tar.zst` files with correct contents; the Project keeps running.
+- [ ] Postgres and MySQL backups succeed from containers whose credentials exist only in container env; no password appears in `ps` on the Host.
+- [ ] Yanto SQLite backup is consistent under concurrent writes and passes `integrity_check`.
+- [ ] `yanto backup yanto-db --keep-last 2` run three times leaves two scheduled backups; manual ones untouched; a second concurrent run exits 75.
+- [ ] Restore of a volume into a new volume leaves the original unchanged; in-place restore takes a pre-restore backup and restarts the Project.
+- [ ] Restore of a SQL dump into an empty DB succeeds; a corrupted file fails the checksum before any change.
+- [ ] Download works with `backups` permission, is audited, and shows the SHA-256.
+- [ ] Interrupted backups are cleaned on restart.
