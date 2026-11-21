@@ -352,6 +352,45 @@ fn sample_args() -> BTreeMap<&'static str, Value> {
         ("yanto_hostname_disable", id.clone()),
         ("yanto_hostname_delete", id.clone()),
         ("yanto_hostnames_diagnostics", json!({})),
+        ("yanto_cloudflare_clients_list", json!({})),
+        (
+            "yanto_cloudflare_client_validate",
+            json!({"account_id":"0123456789abcdef0123456789abcdef","api_token":"t"}),
+        ),
+        (
+            "yanto_cloudflare_client_create",
+            json!({"name":"main","account_id":"0123456789abcdef0123456789abcdef","api_token":"t"}),
+        ),
+        (
+            "yanto_cloudflare_client_update",
+            json!({"id":"x","name":"m"}),
+        ),
+        ("yanto_cloudflare_client_delete", id.clone()),
+        ("yanto_cloudflare_zones_list", json!({"client_id":"x"})),
+        ("yanto_cloudflare_tunnels_list", json!({})),
+        (
+            "yanto_cloudflare_tunnel_create",
+            json!({"client_id":"x","name":"t1"}),
+        ),
+        ("yanto_cloudflare_tunnel_activate", id.clone()),
+        ("yanto_cloudflare_tunnel_status", id.clone()),
+        ("yanto_cloudflare_tunnel_delete", id.clone()),
+        (
+            "yanto_cloudflare_dns_list",
+            json!({"client_id":"x","zone_id":"z"}),
+        ),
+        (
+            "yanto_cloudflare_dns_create",
+            json!({"client_id":"x","zone_id":"z","record_type":"A","name":"a.example.com","content":"192.0.2.1"}),
+        ),
+        (
+            "yanto_cloudflare_dns_update",
+            json!({"client_id":"x","zone_id":"z","record_id":"r","record_type":"A","name":"a.example.com","content":"192.0.2.1"}),
+        ),
+        (
+            "yanto_cloudflare_dns_delete",
+            json!({"client_id":"x","zone_id":"z","record_id":"r"}),
+        ),
     ] {
         m.insert(k, v);
     }

@@ -3,6 +3,7 @@
 
 mod authorized_keys;
 mod backups;
+mod cloudflare;
 mod containers;
 mod cron;
 mod deployments;
@@ -25,6 +26,7 @@ pub fn register(set: &mut ToolSet) {
     registry::register(set);
     cron::register(set);
     authorized_keys::register(set);
+    cloudflare::register(set);
     hostnames::register(set);
 }
 
