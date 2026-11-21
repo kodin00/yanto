@@ -49,6 +49,16 @@ impl TestApp {
         }
     }
 
+    /// Like [`TestApp::new`] but with `server.public_url` set (cookie `Secure`, origin allow-list).
+    pub async fn with_public_url(url: &str) -> Self {
+        let mut app = Self::new().await;
+        let mut config = (*app.state.config).clone();
+        config.server.public_url = url.to_owned();
+        app.state.config = std::sync::Arc::new(config);
+        app.router = router(app.state.clone());
+        app
+    }
+
     /// An anonymous client (no cookie, no token).
     pub fn client(&self) -> TestClient {
         TestClient::new(self.router.clone())
