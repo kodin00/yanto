@@ -10,3 +10,13 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+async-trait = "0.1.92"
+base64.workspace = true
+nix = { version = "0.32.0", default-features = false, features = ["signal"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["process", "io-util", "time", "rt", "macros", "sync"] }
+tracing.workspace = true
+yanto-core.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
