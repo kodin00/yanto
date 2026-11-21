@@ -198,9 +198,7 @@ fn field(text: &str, min: u32, max: u32, names: &[&str], what: &str) -> Result<u
         }
         let (range, step) = match item.split_once('/') {
             Some((r, s)) => {
-                let step: u32 = s
-                    .parse()
-                    .map_err(|_| bad(&format!("invalid step {s:?}")))?;
+                let step: u32 = s.parse().map_err(|_| bad(&format!("invalid step {s:?}")))?;
                 if step == 0 {
                     return Err(bad("step must not be 0"));
                 }
@@ -211,7 +209,10 @@ fn field(text: &str, min: u32, max: u32, names: &[&str], what: &str) -> Result<u
         let (lo, hi) = if range == "*" {
             (min, if names.len() == 7 { 6 } else { max })
         } else if let Some((a, b)) = range.split_once('-') {
-            let (a, b) = (value(a, min, max, names, what)?, value(b, min, max, names, what)?);
+            let (a, b) = (
+                value(a, min, max, names, what)?,
+                value(b, min, max, names, what)?,
+            );
             if a > b {
                 return Err(bad(&format!("descending range {range:?}")));
             }
@@ -321,7 +322,10 @@ pub fn validate_entry(input: &EntryInput) -> Result<ValidEntry, CoreError> {
     };
     let name = input.name.trim().to_owned();
     if name.is_empty() || name.chars().count() > MAX_NAME_CHARS {
-        fail("name", format!("name must be 1-{MAX_NAME_CHARS} characters"));
+        fail(
+            "name",
+            format!("name must be 1-{MAX_NAME_CHARS} characters"),
+        );
     } else if name.chars().any(char::is_control) {
         fail("name", "name must not contain control characters".into());
     }
@@ -493,14 +497,20 @@ mod tests {
         ] {
             assert!(Schedule::parse(ok).is_ok(), "{ok:?} should be accepted");
         }
-        assert_eq!(Schedule::parse("  5   4 * * * ").unwrap().as_str(), "5 4 * * *");
+        assert_eq!(
+            Schedule::parse("  5   4 * * * ").unwrap().as_str(),
+            "5 4 * * *"
+        );
         assert_eq!(Schedule::parse("@DAILY").unwrap().as_str(), "@daily");
     }
 
     #[test]
     fn next_runs_basic() {
         let r = runs("*/15 * * * *", 3);
-        assert_eq!(r, vec![T0 + 15 * 60_000, T0 + 30 * 60_000, T0 + 45 * 60_000]);
+        assert_eq!(
+            r,
+            vec![T0 + 15 * 60_000, T0 + 30 * 60_000, T0 + 45 * 60_000]
+        );
         // Strictly after: asking at an exact match skips it.
         assert_eq!(runs("0 0 * * *", 1), vec![T0 + 86_400_000]);
         assert_eq!(runs("@reboot", 3), Vec::<i64>::new());
@@ -621,7 +631,10 @@ mod tests {
         assert!(text.contains("# disabled: crn_b\n"));
         // A newline smuggled into a name cannot start a new line.
         assert!(!text.lines().any(|l| l.starts_with("rm ")));
-        for line in text.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
+        for line in text
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.is_empty())
+        {
             let is_env = line.starts_with("SHELL=")
                 || line.starts_with("PATH=")
                 || line.starts_with("MAILTO=");
