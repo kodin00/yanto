@@ -393,6 +393,8 @@ pub async fn add_log_bytes(
     .map_err(db_err)
 }
 
+pub const TRUNCATION_MARKER: &str = "[earlier log output was truncated]\n";
+
 /// Drop the oldest chunks until at most `max_bytes` remain; keeps a truncation marker
 /// in place of the dropped head and flags the Deployment.
 pub async fn truncate_logs(
@@ -429,7 +431,16 @@ pub async fn truncate_logs(
     .execute(&mut *conn)
     .await
     .map_err(db_err)?;
-    let marker = "[earlier log output was truncated]\n";
+    // One marker at the current cut: drop the ones earlier truncations left behind.
+    sqlx::query(
+        "DELETE FROM deployment_logs WHERE deployment_id = ? AND stream = 'system' AND data = ?",
+    )
+    .bind(id)
+    .bind(TRUNCATION_MARKER)
+    .execute(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    let marker = TRUNCATION_MARKER;
     sqlx::query(
         "INSERT OR REPLACE INTO deployment_logs (deployment_id, seq, ts, stream, data) VALUES (?, ?, ?, 'system', ?)",
     )
@@ -440,10 +451,15 @@ pub async fn truncate_logs(
     .execute(&mut *conn)
     .await
     .map_err(db_err)?;
-    sqlx::query("UPDATE deployments SET log_bytes = ?, log_truncated = 1 WHERE id = ?")
-        .bind(kept + i64::try_from(marker.len()).unwrap_or(0))
-        .bind(id)
-        .execute(conn)
+    // Recount everything stored (system lines included) so the cap stays honest.
+    sqlx::query(
+        "UPDATE deployments SET log_truncated = 1, log_bytes = (
+             SELECT COALESCE(SUM(length(CAST(data AS BLOB))), 0) FROM deployment_logs
+             WHERE deployment_id = ?1)
+         WHERE id = ?1",
+    )
+    .bind(id)
+    .execute(conn)
         .await
         .map(|_| ())
         .map_err(db_err)

@@ -1161,6 +1161,21 @@ async fn stored_logs_are_capped_with_a_truncation_marker() {
     assert!(log.contains("[earlier log output was truncated]"));
     assert!(log.contains("Deployment succeeded"), "the tail is kept");
     assert!(log.len() < 2500, "{}", log.len());
+    // Every flush past the cap truncates again, but only one marker survives.
+    assert_eq!(
+        log.matches("[earlier log output was truncated]").count(),
+        1,
+        "{log}"
+    );
+    let (stored, counted): (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT SUM(length(CAST(data AS BLOB))) FROM deployment_logs WHERE deployment_id = ?1),
+                (SELECT log_bytes FROM deployments WHERE id = ?1)",
+    )
+    .bind(&id)
+    .fetch_one(c.core.db.reader())
+    .await
+    .unwrap();
+    assert_eq!(stored, counted);
 }
 
 #[tokio::test]
