@@ -2,6 +2,7 @@
 
 pub mod actor;
 pub mod authkeys;
+pub mod backup;
 pub mod config;
 pub mod cron;
 pub mod crypto;
