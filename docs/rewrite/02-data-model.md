@@ -222,6 +222,7 @@ Purpose: published loopback ports a Project declares (D: "Projects declare loopb
 | `id` | TEXT | PK, `ppt` |
 | `project_id` | TEXT | NOT NULL, FK `projects` CASCADE |
 | `label` | TEXT | NOT NULL (e.g. `web`), UNIQUE per Project |
+| `compose_service` | TEXT | NULL (service name derived from the compose file) |
 | `host_port` | INTEGER | NOT NULL, `CHECK (host_port BETWEEN 1 AND 65535)`, **UNIQUE across all Projects** |
 | `container_port` | INTEGER | NOT NULL, 1-65535 |
 | `bind_address` | TEXT | NOT NULL default `'127.0.0.1'`, `CHECK (bind_address IN ('127.0.0.1','::1'))` (loopback only, ADR 0006) |
@@ -239,8 +240,8 @@ Purpose: lets a Project declare a Postgres/MySQL service so Backups can dump it 
 | `project_id` | TEXT | NOT NULL, FK `projects` CASCADE |
 | `engine` | TEXT | NOT NULL, `CHECK (engine IN ('postgres','mysql'))` |
 | `compose_service` | TEXT | NOT NULL; UNIQUE with `project_id` |
-| `database` | TEXT | NOT NULL |
-| `user_env`, `password_env` | TEXT | NOT NULL; **names** of environment variables in the service, read via `docker exec`; credentials are never stored here |
+| `database` | TEXT | NULL = engine default env var (`POSTGRES_DB`, `MYSQL_DATABASE`/`MARIADB_DATABASE`) |
+| `user_env`, `password_env` | TEXT | NULL = engine defaults (`POSTGRES_USER`/`POSTGRES_PASSWORD`, `MYSQL_ROOT_PASSWORD`/`MARIADB_ROOT_PASSWORD`); otherwise **names** of environment variables in the service, read via `docker exec`; credentials are never stored here |
 
 #### `deployments`
 Purpose: one attempt to bring a Project to a revision; also the queue.
@@ -255,6 +256,8 @@ Purpose: one attempt to bring a Project to a revision; also the queue.
 | `target_ref` | TEXT | NULL |
 | `commit_sha`, `commit_message` | TEXT | NULL, filled during run |
 | `rollback_from_deployment_id` | TEXT | FK `deployments(id)` ON DELETE SET NULL |
+| `image_digest` | TEXT | NULL, `RepoDigests[0]` after a successful image Deployment (rollback target) |
+| `compose_sha256`, `env_sha256` | TEXT | NULL, hashes of the compose and env content used (drift explanation) |
 | `pending_env_enc` | TEXT | NULL; env payload carried by the deploy, nulled at run start |
 | `exit_code` | INTEGER | NULL |
 | `error` | TEXT | NULL, short failure reason |
@@ -411,6 +414,9 @@ Purpose: append-only audit trail.
 | `entity_id` | TEXT | NULL |
 | `project_id` | TEXT | FK `projects` ON DELETE SET NULL |
 | `ip` | TEXT | NULL |
+| `channel` | TEXT | NOT NULL, `CHECK (channel IN ('dashboard','rest','mcp','deploy-token','webhook','cli','cron','system'))` |
+| `outcome` | TEXT | NOT NULL default `'ok'`, `CHECK (outcome IN ('ok','denied','error'))` |
+| `request_id` | TEXT | NULL |
 | `metadata` | TEXT | NOT NULL default `'{}'`, `CHECK (json_valid(metadata))`; never contains secret values |
 | `created_at` | INTEGER | NOT NULL |
 
@@ -509,26 +515,25 @@ Purpose: public name routed to a Project's published loopback port through an In
 | Column | Type | Constraints |
 |---|---|---|
 | `id` | TEXT | PK, `hst` |
-| `project_id` | TEXT | NOT NULL, FK `projects` CASCADE |
-| `project_port_id` | TEXT | NOT NULL, FK `project_ports` ON DELETE RESTRICT (a port in use by a Hostname cannot be removed) |
+| `target_kind` | TEXT | NOT NULL default `'project'`, `CHECK (target_kind IN ('project','registry'))`; `registry` = the Hosted Registry (`127.0.0.1:<listen_port>`), Owner-only (OQ-9) |
+| `project_id` | TEXT | FK `projects` CASCADE; NULL iff `target_kind='registry'` |
+| `project_port_id` | TEXT | FK `project_ports` ON DELETE RESTRICT (a port in use by a Hostname cannot be removed); NULL iff `target_kind='registry'` |
 | `hostname` | TEXT | NOT NULL, UNIQUE, `CHECK (hostname = lower(hostname))`, validated as an RFC 1123 name in code |
 | `ingress_provider` | TEXT | NOT NULL, `CHECK (ingress_provider IN ('cloudflare_tunnel','traefik'))` |
 | `tunnel_id` | TEXT | FK `cloudflare_tunnels` ON DELETE RESTRICT; required iff provider is `cloudflare_tunnel` |
 | `zone_id` | TEXT | FK `cloudflare_zones` ON DELETE SET NULL; set when Yanto manages DNS |
 | `manage_dns` | INTEGER | boolean default 0; when 1, Yanto creates/updates the record (CNAME to `<cf_tunnel_id>.cfargotunnel.com` for tunnels, A/AAAA to the Host IP for Traefik) |
 | `dns_record_id` | TEXT | NULL, Cloudflare record id (not FK; cache may be rebuilt) |
-| `scheme` | TEXT | NOT NULL default `'http'`, `CHECK (scheme IN ('http','https'))` |
-| `no_tls_verify` | INTEGER | boolean default 0; only meaningful when `scheme='https'` |
 | `enabled` | INTEGER | boolean default 1 |
 | `sync_status` | TEXT | NOT NULL default `'pending'`, `CHECK (sync_status IN ('pending','active','error','disabled'))` |
 | `last_error` | TEXT | NULL |
 | `last_published_at` | INTEGER | NULL |
 | `created_at`, `updated_at` | INTEGER | NOT NULL |
 
-Checks: `CHECK ((ingress_provider='cloudflare_tunnel') = (tunnel_id IS NOT NULL))`, `CHECK (manage_dns = 0 OR zone_id IS NOT NULL)`, `CHECK (no_tls_verify = 0 OR scheme = 'https')`.
+Checks: `CHECK ((ingress_provider='cloudflare_tunnel') = (tunnel_id IS NOT NULL))`, `CHECK (manage_dns = 0 OR zone_id IS NOT NULL)`, `CHECK ((target_kind='project') = (project_id IS NOT NULL AND project_port_id IS NOT NULL))`.
 Indexes: `hostnames_project_idx(project_id)`, `hostnames_port_idx(project_port_id)`, `hostnames_tunnel_idx(tunnel_id)`.
 Cross-table invariant (service layer, since SQLite CHECK cannot span tables): `project_port.project_id = hostnames.project_id`; enforced additionally with a `BEFORE INSERT/UPDATE` trigger that aborts on mismatch.
-Origin is always `<scheme>://<bind_address>:<host_port>` from the target port; nothing about Docker networks is stored. Traefik provider output is one Yanto-owned file, `<ingress.traefik.dynamic_dir>/yanto.yml`, regenerated whole from all Traefik Hostnames and written atomically; the file provider hot-reloads. Rows with errors keep `enabled=1` and `sync_status='error'` so a retry is possible (legacy marked new failed routes disabled; ASSUMPTION: keeping intent is clearer).
+Origin is always `http://<bind_address>:<host_port>` from the target port (registry: `http://127.0.0.1:<listen_port>`); nothing about Docker networks is stored. Traefik provider output is one Yanto-owned file, `<ingress.traefik.dynamic_dir>/yanto.yml`, regenerated whole from all Traefik Hostnames and written atomically; the file provider hot-reloads. Rows with errors keep `enabled=1` and `sync_status='error'` so a retry is possible (legacy marked new failed routes disabled; ASSUMPTION: keeping intent is clearer).
 
 ### 4.7 FRP
 

@@ -302,6 +302,7 @@ dynamic_dir = "/etc/traefik/dynamic"
 cert_resolver = "letsencrypt"
 entrypoint = "websecure"
 unit = "traefik"
+# static_config = "/etc/traefik/traefik.yml"   # optional, read-only prerequisite check (04 §9.3)
 [ingress.cloudflared]
 unit = "cloudflared"
 
