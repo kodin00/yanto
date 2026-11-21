@@ -1,8 +1,17 @@
-//! Dashboard, REST and MCP adapters. M0 ships the router skeleton only:
-//! `/healthz`, the base layout at `/`, and embedded static assets.
+//! Dashboard, REST and (later) MCP adapters over the `yanto-core` service layer.
+//!
+//! Adapters are thin: parse the request, build an `Actor`, call one service
+//! function, render the result. They never check permissions themselves.
 
+mod api_v1;
 mod app;
 mod assets;
 mod dashboard;
+mod error;
+mod nav;
+mod net;
+
+#[cfg(feature = "testing")]
+pub mod testing;
 
 pub use app::{AppState, router, serve};

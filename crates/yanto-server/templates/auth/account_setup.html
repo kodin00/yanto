@@ -1,0 +1,17 @@
+{% extends "layout.html" %}
+
+{% block head %}<script src="/assets/js/account-setup.js" defer></script>{% endblock %}
+
+{% block content %}
+<section class="card narrow">
+  <h1>Set your password</h1>
+  {% if let Some(e) = error %}<p class="error" role="alert">{{ e }}</p>{% endif %}
+  <div id="preview" hx-post="/account/setup/preview" hx-trigger="token-ready from:body" hx-include="#token" hx-target="this"></div>
+  <form method="post" action="/account/setup" class="stack">
+    <label>Link token <input id="token" name="token" value="{{ token }}" autocomplete="off" spellcheck="false" required></label>
+    <label>New password <input type="password" name="password" autocomplete="new-password" minlength="12" required></label>
+    <label>Confirm password <input type="password" name="confirm" autocomplete="new-password" minlength="12" required></label>
+    <button type="submit">Save password and sign in</button>
+  </form>
+</section>
+{% endblock %}

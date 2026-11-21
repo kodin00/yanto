@@ -9,16 +9,25 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Test harness (`yanto_server::testing`): temp app, cookie-jar client, Owner/Member/token fixtures.
+testing = ["yanto-core/testing", "dep:tower", "dep:http-body-util", "dep:tempfile"]
+
 [dependencies]
 yanto-core.workspace = true
 askama.workspace = true
 axum.workspace = true
+form_urlencoded.workspace = true
+http-body-util = { workspace = true, optional = true }
 rust-embed.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile = { workspace = true, optional = true }
 tokio.workspace = true
+tower = { workspace = true, optional = true }
 tower-http.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-http-body-util.workspace = true
-tempfile.workspace = true
-tower.workspace = true
+# Enables the `testing` feature for this crate's own unit and integration tests.
+yanto-server = { path = ".", features = ["testing"] }

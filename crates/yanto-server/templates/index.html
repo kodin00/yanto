@@ -1,8 +1,7 @@
 {% extends "layout.html" %}
 
-{% block title %}{{ title }}{% endblock %}
-
 {% block content %}
-<h1>{{ title }}</h1>
-<p>Self-hosted VPS management. The dashboard is under construction.</p>
+<h1>Dashboard</h1>
+<p>Signed in as <strong>{{ ctx.username }}</strong> ({{ role }}).</p>
+<p class="muted">Projects, Deployments and system usage appear here as they are added.</p>
 {% endblock %}

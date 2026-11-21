@@ -2337,14 +2337,18 @@ version = "0.0.0"
 dependencies = [
  "askama",
  "axum",
+ "form_urlencoded",
  "http-body-util",
  "rust-embed",
+ "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "tower",
  "tower-http",
  "tracing",
  "yanto-core",
+ "yanto-server",
 ]
 
 [[package]]

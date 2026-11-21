@@ -10,9 +10,11 @@ use axum::routing::get;
 use tokio::net::TcpListener;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
+use yanto_core::service::Services;
 use yanto_core::{Config, Db};
 
-use crate::{assets, dashboard};
+use crate::net::{Cidr, default_trusted_proxies};
+use crate::{api_v1, assets, dashboard};
 
 /// Default request body limit (1 MiB, as in the legacy server).
 const BODY_LIMIT: usize = 1024 * 1024;
@@ -21,14 +23,42 @@ const BODY_LIMIT: usize = 1024 * 1024;
 pub struct AppState {
     pub db: Db,
     pub config: Arc<Config>,
+    pub services: Arc<Services>,
+    /// Peers whose `X-Forwarded-For` is honored (`runtime.trusted_proxies`).
+    pub trusted_proxies: Arc<Vec<Cidr>>,
 }
 
 impl AppState {
-    pub fn new(db: Db, config: Config) -> Self {
+    pub fn new(db: Db, config: Config, services: Services) -> Self {
         Self {
             db,
             config: Arc::new(config),
+            services: Arc::new(services),
+            trusted_proxies: Arc::new(default_trusted_proxies()),
         }
+    }
+
+    /// Like [`AppState::new`], reading `runtime.trusted_proxies` from `app_settings`.
+    pub async fn load(db: Db, config: Config, services: Services) -> Self {
+        let mut state = Self::new(db, config, services);
+        if let Some(list) = state.configured_trusted_proxies().await {
+            state.trusted_proxies = Arc::new(list);
+        }
+        state
+    }
+
+    async fn configured_trusted_proxies(&self) -> Option<Vec<Cidr>> {
+        let mut conn = self.db.reader().acquire().await.ok()?;
+        let raw = yanto_core::db::repo::settings::get(&mut conn, "runtime.trusted_proxies")
+            .await
+            .ok()??;
+        let list: Vec<String> = serde_json::from_str(&raw).ok()?;
+        Some(crate::net::parse_cidrs(list.iter().map(String::as_str)))
+    }
+
+    /// Cookie `Secure` flag follows `server.public_url` (docs/rewrite/03 a.3).
+    pub fn cookie_secure(&self) -> bool {
+        self.config.server.public_url.starts_with("https://")
     }
 }
 
@@ -41,8 +71,9 @@ pub fn router(state: AppState) -> Router {
     };
     Router::new()
         .route("/healthz", get(healthz))
-        .merge(dashboard::routes())
         .merge(assets::routes())
+        .nest("/api/v1", api_v1::routes(&state))
+        .merge(dashboard::routes(&state))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .layer(header(
             "content-security-policy",
@@ -72,7 +103,10 @@ pub async fn serve(
     state: AppState,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
-    axum::serve(listener, router(state))
-        .with_graceful_shutdown(shutdown)
-        .await
+    axum::serve(
+        listener,
+        router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown)
+    .await
 }
