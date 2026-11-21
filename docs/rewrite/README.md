@@ -14,5 +14,6 @@ Start with [00-scope](00-scope.md). It fixes every decision. The other docs only
 | [05-install-and-ops](05-install-and-ops.md) | `install.sh`, `yanto install`, systemd, releases, mise, CI |
 | [06-milestones](06-milestones.md) | Milestones M0–M9, execution model, risks |
 | [07-open-questions](07-open-questions.md) | Consolidated open questions OQ-n with recommended answers and the milestone each blocks |
+| [08-conventions](08-conventions.md) | Rules for parallel milestones: migration ranges, module registration, templates, errors, matrix tests, test helpers, ports and fakes |
 
 Related: [`CONTEXT.md`](../../CONTEXT.md) (glossary), [`docs/adr/`](../adr/) (decisions), [`docs/legacy/`](../legacy/) (how the TS system behaves today).
