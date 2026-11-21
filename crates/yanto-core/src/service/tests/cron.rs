@@ -386,3 +386,37 @@ async fn output_tail_is_capped() {
         crate::cron::OUTPUT_TAIL_BYTES
     );
 }
+
+#[tokio::test]
+async fn patch_changes_only_the_given_fields_and_checks_permission_first() {
+    use crate::service::cron::CronPatch;
+    let core = TestCore::new().await;
+    let a = Actor::cli();
+    let e = core.services.cron.create(&a, &input("job")).await.unwrap();
+    let p = CronPatch {
+        schedule: Some("@hourly".into()),
+        overlap: Some(Overlap::Skip),
+        ..Default::default()
+    };
+    let out = core.services.cron.patch(&a, &e.id, &p).await.unwrap();
+    assert_eq!(
+        (out.schedule.as_str(), out.overlap.as_str()),
+        ("@hourly", "skip")
+    );
+    assert_eq!(
+        (out.command.as_str(), out.run_as_user.as_str()),
+        ("echo 100% done", "deploy")
+    );
+    assert_eq!(
+        kind(core.services.cron.patch(&a, "crn_none", &p).await),
+        ErrorKind::NotFound
+    );
+    let bad = CronPatch {
+        schedule: Some("nope".into()),
+        ..Default::default()
+    };
+    assert!(matches!(
+        kind(core.services.cron.patch(&a, &e.id, &bad).await),
+        ErrorKind::Validation(_)
+    ));
+}

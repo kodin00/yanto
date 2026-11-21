@@ -8,7 +8,9 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use yanto_core::cron::{EntryInput, Overlap};
 use yanto_core::ports::CronSource;
-use yanto_core::service::cron::{CronEntryDto, CronOverview, CronRunDto, SchedulePreview};
+use yanto_core::service::cron::{
+    CronEntryDto, CronOverview, CronPatch, CronRunDto, SchedulePreview,
+};
 
 use super::{ApiActor, ApiJson, created};
 use crate::app::AppState;
@@ -106,17 +108,16 @@ async fn update(
     Path(id): Path<String>,
     ApiJson(b): ApiJson<PatchBody>,
 ) -> Result<Json<CronEntryDto>, ApiError> {
-    let cur = s.services.cron.get(&a, &id).await?;
-    let input = EntryInput {
-        name: b.name.unwrap_or(cur.name),
-        schedule: b.schedule.unwrap_or(cur.schedule),
-        run_as_user: b.run_as_user.unwrap_or(cur.run_as_user),
-        command: b.command.unwrap_or(cur.command),
-        overlap: overlap(b.overlap.as_deref().unwrap_or(&cur.overlap))?,
-        timeout_s: b.timeout_s.or(cur.timeout_s),
-        enabled: b.enabled.unwrap_or(cur.enabled),
+    let patch = CronPatch {
+        name: b.name,
+        schedule: b.schedule,
+        run_as_user: b.run_as_user,
+        command: b.command,
+        overlap: b.overlap.as_deref().map(overlap).transpose()?,
+        timeout_s: b.timeout_s,
+        enabled: b.enabled,
     };
-    Ok(Json(s.services.cron.update(&a, &id, &input).await?))
+    Ok(Json(s.services.cron.patch(&a, &id, &patch).await?))
 }
 
 #[derive(Debug, Deserialize)]

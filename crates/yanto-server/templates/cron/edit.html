@@ -1,0 +1,39 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<p><a href="/cron">&larr; Cron</a></p>
+<h1>{{ form.name }}{% if !enabled %} <span class="badge disabled">disabled</span>{% endif %}</h1>
+
+<section class="card">
+  <h2>Edit</h2>
+  <form hx-put="/cron/{{ id }}" class="stack">
+    <label>Name <input name="name" value="{{ form.name }}" maxlength="100" required></label>
+    <label>Schedule
+      <input name="schedule" value="{{ form.schedule }}" autocomplete="off" required
+        hx-post="/cron/preview" hx-trigger="keyup changed delay:300ms, load" hx-target="#schedule-preview" hx-swap="innerHTML">
+    </label>
+    <div id="schedule-preview" aria-live="polite"></div>
+    <label>Run as
+      <select name="run_as_user">
+        {% for u in users %}<option value="{{ u }}"{% if *u == form.run_as_user %} selected{% endif %}>{{ u }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Command <input name="command" value="{{ form.command }}" maxlength="4096" required autocomplete="off"></label>
+    <div class="inline">
+      <label>If the previous run is still going
+        <select name="overlap">
+          <option value="allow"{% if !form.overlap_skip %} selected{% endif %}>run anyway</option>
+          <option value="skip"{% if form.overlap_skip %} selected{% endif %}>skip this run</option>
+        </select>
+      </label>
+      <label>Timeout (seconds) <input name="timeout_s" value="{{ form.timeout_s }}" inputmode="numeric" placeholder="none" size="8"></label>
+    </div>
+    <button type="submit">Save</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Run history</h2>
+  {% include "cron/_runs.html" %}
+</section>
+{% endblock %}

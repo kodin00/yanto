@@ -137,6 +137,18 @@ pub struct RunReport {
     pub duration_ms: i64,
 }
 
+/// Fields to change in [`CronService::patch`]; `None` keeps the stored value.
+#[derive(Debug, Clone, Default)]
+pub struct CronPatch {
+    pub name: Option<String>,
+    pub schedule: Option<String>,
+    pub run_as_user: Option<String>,
+    pub command: Option<String>,
+    pub overlap: Option<cron::Overlap>,
+    pub timeout_s: Option<i64>,
+    pub enabled: Option<bool>,
+}
+
 #[derive(Clone)]
 pub struct CronService {
     ctx: Ctx,
@@ -363,6 +375,44 @@ impl CronService {
         input: &EntryInput,
     ) -> Result<CronEntryDto, CoreError> {
         actor.authorize(&OP_CRON_UPDATE, None)?;
+        self.update_checked(actor, id, input).await
+    }
+
+    /// Partial update (REST `PATCH`): absent fields keep their stored value.
+    pub async fn patch(
+        &self,
+        actor: &Actor,
+        id: &str,
+        p: &CronPatch,
+    ) -> Result<CronEntryDto, CoreError> {
+        actor.authorize(&OP_CRON_UPDATE, None)?;
+        let cur = {
+            let mut conn = self.reader().await?;
+            repo::get(&mut conn, id)
+                .await?
+                .ok_or_else(|| CoreError::not_found("Cron Entry not found"))?
+        };
+        let input = EntryInput {
+            name: p.name.clone().unwrap_or(cur.name),
+            schedule: p.schedule.clone().unwrap_or(cur.schedule),
+            run_as_user: p.run_as_user.clone().unwrap_or(cur.run_as_user),
+            command: p.command.clone().unwrap_or(cur.command),
+            overlap: p
+                .overlap
+                .or_else(|| cron::Overlap::parse(&cur.overlap))
+                .unwrap_or(cron::Overlap::Allow),
+            timeout_s: p.timeout_s.or(cur.timeout_s),
+            enabled: p.enabled.unwrap_or(cur.enabled),
+        };
+        self.update_checked(actor, id, &input).await
+    }
+
+    async fn update_checked(
+        &self,
+        actor: &Actor,
+        id: &str,
+        input: &EntryInput,
+    ) -> Result<CronEntryDto, CoreError> {
         let v = self.validate(input)?;
         let mut tx = self.ctx.db.begin_write().await?;
         if !repo::update(&mut tx, id, &fields(&v), self.ctx.now()).await? {

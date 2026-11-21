@@ -1,0 +1,88 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>Cron</h1>
+<p class="muted">Yanto owns <code>/etc/cron.d/yanto</code>. Every entry runs as <code>yanto cron-run</code>, which records the exit code, duration and the output tail. Times are UTC.</p>
+
+{% if service_inactive %}<p class="error" role="alert">The cron service is not active: entries will not run.</p>{% endif %}
+{% if drift %}
+<div class="card" role="alert">
+  <strong>{% if drift_missing %}/etc/cron.d/yanto is missing.{% else %}/etc/cron.d/yanto was edited outside Yanto.{% endif %}</strong>
+  <p class="muted">Re-applying overwrites the file with the entries below. Hand edits are never merged.</p>
+  <form method="post" action="/cron/reapply">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <button type="submit">Re-apply</button>
+  </form>
+</div>
+{% endif %}
+{% if let Some(why) = unsafe_reason %}
+<div class="card" role="alert">
+  <strong>/etc/cron.d/yanto cannot be written: {{ why }}.</strong>
+  <form method="post" action="/cron/reapply" class="inline">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <label><input type="checkbox" name="replace_unsafe" value="1"> Replace it with a regular root-owned file</label>
+    <button type="submit" class="danger">Replace and re-apply</button>
+  </form>
+</div>
+{% endif %}
+
+<table>
+  <thead><tr><th>Name</th><th>Schedule</th><th>User</th><th>Command</th><th>Next run</th><th>Last run</th><th></th></tr></thead>
+  <tbody>
+  {% for e in entries %}
+    <tr id="row-{{ e.id }}">
+      <td><a href="/cron/{{ e.id }}">{{ e.name }}</a>{% if !e.enabled %} <span class="badge disabled">disabled</span>{% endif %}</td>
+      <td><code>{{ e.schedule }}</code></td>
+      <td>{{ e.run_as_user }}{% if e.invalid_user %} <span class="badge disabled">unknown user</span>{% endif %}</td>
+      <td><code>{{ e.command }}</code></td>
+      <td>{{ e.next_run }}</td>
+      <td><span class="badge {{ e.last_status }}">{{ e.last_status }}</span> {{ e.last_run }}</td>
+      <td class="actions">
+        <button hx-post="/cron/{{ e.id }}/toggle">{% if e.enabled %}Disable{% else %}Enable{% endif %}</button>
+        <button hx-get="/cron/{{ e.id }}/runs" hx-target="#runs-{{ e.id }}" hx-swap="innerHTML">Runs</button>
+        <button class="danger" hx-delete="/cron/{{ e.id }}" hx-target="closest tr" hx-swap="outerHTML" hx-confirm="Delete {{ e.name }}?">Delete</button>
+      </td>
+    </tr>
+    <tr><td colspan="7" id="runs-{{ e.id }}"></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<section class="card">
+  <h2>New Cron Entry</h2>
+  {% if let Some(e) = error %}<p class="error" role="alert">{{ e }}</p>{% endif %}
+  <form method="post" action="/cron" class="stack">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <label>Name <input name="name" value="{{ form.name }}" maxlength="100" required></label>
+    <label>Schedule
+      <input name="schedule" value="{{ form.schedule }}" placeholder="*/15 * * * *  or  @daily" autocomplete="off" required
+        hx-post="/cron/preview" hx-trigger="keyup changed delay:300ms, load" hx-target="#schedule-preview" hx-swap="innerHTML">
+    </label>
+    <div id="schedule-preview" aria-live="polite"></div>
+    <label>Run as
+      <select name="run_as_user">
+        {% for u in users %}<option value="{{ u }}"{% if *u == form.run_as_user %} selected{% endif %}>{{ u }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Command <input name="command" value="{{ form.command }}" maxlength="4096" required autocomplete="off"></label>
+    <p class="muted">The command is stored in Yanto's database and runs through <code>/bin/sh -c</code>, so <code>%</code> needs no escaping. It is recorded in the audit log: do not put secrets in it.</p>
+    <div class="inline">
+      <label>If the previous run is still going
+        <select name="overlap">
+          <option value="allow"{% if !form.overlap_skip %} selected{% endif %}>run anyway</option>
+          <option value="skip"{% if form.overlap_skip %} selected{% endif %}>skip this run</option>
+        </select>
+      </label>
+      <label>Timeout (seconds) <input name="timeout_s" value="{{ form.timeout_s }}" inputmode="numeric" placeholder="none" size="8"></label>
+    </div>
+    <button type="submit">Create entry</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Other cron sources (read only)</h2>
+  <p class="muted">Yanto never edits these.</p>
+  <button hx-get="/cron/system-files" hx-target="#system-files" hx-swap="innerHTML">Show</button>
+  <div id="system-files"></div>
+</section>
+{% endblock %}
