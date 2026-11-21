@@ -107,6 +107,9 @@ async fn user_endpoints_require_admin_scope_and_the_owner() {
 async fn user_lifecycle_over_rest() {
     let app = TestApp::new().await;
     let owner = app.owner_user().await;
+    // Grants need real Projects since 0201.
+    app.core.ensure_project("prj_7").await;
+    app.core.ensure_project("prj_8").await;
     let c = app
         .client()
         .with_bearer(&app.bearer(&owner, Scope::Admin).await);
