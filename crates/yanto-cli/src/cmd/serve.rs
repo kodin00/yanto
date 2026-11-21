@@ -55,15 +55,46 @@ async fn serve(config: yanto_core::Config) -> anyhow::Result<()> {
         stop.clone(),
     ));
     let state = AppState::load(rt.db.clone(), rt.config.clone(), rt.services.clone()).await;
-    yanto_server::serve(listener, state, shutdown_signal()).await?;
+    // The signal stops the worker from claiming new Deployments right away; it does not wait
+    // for the HTTP side, whose SSE/WebSocket streams never end on their own.
+    let signalled = stop.clone();
+    let shutdown = async move {
+        shutdown_signal().await;
+        tracing::info!("shutting down");
+        signalled.cancel();
+    };
+    let server = yanto_server::serve(listener, state, shutdown);
+    bounded_drain(server, &stop, HTTP_DRAIN).await?;
 
-    tracing::info!("shutting down");
-    stop.cancel();
     // Drain running deployments (30 s, then cancel) before closing the database.
     let _ = worker.await;
     purge.abort();
     rt.db.close().await;
     Ok(())
+}
+
+/// How long open HTTP connections (log streams, exec terminals) may linger after the signal.
+const HTTP_DRAIN: Duration = Duration::from_secs(5);
+
+/// Run `server` to completion, but at most `grace` past `stop` tripping: axum's graceful
+/// shutdown waits for every connection, and a streaming one would hold it until systemd's
+/// SIGKILL, skipping the Deployment drain.
+async fn bounded_drain(
+    server: impl std::future::Future<Output = std::io::Result<()>>,
+    stop: &CancellationToken,
+    grace: Duration,
+) -> std::io::Result<()> {
+    tokio::pin!(server);
+    tokio::select! {
+        r = &mut server => r,
+        () = async {
+            stop.cancelled().await;
+            tokio::time::sleep(grace).await;
+        } => {
+            tracing::warn!("closing HTTP connections still open after the drain period");
+            Ok(())
+        }
+    }
 }
 
 /// Hourly cleanup of expired sessions and invite/reset tokens (docs/rewrite/01 section 6.3).
@@ -106,5 +137,33 @@ async fn shutdown_signal() {
     tokio::select! {
         () = ctrl_c => tracing::info!("received SIGINT"),
         () = term => tracing::info!("received SIGTERM"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn an_endless_connection_cannot_hold_shutdown() {
+        let stop = CancellationToken::new();
+        stop.cancel();
+        let started = std::time::Instant::now();
+        bounded_drain(std::future::pending(), &stop, Duration::from_millis(50))
+            .await
+            .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn a_finished_server_returns_its_result() {
+        let stop = CancellationToken::new();
+        let r = bounded_drain(
+            async { Err(std::io::Error::other("bind")) },
+            &stop,
+            Duration::from_secs(60),
+        )
+        .await;
+        assert!(r.is_err());
     }
 }

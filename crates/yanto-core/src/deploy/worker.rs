@@ -19,7 +19,10 @@ use crate::service::audit::{self, AuditActor, AuditEvent};
 
 const POLL: Duration = Duration::from_secs(2);
 const DRAIN: Duration = Duration::from_secs(30);
-const KILL_GRACE: Duration = Duration::from_secs(6);
+/// After cancelling: a command gets 5 s between SIGTERM and SIGKILL plus up to 2 s + 2 s for
+/// its output readers, then the runner still has to finalize the row (`cancelled`, last log
+/// lines). 12 s covers that; 30 s drain + 12 s stays inside `TimeoutStopSec=45`.
+const KILL_GRACE: Duration = Duration::from_secs(12);
 
 /// `running` rows left by a previous process become `interrupted` with a system log line.
 pub async fn recover(eng: &Engine) -> Result<usize, CoreError> {
