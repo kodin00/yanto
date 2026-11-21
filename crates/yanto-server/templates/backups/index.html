@@ -1,0 +1,70 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>Backups</h1>
+<p class="muted">Backups are stored on this Host under the data directory and can be downloaded. Nothing is copied elsewhere.</p>
+
+{% if let Some(e) = error %}<p class="error" role="alert">{{ e }}</p>{% endif %}
+{% if let Some(n) = notice %}<p class="ok" role="status">{{ n }}</p>{% endif %}
+
+<table>
+  <thead><tr><th>Created (UTC)</th><th>Kind</th><th>Trigger</th><th>Status</th><th>Size</th><th>SHA-256</th><th>Downloads</th><th></th></tr></thead>
+  <tbody>
+  {% for b in backups %}
+    <tr>
+      <td>{{ b.created }}</td>
+      <td>{{ b.kind }}{% if b.sensitive %} <span class="badge disabled" title="Contains app.key: decrypts every secret in the database">sensitive</span>{% endif %}</td>
+      <td>{{ b.trigger }}</td>
+      <td><span class="badge {{ b.status }}">{{ b.status }}</span>{% if !b.error.is_empty() %} <span class="muted">{{ b.error }}</span>{% endif %}</td>
+      <td>{{ b.size }}</td>
+      <td><code title="{{ b.sha256 }}">{{ b.sha256 }}</code></td>
+      <td title="last download: {{ b.downloaded }}">{{ b.downloads }}</td>
+      <td class="actions">
+        {% if b.can_download %}<a href="/backups/{{ b.id }}/download" rel="nofollow">Download</a>{% endif %}
+        {% if b.can_restore %}
+        <details>
+          <summary>Restore</summary>
+          <form method="post" action="/backups/{{ b.id }}/restore" class="stack">
+            <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+            <p class="muted">Volumes are restored into a new volume unless you tick in place. Databases are always restored into the running service. Both in-place restores first take a <code>pre_restore</code> backup of the current state.</p>
+            <label><input type="checkbox" name="in_place"> In place (volumes: stops the Project, replaces the data)</label>
+            <label>Project name to confirm <input name="confirm_name" autocomplete="off"></label>
+            <button class="danger" type="submit">Restore {{ b.filename }}</button>
+          </form>
+        </details>
+        {% endif %}
+        <button class="danger" hx-delete="/backups/{{ b.id }}" hx-target="closest tr" hx-swap="outerHTML" hx-confirm="Delete {{ b.filename }}?">Delete</button>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if backups.is_empty() %}<p class="muted">No backups yet.</p>{% endif %}
+
+{% if !targets.is_empty() %}
+<section class="card">
+  <h2>Back up a Project</h2>
+  <p class="muted">Volume archives are written one per named volume (bind mounts are not included). Without stopping the Project they are crash-consistent only; prefer a database dump for databases. Declare databases on the Project's page.</p>
+  <form method="post" action="/backups" class="stack">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <input type="hidden" name="kind" value="project">
+    <label>Target <select name="target">{% for t in targets %}<option value="{{ t.value }}">{{ t.label }}</option>{% endfor %}</select></label>
+    <label><input type="checkbox" name="stop_project"> Stop the Project while archiving a volume (started again afterwards)</label>
+    <button type="submit">Create backup</button>
+  </form>
+</section>
+{% endif %}
+
+{% if can_create_yanto %}
+<section class="card">
+  <h2>Back up Yanto's database</h2>
+  <p class="error"><strong>Sensitive:</strong> this archive contains the database <em>and</em> <code>keys/app.key</code>, so whoever holds it can decrypt every stored secret. Download it only over a trusted connection, encrypt it at rest (age or gpg; Yanto does not), and delete copies you no longer need.</p>
+  <form method="post" action="/backups">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <input type="hidden" name="kind" value="yanto_sqlite">
+    <button type="submit">Create Yanto database backup</button>
+  </form>
+  <p class="muted">Schedule it with a Cron Entry running <code>yanto backup yanto --keep-last 14</code>. Restore is done on the server with the service stopped: <code>systemctl stop yanto &amp;&amp; yanto restore yanto &lt;archive&gt; &amp;&amp; systemctl start yanto</code>.</p>
+</section>
+{% endif %}
+{% endblock %}

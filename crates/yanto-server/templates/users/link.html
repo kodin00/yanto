@@ -1,0 +1,11 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>{{ what }} link</h1>
+<div class="secret">
+  <p>Share this link with <strong>{{ username }}</strong>. It works once and expires {{ expires }}.
+     It is shown only now.</p>
+  <code class="link">{{ url }}</code>
+</div>
+<p><a href="/users">Back to users</a></p>
+{% endblock %}

@@ -1,0 +1,7 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>Dashboard</h1>
+<p>Signed in as <strong>{{ ctx.username }}</strong> ({{ role }}).</p>
+<p class="muted">Projects, Deployments and system usage appear here as they are added.</p>
+{% endblock %}

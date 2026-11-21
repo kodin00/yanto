@@ -1,0 +1,9 @@
+{% if sources.is_empty() %}
+<p class="muted">No other cron sources found.</p>
+{% endif %}
+{% for s in sources %}
+<details>
+  <summary><code>{{ s.path }}</code> <span class="badge">{{ s.kind }}</span>{% if let Some(n) = s.note %} <span class="muted">{{ n }}</span>{% endif %}</summary>
+  {% if !s.text.is_empty() %}<pre>{{ s.text }}</pre>{% endif %}
+</details>
+{% endfor %}

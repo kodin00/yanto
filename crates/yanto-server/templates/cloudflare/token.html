@@ -1,0 +1,12 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<p><a href="/cloudflare">&larr; Cloudflare</a></p>
+<h1>Install command for {{ tunnel }}</h1>
+<section class="card">
+  <p class="error"><strong>This token connects a machine to your tunnel.</strong> It is shown once, is not stored by Yanto, and leaves this page when you navigate away. Treat it like a password.</p>
+  <p>Run this on the Host as root. Yanto does not run it for you:</p>
+  <pre><code>{{ command }}</code></pre>
+  <p class="muted"><code>cloudflared service install</code> writes the token to a file and runs <code>tunnel run --token-file</code>; on Linux it starts the service. Afterwards check the tunnel status on the Cloudflare page.</p>
+</section>
+{% endblock %}

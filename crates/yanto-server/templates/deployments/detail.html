@@ -1,0 +1,23 @@
+{% extends "layout.html" %}
+
+{% block head %}<script src="/assets/js/deployment-log.js" defer></script>{% endblock %}
+{% block content %}
+<p><a href="/deployments">&larr; Deployments</a> &middot; <a href="/projects/{{ d.project_id }}">Project</a></p>
+<h1>Deployment <code>{{ d.id }}</code> <span id="status" class="badge {{ d.status }}">{{ d.status }}</span></h1>
+<p class="muted">{{ d.trigger }} by {{ d.triggered_by }} &middot; queued {{ d.queued }} &middot; started {{ d.started }} &middot; finished {{ d.finished }}</p>
+{% if !d.revision.is_empty() %}<p>Revision: <code>{{ d.revision }}</code></p>{% endif %}
+{% if !d.error.is_empty() %}<p class="error" role="alert">{{ d.error }}</p>{% endif %}
+{% if can_cancel && d.active %}
+<form method="post" action="/deployments/{{ d.id }}/cancel"><input type="hidden" name="_csrf" value="{{ ctx.csrf }}"><button class="danger" type="submit">Cancel</button></form>
+{% endif %}
+{% if can_reset %}
+<div class="card">
+  <p>The pull could not fast-forward: the checkout on this Host has diverged from the remote. Resetting discards local commits and changes in the checkout (<code>git reset --hard origin/&lt;branch&gt;</code>); the Project's config and volumes are not touched. The action is audited.</p>
+  <button class="danger" hx-post="/projects/{{ d.project_id }}/reset-checkout" hx-target="#reset-msg" hx-confirm="Discard local changes in the checkout and reset it to the remote branch?">Reset checkout to origin</button>
+  <span id="reset-msg"></span>
+</div>
+{% endif %}
+<h2>Log</h2>
+<pre id="log" class="log" data-stream="/deployments/{{ d.id }}/logs/stream" data-active="{{ d.active }}"></pre>
+<noscript><p><a href="/deployments/{{ d.id }}/logs">View the plain-text log</a></p></noscript>
+{% endblock %}

@@ -1,0 +1,50 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>Settings</h1>
+<p class="muted">{{ applies }} Leave a field empty to use the default.</p>
+
+{% if saved %}<p role="status">Saved. Restart the Yanto service to apply.</p>{% endif %}
+{% if let Some(e) = error %}<p class="error" role="alert">{{ e }}</p>{% endif %}
+
+<section class="card">
+  <h2>Runtime</h2>
+  <form method="post" action="/settings" class="stack">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    {% for f in fields %}
+    <label>{{ f.label }}{% if !f.unit.is_empty() %} ({{ f.unit }}){% endif %}
+      {% if f.list %}
+      <textarea name="{{ f.key }}" rows="3" placeholder="{{ f.default }}">{{ f.text }}</textarea>
+      {% else %}
+      <input name="{{ f.key }}" type="number" min="{{ f.min }}" max="{{ f.max }}" value="{{ f.text }}" placeholder="{{ f.default }}">
+      {% endif %}
+    </label>
+    <p class="muted">{{ f.help }}{% if !f.list %} Allowed {{ f.min }} to {{ f.max }}.{% endif %} Default: {{ f.default }}.</p>
+    {% endfor %}
+    <button type="submit">Save settings</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Host configuration</h2>
+  <p class="muted">From <code>config.toml</code>; edit the file and restart to change these.</p>
+  <table>
+    <tbody>
+    {% for h in host %}
+      <tr><th scope="row">{{ h.label }}</th><td><code>{{ h.value }}</code></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>More settings</h2>
+  <ul>
+    <li><a href="/settings/api-tokens">API tokens</a></li>
+    <li><a href="/settings/sessions">Sessions and password</a></li>
+    <li><a href="/ssh">SSH keys</a> (Authorized Keys for the Unix user <code>{{ unix_user }}</code>)</li>
+    <li><a href="/cloudflare">Cloudflare</a> (API clients, zones, tunnels)</li>
+    <li><a href="/daemons">Host Daemons</a></li>
+  </ul>
+</section>
+{% endblock %}

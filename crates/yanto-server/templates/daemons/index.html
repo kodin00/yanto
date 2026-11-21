@@ -1,0 +1,21 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>Host Daemons</h1>
+<p class="muted">cloudflared, Traefik and frps are installed and run by you; Yanto checks them and can start, stop or restart the systemd unit. It never installs anything.</p>
+{% for d in daemons %}
+<section class="card">
+  <h2>{{ d.name }} <span class="badge {{ d.state_key }}">{{ d.state }}</span></h2>
+  <p class="muted">unit <code>{{ d.unit }}</code>{% if !d.unit_file.is_empty() %} ({{ d.unit_file }}){% endif %}{% if !d.version.is_empty() %} &middot; {{ d.version }}{% endif %}</p>
+  {% if d.installed %}
+  <form hx-post="/daemons/{{ d.name }}/start" class="inline"><input type="hidden" name="confirm" value="true"><button type="submit">Start</button></form>
+  <form hx-post="/daemons/{{ d.name }}/restart" class="inline" hx-confirm="Restart {{ d.name }}? {{ d.warning }}"><input type="hidden" name="confirm" value="true"><button type="submit">Restart</button></form>
+  <form hx-post="/daemons/{{ d.name }}/stop" class="inline" hx-confirm="Stop {{ d.name }}? {{ d.warning }}"><input type="hidden" name="confirm" value="true"><button type="submit" class="danger">Stop</button></form>
+  {% else %}
+  <ul>{% for i in d.instructions %}<li>{{ i }}</li>{% endfor %}</ul>
+  {% if !d.sample_unit.is_empty() %}<pre><code>{{ d.sample_unit }}</code></pre>{% endif %}
+  {% endif %}
+</section>
+{% endfor %}
+<p class="muted"><a href="/hostnames">Hostnames</a> &middot; <a href="/traefik">Traefik</a> &middot; <a href="/cloudflare">Cloudflare</a> &middot; <a href="/frp">FRP</a></p>
+{% endblock %}

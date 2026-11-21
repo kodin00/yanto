@@ -1,0 +1,50 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<p><a href="/users">&larr; Users</a></p>
+<h1>{{ user.username }} <span class="badge {{ user.status }}">{{ user.status }}</span></h1>
+<p class="muted">{{ user.role }} &middot; created {{ created }} &middot; last sign-in {{ user.last_login }}</p>
+
+{% if is_owner %}
+<p>The Owner has access to everything and cannot be edited here. Use <code>yanto owner-reset</code> on the server to recover the Owner account.</p>
+{% else %}
+<section class="card">
+  <h2>Project access</h2>
+  <form hx-put="/users/{{ user.id }}/access" hx-target="#access-msg" hx-swap="innerHTML">
+    <table>
+      <thead><tr><th>Keep</th><th>Project</th>{% for p in all_permissions %}<th>{{ p }}</th>{% endfor %}</tr></thead>
+      <tbody>
+      {% for g in grants %}
+        <tr>
+          <td><input type="checkbox" name="keep" value="{{ g.project_id }}" checked aria-label="Keep {{ g.project_id }}"></td>
+          <td>{{ g.label }}</td>
+          {% for p in g.perms %}<td><input type="checkbox" name="perm" value="{{ g.project_id }}|{{ p.0 }}"{% if p.1 %} checked{% endif %} aria-label="{{ p.0 }} on {{ g.project_id }}"></td>{% endfor %}
+        </tr>
+      {% endfor %}
+        <tr>
+          <td>add</td>
+          <td><select name="new_project" aria-label="Project to add"><option value="">choose a Project</option>{% for c in choices %}<option value="{{ c.0 }}">{{ c.1 }}</option>{% endfor %}</select></td>
+          {% for p in all_permissions %}<td><input type="checkbox" name="new_perm" value="{{ p }}" aria-label="New {{ p }}"></td>{% endfor %}
+        </tr>
+      </tbody>
+    </table>
+    <p class="muted">A Project row with no permissions grants view-only access. Tick permissions on the new row, then save.</p>
+    <button type="submit">Save access</button> <span id="access-msg"></span>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Account</h2>
+  <div class="actions">
+    {% if is_disabled %}
+    <button hx-patch="/users/{{ user.id }}/status" hx-vals='{"status":"active"}'>Enable</button>
+    {% else %}
+    <button hx-patch="/users/{{ user.id }}/status" hx-vals='{"status":"disabled"}' hx-confirm="Disable {{ user.username }} and sign them out?">Disable</button>
+    <button hx-post="/users/{{ user.id }}/reset-link" hx-target="#link-box" hx-confirm="Issue a reset link? Their password is cleared and sessions are revoked.">Issue reset link</button>
+    {% endif %}
+    <button class="danger" hx-delete="/users/{{ user.id }}" hx-confirm="Delete {{ user.username }}? Their API tokens are revoked.">Delete user</button>
+  </div>
+  <div id="link-box"></div>
+</section>
+{% endif %}
+{% endblock %}

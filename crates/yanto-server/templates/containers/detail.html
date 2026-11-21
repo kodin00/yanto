@@ -1,0 +1,43 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<p><a href="/containers">&larr; Containers</a></p>
+<h1>{{ d.row.name }}</h1>
+<section class="card">
+  <dl class="facts">
+    <dt>ID</dt><dd><code>{{ d.row.id }}</code></dd>
+    <dt>Image</dt><dd>{{ d.row.image }}</dd>
+    <dt>State</dt><dd><span class="badge {% if d.row.running %}ok{% endif %}">{{ d.row.state }}</span> {{ d.row.status }}</dd>
+    <dt>Command</dt><dd><code>{{ d.command }}</code></dd>
+    <dt>Compose</dt><dd>{{ d.row.project }}</dd>
+    <dt>Ports</dt><dd>{{ d.row.ports }}</dd>
+    <dt>Networks</dt><dd>{{ d.networks }}</dd>
+    <dt>Restarts</dt><dd>{{ d.restart_count }}</dd>
+    <dt>Started</dt><dd>{{ d.started_at }}</dd>
+    <dt>Finished</dt><dd>{{ d.finished_at }}</dd>
+    <dt>Exit code</dt><dd>{{ d.exit_code }}</dd>
+    <dt>Health</dt><dd>{{ d.health }}</dd>
+  </dl>
+  <p class="muted">Environment variables are not shown here: they may contain secrets.</p>
+  <div class="actions">
+    {% if d.row.managed %}<span class="muted">Managed by Yanto: use its own page.</span>{% else %}
+    {% if d.row.running %}
+    <form method="post" action="/containers/{{ d.row.id }}/restart"><input type="hidden" name="_csrf" value="{{ ctx.csrf }}"><button type="submit">Restart</button></form>
+    <form method="post" action="/containers/{{ d.row.id }}/stop"><input type="hidden" name="_csrf" value="{{ ctx.csrf }}"><button type="submit" class="danger">Stop</button></form>
+    <a href="/containers/{{ d.row.id }}/exec">Open terminal</a>
+    {% else %}
+    <form method="post" action="/containers/{{ d.row.id }}/start"><input type="hidden" name="_csrf" value="{{ ctx.csrf }}"><button type="submit">Start</button></form>
+    {% endif %}
+    {% endif %}
+    <a href="/containers/{{ d.row.id }}/logs">Logs</a>
+  </div>
+</section>
+<h2>Mounts</h2>
+<table>
+  <thead><tr><th>Source</th><th>Destination</th><th>Mode</th></tr></thead>
+  <tbody>
+  {% for m in d.mounts %}<tr><td>{{ m.0 }}</td><td>{{ m.1 }}</td><td>{% if m.2 %}rw{% else %}ro{% endif %}</td></tr>
+  {% else %}<tr><td colspan="3" class="muted">No mounts.</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% endblock %}

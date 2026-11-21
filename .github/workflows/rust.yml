@@ -1,0 +1,94 @@
+name: rust
+
+on:
+  push:
+    branches: ["master", "rewrite/rust", "m*"]
+  pull_request:
+    branches: ["master", "rewrite/rust", "m*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
+        with:
+          install_args: rust
+      - run: mise run fmt
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
+        with:
+          install_args: rust
+      - run: mise run clippy
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
+        with:
+          install_args: rust
+      - run: mise run test
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
+        with:
+          install_args: rust cargo:cargo-audit
+      - run: mise run audit
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: jdx/mise-action@v4
+        with:
+          install_args: gitleaks
+      - run: mise run secrets
+
+  musl-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install musl toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: jdx/mise-action@v4
+        with:
+          install_args: rust
+      - name: Build
+        env:
+          TARGET: ${{ matrix.target }}
+        run: mise x -- cargo build --release --locked --target "$TARGET" -p yanto-cli
+      - name: Assert static binary and smoke-run
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          bin="target/${TARGET}/release/yanto"
+          file "$bin"
+          if ldd "$bin" 2>&1 | grep -qv -e 'not a dynamic executable' -e 'statically linked'; then
+            echo "binary is dynamically linked" >&2
+            exit 1
+          fi
+          "$bin" version

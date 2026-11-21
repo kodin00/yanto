@@ -1,0 +1,33 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>Pushing from another machine</h1>
+<p class="muted"><a href="/registry">Back to the registry</a></p>
+<p>The registry listens on <code>{{ image_host }}</code> only. Docker clients refuse plain HTTP for any non-loopback address, so a remote push needs an HTTPS hostname that forwards to <code>http://127.0.0.1:{{ port }}</code>. Basic auth stays on; use a registry user, never the internal one.</p>
+{% if !enabled %}<p class="error">The registry is disabled.</p>{% endif %}
+
+<section class="card">
+  <h2>Traefik (recommended for large images)</h2>
+  <p>Ports 80/443 with a Let's Encrypt certificate and no CDN in between, so no request-body limit is imposed on layer uploads. If you also use Cloudflare DNS for the name, keep that record DNS-only (not proxied).</p>
+</section>
+<section class="card">
+  <h2>Cloudflare Tunnel (small layers only)</h2>
+  <p>Easiest (no open ports, TLS at the edge), but Cloudflare limits the request body size on proxied traffic and image layer uploads can exceed it. The limit depends on the plan and is <strong>not verified</strong> here: check Cloudflare's current limits documentation before relying on it. A layer above the limit fails to push with a connection or 413-style error. Keep layers small, push from the Host itself, or use Traefik.</p>
+</section>
+<section class="card">
+  <h2>FRP</h2>
+  <p>An FRP tunnel exposes a port but terminates no TLS, so a push through it only works when TLS is handled elsewhere. Mostly not recommended. Yanto does not configure this.</p>
+</section>
+
+<section class="card">
+  <h2>Push commands</h2>
+  {% if let Some(h) = hostnames.first() %}
+  <pre>docker login {{ h }}
+docker tag app {{ h }}/app:1
+docker push {{ h }}/app:1</pre>
+  <p class="muted">Projects on this Host still reference <code>{{ image_host }}/app:1</code>, the same image.</p>
+  {% else %}
+  <p>No HTTPS hostname forwards to the registry yet, so no push commands are shown. Create a Hostname with the target <strong>Hosted Registry</strong> on the <a href="/hostnames">Hostnames page</a>; the commands appear here once it exists and is enabled. Until then, push from the Host itself using <code>{{ image_host }}</code>.</p>
+  {% endif %}
+</section>
+{% endblock %}

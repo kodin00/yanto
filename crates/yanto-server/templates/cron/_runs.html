@@ -1,0 +1,15 @@
+{% if runs.is_empty() %}
+<p class="muted">No runs recorded yet.</p>
+{% else %}
+<table>
+  <thead><tr><th>Started (UTC)</th><th>Status</th><th>Exit</th><th>Duration</th><th>Output (tail)</th></tr></thead>
+  <tbody>
+  {% for r in runs %}
+    <tr>
+      <td>{{ r.started }}</td><td><span class="badge {{ r.status }}">{{ r.status }}</span></td><td>{{ r.exit_code }}</td><td>{{ r.duration }}</td>
+      <td>{% if !r.output.is_empty() %}<details><summary>show</summary><pre>{{ r.output }}</pre></details>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}

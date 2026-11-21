@@ -1,0 +1,8 @@
+{% if repos.is_empty() %}<p class="muted">No repositories yet. Push an image to <code>{{ image_host }}</code>.</p>{% else %}
+<ul>
+{% for r in repos %}
+  <li><a href="#" hx-get="/registry/repos/{{ r.enc }}/tags" hx-target="#registry-tags" hx-swap="innerHTML">{{ r.name }}</a></li>
+{% endfor %}
+</ul>
+{% endif %}
+{% if let Some(n) = next_enc %}<button hx-get="/registry/repos?last={{ n }}" hx-target="#registry-repos" hx-swap="innerHTML">Next page</button>{% endif %}

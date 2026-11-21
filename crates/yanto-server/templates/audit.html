@@ -1,0 +1,23 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>Audit log</h1>
+<form method="get" action="/audit" class="inline">
+  <label>Project <input name="project_id" value="{{ project_id }}" placeholder="all" autocomplete="off"></label>
+  <button type="submit">Filter</button>
+</form>
+<table>
+  <thead><tr><th>When</th><th>Actor</th><th>Via</th><th>Action</th><th>Entity</th><th>Project</th><th>Outcome</th><th>IP</th></tr></thead>
+  <tbody>
+  {% for e in entries %}
+    <tr>
+      <td>{{ e.when }}</td><td>{{ e.actor }}</td><td>{{ e.channel }}</td><td><code>{{ e.action }}</code></td>
+      <td>{{ e.entity }}</td><td>{{ e.project }}</td><td><span class="badge {{ e.outcome }}">{{ e.outcome }}</span></td><td>{{ e.ip }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="muted">No entries.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if let Some(u) = next_url %}<p><a href="{{ u }}">Older entries &rarr;</a></p>{% endif %}
+{% endblock %}
