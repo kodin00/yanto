@@ -299,7 +299,8 @@ async fn exec_session_is_audited_resizable_and_hangs_up_on_finish() {
         w.core.docker.exec_input_closed(),
         "input closed = shell hung up"
     );
-    assert_eq!(w.core.docker.exec_input(), b"ls\n");
+    // The hangup appends Ctrl-D so an idle shell leaves instead of lingering (OQ-25).
+    assert_eq!(w.core.docker.exec_input(), b"ls\n\x04");
     assert_eq!(w.svc.open_exec_sessions(), 0);
     assert_eq!(audit_count(&w.core, "container.exec_end", "ok").await, 1);
     let meta: String =
