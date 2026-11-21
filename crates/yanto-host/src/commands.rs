@@ -49,12 +49,7 @@ impl CommandPort for TokioCommands {
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
         let capture = spec.capture_stdout;
-        let out_task = tokio::spawn(pump(
-            stdout,
-            sink.clone(),
-            LogStream::Stdout,
-            capture,
-        ));
+        let out_task = tokio::spawn(pump(stdout, sink.clone(), LogStream::Stdout, capture));
         let err_task = tokio::spawn(pump(stderr, sink, LogStream::Stderr, false));
 
         let mut cancelled = false;
@@ -203,7 +198,11 @@ mod tests {
     async fn streams_lines_and_reports_exit_codes() {
         let sink = Arc::new(Collect::default());
         let out = TokioCommands
-            .run(sh("echo out; echo err >&2; printf 'a\\rb\\n'; exit 3"), sink.clone(), &CancellationToken::new())
+            .run(
+                sh("echo out; echo err >&2; printf 'a\\rb\\n'; exit 3"),
+                sink.clone(),
+                &CancellationToken::new(),
+            )
             .await
             .unwrap();
         assert_eq!(out.exit_code, 3);
@@ -211,14 +210,21 @@ mod tests {
         let lines = sink.0.lock().unwrap().clone();
         assert!(lines.contains(&(LogStream::Stdout, "out\n".into())));
         assert!(lines.contains(&(LogStream::Stderr, "err\n".into())));
-        assert!(lines.contains(&(LogStream::Stdout, "a\n".into())) && lines.contains(&(LogStream::Stdout, "b\n".into())));
+        assert!(
+            lines.contains(&(LogStream::Stdout, "a\n".into()))
+                && lines.contains(&(LogStream::Stdout, "b\n".into()))
+        );
     }
 
     #[tokio::test]
     async fn captures_stdout_instead_of_streaming_it() {
         let sink = Arc::new(Collect::default());
         let out = TokioCommands
-            .run(sh("echo captured").capture(), sink.clone(), &CancellationToken::new())
+            .run(
+                sh("echo captured").capture(),
+                sink.clone(),
+                &CancellationToken::new(),
+            )
             .await
             .unwrap();
         assert_eq!(out.stdout, "captured\n");
@@ -230,7 +236,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let out = TokioCommands
             .run(
-                sh("echo $FOO; pwd").env("FOO", "bar").cwd(dir.path()).capture(),
+                sh("echo $FOO; pwd")
+                    .env("FOO", "bar")
+                    .cwd(dir.path())
+                    .capture(),
                 Arc::new(Collect::default()),
                 &CancellationToken::new(),
             )
@@ -238,7 +247,11 @@ mod tests {
             .unwrap();
         assert!(out.stdout.starts_with("bar\n"));
         let err = TokioCommands
-            .run(CommandSpec::new("definitely-not-a-program-yanto", &[]), Arc::new(Collect::default()), &CancellationToken::new())
+            .run(
+                CommandSpec::new("definitely-not-a-program-yanto", &[]),
+                Arc::new(Collect::default()),
+                &CancellationToken::new(),
+            )
             .await
             .unwrap_err();
         assert_eq!(err.kind, yanto_core::ErrorKind::Unavailable);
@@ -248,7 +261,11 @@ mod tests {
     async fn timeout_kills_the_command() {
         let started = Instant::now();
         let out = TokioCommands
-            .run(sh("sleep 30").timeout(Duration::from_millis(200)), Arc::new(Collect::default()), &CancellationToken::new())
+            .run(
+                sh("sleep 30").timeout(Duration::from_millis(200)),
+                Arc::new(Collect::default()),
+                &CancellationToken::new(),
+            )
             .await
             .unwrap();
         assert!(out.timed_out);
@@ -266,7 +283,9 @@ mod tests {
         let t2 = token.clone();
         let started = Instant::now();
         let task = tokio::spawn(async move {
-            TokioCommands.run(sh(&script), Arc::new(Collect::default()), &t2).await
+            TokioCommands
+                .run(sh(&script), Arc::new(Collect::default()), &t2)
+                .await
         });
         for _ in 0..100 {
             if pidfile.exists() && !std::fs::read_to_string(&pidfile).unwrap().trim().is_empty() {
@@ -277,8 +296,15 @@ mod tests {
         token.cancel();
         let out = task.await.unwrap().unwrap();
         assert!(out.cancelled && out.exit_code == EXIT_CANCELLED);
-        assert!(started.elapsed() < Duration::from_secs(10), "terminated within the grace period");
-        let grandchild: i32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "terminated within the grace period"
+        );
+        let grandchild: i32 = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
         tokio::time::sleep(Duration::from_millis(200)).await;
         let alive = nix::sys::signal::kill(nix::unistd::Pid::from_raw(grandchild), None).is_ok();
         assert!(!alive, "the grandchild must be gone");

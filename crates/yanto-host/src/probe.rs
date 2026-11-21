@@ -72,7 +72,10 @@ fn inode_owners() -> HashMap<u64, String> {
     };
     for entry in procs.flatten() {
         let name = entry.file_name();
-        let Some(pid) = name.to_str().filter(|n| n.bytes().all(|b| b.is_ascii_digit())) else {
+        let Some(pid) = name
+            .to_str()
+            .filter(|n| n.bytes().all(|b| b.is_ascii_digit()))
+        else {
             continue;
         };
         let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {

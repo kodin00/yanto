@@ -71,7 +71,10 @@ impl RegistryAuthPort for RunDirRegistryAuth {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
         if scope.is_empty() || scope.contains('/') || scope.contains("..") {
-            return Err(CoreError::new(yanto_core::ErrorKind::Internal, "unsafe auth scope"));
+            return Err(CoreError::new(
+                yanto_core::ErrorKind::Internal,
+                "unsafe auth scope",
+            ));
         }
         private_dir(&self.base)?;
         let dir = self.dir(scope);
@@ -125,9 +128,16 @@ mod tests {
         let port = RunDirRegistryAuth::new(base.path().join("run"));
         let dir = port.create("dep_1", &[entry()]).unwrap();
         let cfg = dir.join("config.json");
-        assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
-        assert_eq!(std::fs::metadata(&cfg).unwrap().permissions().mode() & 0o777, 0o600);
-        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
+        assert_eq!(
+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(&cfg).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
         let token = v["auths"]["ghcr.io"]["auth"].as_str().unwrap();
         assert_eq!(STANDARD.decode(token).unwrap(), b"bot:pw");
         assert!(v.get("credsStore").is_none() && v.as_object().unwrap().len() == 1);
