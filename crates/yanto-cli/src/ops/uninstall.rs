@@ -2,9 +2,11 @@
 //! unless `--purge`.
 
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 use yanto_core::Config;
+use yanto_host::fsutil::DirHandle;
 
 use super::host::Host;
 use super::install::{cron_file, run_systemctl};
@@ -145,9 +147,13 @@ pub fn run(
         remove_file_if(&cron_file(layout), &mut steps)?;
     }
     if let Some(home) = home_of(layout, &cfg.ssh.authorized_keys_user) {
-        let ak = layout.path(home.join(".ssh/authorized_keys"));
-        if let Ok(text) = fs::read_to_string(&ak) {
-            let (new, found) = strip_managed_block(&text);
+        // `~/.ssh` belongs to that user: go through an O_NOFOLLOW directory handle so a planted
+        // symlink cannot redirect this root write, and keep the file's owner.
+        let ssh = layout.path(home.join(".ssh"));
+        if let Ok(Some(dir)) = DirHandle::open(&ssh)
+            && let Ok(Some((bytes, meta))) = dir.read_file("authorized_keys")
+        {
+            let (new, found) = strip_managed_block(&String::from_utf8_lossy(&bytes));
             if found
                 && decide(
                     opts.managed,
@@ -155,8 +161,17 @@ pub fn run(
                     "Remove the Yanto-managed block from authorized_keys (keeping it would leave SSH access granted)?",
                 )?
             {
-                super::install::write_atomic(&ak, new.as_bytes(), 0o600)?;
-                steps.push(format!("removed managed block from {}", ak.display()));
+                dir.write_atomic(
+                    ".authorized_keys.yanto.tmp",
+                    "authorized_keys",
+                    new.as_bytes(),
+                    0o600,
+                    Some((meta.uid(), meta.gid())),
+                )?;
+                steps.push(format!(
+                    "removed managed block from {}",
+                    ssh.join("authorized_keys").display()
+                ));
             }
         }
     }
@@ -294,6 +309,32 @@ mod tests {
         assert!(l.path("/var/lib/yanto/yanto.db").exists());
         assert!(l.path("/etc/yanto/config.toml").exists());
         assert!(steps.last().unwrap().starts_with("kept"));
+    }
+
+    #[test]
+    fn a_symlinked_authorized_keys_is_not_followed() {
+        let (_d, l) = installed();
+        let ak = l.path("/home/deploy/.ssh/authorized_keys");
+        let elsewhere = l.path("/etc/elsewhere");
+        fs::rename(&ak, &elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &ak).unwrap();
+        let before = fs::read_to_string(&elsewhere).unwrap();
+        let opts = UninstallOpts {
+            yes: true,
+            ..Default::default()
+        };
+        let steps = run(
+            &FakeHost::default(),
+            &l,
+            Path::new("/etc/yanto/config.toml"),
+            false,
+            &opts,
+            None,
+        )
+        .unwrap();
+        assert_eq!(fs::read_to_string(&elsewhere).unwrap(), before);
+        assert!(fs::symlink_metadata(&ak).unwrap().file_type().is_symlink());
+        assert!(!steps.iter().any(|s| s.contains("managed block")));
     }
 
     #[test]

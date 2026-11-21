@@ -217,6 +217,21 @@ fn symlinks_and_loose_ssh_dirs_are_refused() {
     assert!(e.message.contains("StrictModes"), "{}", e.message);
     assert!(!fx.ak().exists());
 
+    // A planted temp/backup-name symlink (the user owns ~/.ssh) is never written through.
+    std::fs::set_permissions(fx.home.join(".ssh"), std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(fx.ak(), "ssh-ed25519 AAAA mine\n").unwrap();
+    for planted in [
+        ".authorized_keys.yanto.tmp",
+        ".authorized_keys.yanto.bak.tmp",
+    ] {
+        symlink(&target, fx.home.join(".ssh").join(planted)).unwrap();
+    }
+    fx.port
+        .update("tester", &mut set_block(vec![key(1, "a")]))
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "precious\n");
+    assert!(std::fs::read_to_string(fx.ak()).unwrap().contains("mine"));
+
     // `.ssh` itself a symlink.
     let fx = fixture();
     let real = fx.home.join("elsewhere");
