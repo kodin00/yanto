@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// Real ports for Host Daemons, Cloudflare, Traefik, frps and probes. `registry` is the Hosted
-/// Registry hook (`NoRegistry` until the registry exists). `owner` is the uid/gid given to files
+/// Registry hook (production passes `SettingsRegistryTarget`). `owner` is the uid/gid given to files
 /// Yanto writes (root in production).
 pub fn ingress_ports(
     config: &Config,
@@ -30,7 +30,8 @@ pub fn ingress_ports(
     }
 }
 
-/// Same as [`ingress_ports`] with no Hosted Registry (registry Hostnames are refused).
+/// Same as [`ingress_ports`] with no Hosted Registry (registry Hostnames are refused); for
+/// harnesses that never register one.
 pub fn ingress_ports_without_registry(
     config: &Config,
     command: Arc<dyn CommandPort>,

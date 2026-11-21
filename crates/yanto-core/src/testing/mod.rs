@@ -124,7 +124,7 @@ impl TestCore {
         let probe = Arc::new(FakeHostProbe::default());
         let registry_auth = Arc::new(FakeRegistryAuth::default());
         let registry_api = Arc::new(FakeRegistryApi::default());
-        let ingress = ingress::IngressFakes::new(&config.ingress.traefik.dynamic_dir);
+        let ingress = ingress::IngressFakes::new(&config.ingress.traefik.dynamic_dir, &db);
         let services = Services::new(ServiceDeps {
             db: db.clone(),
             config: &config,

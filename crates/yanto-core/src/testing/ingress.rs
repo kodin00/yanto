@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
+use crate::db::Db;
 use crate::error::CoreError;
 use crate::ports::*;
 use crate::secrets::Secret;
@@ -612,19 +613,34 @@ impl IngressProbePort for FakeIngressProbe {
     }
 }
 
-#[derive(Default)]
-pub struct FakeRegistryTarget(Mutex<Option<u16>>);
+/// Registry hook for tests: `enable(port)` forces `Some(port)`; otherwise it answers from the
+/// stored Hosted Registry settings, so enabling the registry through its service is seen too.
+pub struct FakeRegistryTarget {
+    forced: Mutex<Option<u16>>,
+    stored: Arc<dyn RegistryTarget>,
+}
 
 impl FakeRegistryTarget {
+    pub fn new(db: Db) -> Self {
+        Self {
+            forced: Mutex::new(None),
+            stored: Arc::new(crate::service::registry::SettingsRegistryTarget::new(db)),
+        }
+    }
+
     pub fn enable(&self, port: u16) {
-        *lock(&self.0) = Some(port);
+        *lock(&self.forced) = Some(port);
     }
 }
 
 #[async_trait]
 impl RegistryTarget for FakeRegistryTarget {
     async fn listen_port(&self) -> Result<Option<u16>, CoreError> {
-        Ok(*lock(&self.0))
+        let forced = *lock(&self.forced);
+        match forced {
+            Some(p) => Ok(Some(p)),
+            None => self.stored.listen_port().await,
+        }
     }
 }
 
@@ -640,7 +656,7 @@ pub struct IngressFakes {
 }
 
 impl IngressFakes {
-    pub fn new(dynamic_dir: &Path) -> Self {
+    pub fn new(dynamic_dir: &Path, db: &Db) -> Self {
         Self {
             systemd: Arc::default(),
             cloudflare: Arc::default(),
@@ -648,7 +664,7 @@ impl IngressFakes {
             frp_files: Arc::default(),
             frp_dashboard: Arc::default(),
             probe: Arc::default(),
-            registry: Arc::default(),
+            registry: Arc::new(FakeRegistryTarget::new(db.clone())),
         }
     }
 

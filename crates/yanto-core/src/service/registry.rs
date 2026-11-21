@@ -90,6 +90,33 @@ const PAGE_MAX: u32 = 200;
 const SIBLING_SCAN_MAX: usize = 5000;
 const GC_OUTPUT_MAX: usize = 256 * 1024;
 
+/// [`crate::ports::RegistryTarget`] over the stored Hosted Registry settings (the M7 hook):
+/// `Some(listen_port)` while the registry is enabled, `None` otherwise.
+#[derive(Debug, Clone)]
+pub struct SettingsRegistryTarget {
+    db: crate::db::Db,
+}
+
+impl SettingsRegistryTarget {
+    pub fn new(db: crate::db::Db) -> Self {
+        Self { db }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::ports::RegistryTarget for SettingsRegistryTarget {
+    async fn listen_port(&self) -> Result<Option<u16>, CoreError> {
+        let mut conn = self.db.reader().acquire().await.map_err(db_err)?;
+        let s = repo::settings(&mut conn).await?;
+        if !s.enabled {
+            return Ok(None);
+        }
+        Ok(Some(
+            u16::try_from(s.listen_port).unwrap_or(hr::DEFAULT_PORT),
+        ))
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct EnableInput {
     /// Loopback port to publish; keeps the stored value (default 5000) when `None`.

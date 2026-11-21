@@ -60,13 +60,15 @@ pub async fn open(config: Config) -> anyhow::Result<Runtime> {
             Arc::new(yanto_host::HttpRegistryApi::new()),
         ),
         host_mgmt: host_ports(&config),
-        // TODO(M6-merge): pass the Hosted Registry target instead of `NoRegistry`.
-        ingress: yanto_host::ingress_ports_without_registry(
+        ingress: yanto_host::ingress_ports(
             &config,
             Arc::new(TokioCommands),
             Some((
                 rustix::process::geteuid().as_raw(),
                 rustix::process::getegid().as_raw(),
+            )),
+            Arc::new(yanto_core::service::registry::SettingsRegistryTarget::new(
+                db.clone(),
             )),
         ),
         host: HostPorts {

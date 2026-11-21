@@ -693,3 +693,66 @@ async fn pulling_from_a_disabled_hosted_registry_fails_with_a_hint() {
     assert!(log.contains("Hosted Registry, which is disabled"), "{log}");
     assert!(core.registry_auth.created().is_empty());
 }
+
+#[tokio::test]
+async fn registry_hostname_follows_the_stored_registry_settings() {
+    use crate::service::hostnames::{HostnameInput, TargetInput};
+    let core = TestCore::new().await;
+    core.enable_traefik();
+    let input = HostnameInput {
+        target: TargetInput::Registry,
+        hostname: "registry.example.com".into(),
+        ingress_provider: "traefik".into(),
+        tunnel_id: None,
+        zone_id: None,
+        manage_dns: false,
+    };
+    // Disabled registry: no target, so creation is refused.
+    assert!(matches!(
+        kind(core.services.hostnames.create(&cli(), &input).await),
+        ErrorKind::Validation(_)
+    ));
+
+    core.commands
+        .on("image inspect", Reply::stdout(format!(r#"["{PINNED}"]"#)));
+    core.services
+        .registry
+        .enable(
+            &cli(),
+            &EnableInput {
+                listen_port: Some(5055),
+            },
+        )
+        .await
+        .expect("enable");
+    let h = core
+        .services
+        .hostnames
+        .create(&cli(), &input)
+        .await
+        .expect("registry Hostname")
+        .hostname;
+    assert_eq!(h.target_kind, "registry");
+    assert!(
+        core.ingress
+            .traefik
+            .current()
+            .unwrap()
+            .contains("http://127.0.0.1:5055")
+    );
+
+    // Once the registry is disabled again there is no target for a new registry Hostname.
+    core.services
+        .registry
+        .disable(&cli(), None)
+        .await
+        .expect("disable");
+    let again = HostnameInput {
+        hostname: "registry2.example.com".into(),
+        ..input
+    };
+    assert!(matches!(
+        kind(core.services.hostnames.create(&cli(), &again).await),
+        ErrorKind::Validation(_)
+    ));
+}

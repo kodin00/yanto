@@ -258,15 +258,16 @@ pub trait IngressProbePort: Send + Sync + 'static {
 
 // ---- hosted registry hook (M6) ------------------------------------------------------------
 
-/// What a Hostname with `target_kind = registry` points at. The M6 merge implements this over its
-/// registry settings and wires it in `ServiceDeps::ingress`; until then [`NoRegistry`] is used.
+/// What a Hostname with `target_kind = registry` points at. Production uses
+/// `service::registry::SettingsRegistryTarget` (the M6 registry settings), wired in
+/// `ServiceDeps::ingress`.
 #[async_trait]
 pub trait RegistryTarget: Send + Sync + 'static {
     /// The loopback listen port of the Hosted Registry when it is enabled, else `None`.
     async fn listen_port(&self) -> Result<Option<u16>, CoreError>;
 }
 
-/// The Hosted Registry does not exist (yet): registry Hostnames are refused.
+/// No Hosted Registry: registry Hostnames are refused (harnesses that do not register one).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoRegistry;
 
