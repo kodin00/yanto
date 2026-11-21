@@ -2,7 +2,9 @@
 
 mod audit;
 mod auth;
+mod deployments;
 mod matrix;
+mod projects;
 mod tokens;
 mod users;
 
