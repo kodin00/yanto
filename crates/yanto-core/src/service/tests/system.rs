@@ -1,9 +1,11 @@
+use std::sync::Arc;
+
 use super::{audit_count, kind};
 use crate::ErrorKind;
 use crate::ports::{DockerError, PruneKind, PruneOutcome, PrunePreviewRaw};
 use crate::service::system::{CONFIRM_CONTAINERS, CleanupSelection, HealthStatus};
-use crate::testing::TestCore;
 use crate::testing::docker::FakeDocker;
+use crate::testing::{Reply, TestCore};
 
 async fn owner(core: &TestCore) -> crate::actor::Actor {
     let o = core.setup_owner().await;
@@ -146,7 +148,9 @@ async fn health_reports_each_dependency_independently() {
     let o = owner(&core).await;
     let ok = core.services.system.health(&o).await.unwrap();
     assert_eq!(ok.status, HealthStatus::Ok);
-    assert_eq!(ok.checks.len(), 3);
+    assert_eq!(ok.checks.len(), 4);
+    let compose = ok.checks.iter().find(|c| c.name == "compose").unwrap();
+    assert!(compose.detail.starts_with("docker compose "), "{compose:?}");
 
     core.docker
         .fail_next(DockerError::Unavailable("socket gone".into()));
@@ -182,4 +186,77 @@ async fn system_operations_are_owner_only() {
     );
     // Health is readable by any authenticated actor.
     core.services.system.health(&m).await.unwrap();
+}
+
+#[tokio::test]
+async fn missing_compose_plugin_degrades_and_extra_checks_can_be_registered() {
+    use crate::service::system::{HealthCheck, HealthContributor};
+    struct Daemon(HealthStatus);
+    #[async_trait::async_trait]
+    impl HealthContributor for Daemon {
+        async fn checks(&self) -> Vec<HealthCheck> {
+            vec![HealthCheck {
+                name: "frps",
+                status: self.0,
+                detail: "scripted".into(),
+            }]
+        }
+    }
+    let core = TestCore::new().await;
+    let o = owner(&core).await;
+    core.commands
+        .on("docker compose version", Reply::fail(1, "unknown command"));
+    let r = core.services.system.health(&o).await.unwrap();
+    let compose = r.checks.iter().find(|c| c.name == "compose").unwrap();
+    assert_eq!(
+        (compose.status, compose.detail.as_str()),
+        (HealthStatus::Degraded, "docker compose: missing")
+    );
+    assert_eq!(r.status, HealthStatus::Degraded);
+
+    // A hook from another area adds its own line without touching the built-in probes.
+    core.commands
+        .on("docker compose version", Reply::stdout("v2.40.0\n"));
+    core.services
+        .system
+        .register_health(Arc::new(Daemon(HealthStatus::Ok)));
+    let r = core.services.system.health(&o).await.unwrap();
+    assert_eq!(r.status, HealthStatus::Ok);
+    assert!(r.checks.iter().any(|c| c.name == "frps"));
+    assert_eq!(
+        r.checks
+            .iter()
+            .find(|c| c.name == "compose")
+            .unwrap()
+            .detail,
+        "docker compose v2.40.0"
+    );
+}
+
+#[tokio::test]
+async fn app_logs_are_owner_only_capped_and_followable() {
+    use crate::applog::LogBuffer;
+    let core = TestCore::new().await;
+    let o = owner(&core).await;
+    let buf = Arc::new(LogBuffer::new(500));
+    let sys = core.services.system.clone().with_log_buffer(buf.clone());
+    for i in 0..600 {
+        buf.push(i, "INFO", "yanto", &format!("line {i} token=abc"));
+    }
+    let all = sys.logs(&o, None).await.unwrap();
+    assert_eq!(all.len(), 500);
+    assert_eq!(all[0].text, "line 100 token=[redacted]");
+    assert_eq!(sys.logs(&o, Some(2)).await.unwrap().len(), 2);
+    let (backlog, mut rx) = sys.logs_stream(&o, Some(1)).await.unwrap();
+    assert_eq!(backlog[0].text, "line 599 token=[redacted]");
+    buf.push(1000, "WARN", "yanto", "live");
+    assert_eq!(rx.recv().await.unwrap().text, "live");
+
+    let m = core.create_member("m", &[]).await;
+    let m = core.session_actor(&m).await;
+    assert_eq!(kind(sys.logs(&m, None).await), ErrorKind::Forbidden);
+    assert!(matches!(
+        sys.logs_stream(&m, None).await,
+        Err(e) if e.kind == ErrorKind::Forbidden
+    ));
 }

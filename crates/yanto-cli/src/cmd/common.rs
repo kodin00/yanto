@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use yanto_core::deploy::HostPorts;
 use yanto_core::password::Passwords;
-use yanto_core::ports::{HostMgmtPorts, SystemClock, UnavailableProjectBackups};
+use yanto_core::ports::{HostMgmtPorts, SystemClock};
 use yanto_core::secrets::Secrets;
 use yanto_core::service::{ServiceDeps, Services};
 use yanto_core::{Config, Db};
@@ -102,8 +102,7 @@ pub fn host_ports(config: &Config) -> HostMgmtPorts {
         cron_exec: Arc::new(HostCronExec::new(&h.run_dir)),
         authorized_keys: Arc::new(HostAuthorizedKeys::new(users)),
         backup_host: Arc::new(HostBackup::new(&h.run_dir)),
-        // TODO(M2-merge): the Docker-backed Project backup port replaces this.
-        project_backups: Arc::new(UnavailableProjectBackups),
+        project_backups: Arc::new(yanto_host::DockerProjectBackups::default()),
     }
 }
 

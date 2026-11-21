@@ -477,3 +477,81 @@ async fn delete_stops_containers_removes_files_and_detaches_audit() {
     assert_eq!(attached, 0, "audit rows are detached, not deleted");
     assert!(audit_count(&core, "project.create", "ok").await == 1);
 }
+
+#[tokio::test]
+async fn declared_databases_validate_names_and_keep_ids_across_edits() {
+    use crate::service::project_databases::DatabaseInput;
+    let core = TestCore::new().await;
+    let o = owner(&core).await;
+    let p = core
+        .services
+        .projects
+        .create(&o, &image_input("Blog", "nginx:alpine"))
+        .await
+        .unwrap()
+        .project;
+    let s = &core.services.projects;
+    let db = |service: &str| DatabaseInput {
+        engine: "postgres".into(),
+        compose_service: service.into(),
+        ..Default::default()
+    };
+    for bad in [
+        DatabaseInput {
+            engine: "oracle".into(),
+            ..db("db")
+        },
+        db("a b"),
+        db("a;rm"),
+        DatabaseInput {
+            database: Some("x'y".into()),
+            ..db("db")
+        },
+        DatabaseInput {
+            password_env: Some("hunter2 $(id)".into()),
+            ..db("db")
+        },
+        DatabaseInput {
+            user_env: Some("1BAD".into()),
+            ..db("db")
+        },
+    ] {
+        assert!(matches!(
+            kind(s.databases_set(&o, &p.id, &[bad]).await),
+            ErrorKind::Validation(_)
+        ));
+    }
+    assert!(matches!(
+        kind(s.databases_set(&o, &p.id, &[db("db"), db("db")]).await),
+        ErrorKind::Validation(_)
+    ));
+    let first = s.databases_set(&o, &p.id, &[db("db")]).await.unwrap();
+    let again = s
+        .databases_set(
+            &o,
+            &p.id,
+            &[
+                DatabaseInput {
+                    database: Some("app".into()),
+                    password_env: Some("DB_PASS".into()),
+                    ..db("db")
+                },
+                DatabaseInput {
+                    engine: "mysql".into(),
+                    ..db("cache")
+                },
+            ],
+        )
+        .await
+        .unwrap();
+    assert_eq!(again.len(), 2);
+    let kept = again.iter().find(|d| d.compose_service == "db").unwrap();
+    assert_eq!(kept.id, first[0].id, "the id survives an edit");
+    assert_eq!(kept.password_env.as_deref(), Some("DB_PASS"));
+    assert_eq!(s.databases_set(&o, &p.id, &[]).await.unwrap().len(), 0);
+    assert_eq!(audit_count(&core, "project.databases_set", "ok").await, 3);
+    assert_eq!(
+        kind(s.databases_list(&o, "prj_404").await),
+        ErrorKind::NotFound
+    );
+}

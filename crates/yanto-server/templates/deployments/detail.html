@@ -10,6 +10,13 @@
 {% if can_cancel && d.active %}
 <form method="post" action="/deployments/{{ d.id }}/cancel"><input type="hidden" name="_csrf" value="{{ ctx.csrf }}"><button class="danger" type="submit">Cancel</button></form>
 {% endif %}
+{% if can_reset %}
+<div class="card">
+  <p>The pull could not fast-forward: the checkout on this Host has diverged from the remote. Resetting discards local commits and changes in the checkout (<code>git reset --hard origin/&lt;branch&gt;</code>); the Project's config and volumes are not touched. The action is audited.</p>
+  <button class="danger" hx-post="/projects/{{ d.project_id }}/reset-checkout" hx-target="#reset-msg" hx-confirm="Discard local changes in the checkout and reset it to the remote branch?">Reset checkout to origin</button>
+  <span id="reset-msg"></span>
+</div>
+{% endif %}
 <h2>Log</h2>
 <pre id="log" class="log" data-stream="/deployments/{{ d.id }}/logs/stream" data-active="{{ d.active }}"></pre>
 <noscript><p><a href="/deployments/{{ d.id }}/logs">View the plain-text log</a></p></noscript>

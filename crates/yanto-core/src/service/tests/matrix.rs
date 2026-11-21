@@ -81,6 +81,8 @@ const GRID: &[(&str, &str)] = &[
     ),
     // M3 system. Owner-only; read-scope tokens of the Owner may read, only admin may prune.
     ("system_usage", "Y   N    Y   Y   Y   N   N   N   Y"),
+    ("system_logs", "Y   N    Y   Y   Y   N   N   N   Y"),
+    ("system_logs_stream", "Y   N    Y   Y   Y   N   N   N   Y"),
     (
         "system_cleanup_preview",
         "Y   N    Y   Y   Y   N   N   N   Y",
@@ -116,6 +118,7 @@ const GRID: &[(&str, &str)] = &[
     ),
     ("backup_delete", "Y   N    N   N   Y   N   N   N   Y"),
     ("backup_delete_yanto", "Y   N    N   N   Y   N   N   N   Y"),
+    ("backup_restore", "Y   N    N   N   Y   N   N   N   Y"),
     ("backup_prune", "Y   N    N   N   N   N   N   N   Y"),
     // M2. Member = alice with only `deploy` on prj_1. Project-scoped rows use prj_1 for the
     // spec check; the per-permission cells (404 without access, 403 with the wrong permission)
@@ -140,6 +143,14 @@ const GRID: &[(&str, &str)] = &[
     ("project_ports_list", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
     ("project_ports_set", "Y   N    N   Y   Y   N   N   N   Y"),
     (
+        "project_databases_list",
+        "Y   Y    Y   Y   Y   Y   Y   Y   Y",
+    ),
+    (
+        "project_databases_set",
+        "Y   N    N   Y   Y   N   N   N   Y",
+    ),
+    (
         "project_deploy_token_reveal",
         "Y   N    N   N   Y   N   N   N   Y",
     ),
@@ -155,6 +166,10 @@ const GRID: &[(&str, &str)] = &[
         "Y   Y    Y   Y   Y   Y   Y   Y   Y",
     ),
     ("project_rollback", "Y   Y    N   N   Y   N   N   Y   Y"),
+    (
+        "project_reset_checkout",
+        "Y   Y    N   N   Y   N   N   Y   Y",
+    ),
     ("deployments_list", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
     ("deployment_get", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
     ("deployment_logs", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
@@ -527,6 +542,8 @@ async fn invoke(f: &Fixture, op: &str, a: &Actor) -> Result<(), CoreError> {
         "container_restart" => s.containers.restart(a, &f.cid).await,
         "container_exec_session" => s.containers.exec_open(a, &f.cid, 80, 24).await.map(|_| ()),
         "system_usage" => s.system.usage(a).await.map(|_| ()),
+        "system_logs" => s.system.logs(a, None).await.map(|_| ()),
+        "system_logs_stream" => s.system.logs_stream(a, None).await.map(|_| ()),
         "system_cleanup_preview" => s.system.cleanup_preview(a).await.map(|_| ()),
         "system_cleanup" => s
             .system
@@ -581,6 +598,11 @@ async fn invoke(f: &Fixture, op: &str, a: &Actor) -> Result<(), CoreError> {
         "backup_download_yanto" => s.backups.download(a, &f.yanto_backup).await.map(|_| ()),
         "backup_delete" => s.backups.delete(a, &f.project_backup).await,
         "backup_delete_yanto" => s.backups.delete(a, &f.yanto_backup).await,
+        "backup_restore" => s
+            .backups
+            .restore(a, "bak_missing", Default::default())
+            .await
+            .map(|_| ()),
         "backup_prune" => s.backups.prune(a, Retention::default()).await.map(|_| ()),
         other if is_m6(other) => invoke_m6(f, other, a).await,
         other => match invoke_m2(f, other, a).await {
@@ -764,6 +786,8 @@ async fn invoke_m2(f: &Fixture, op: &str, a: &Actor) -> Option<Result<(), CoreEr
             .map(|_| ()),
         "project_ports_list" => s.projects.ports_list(a, p).await.map(|_| ()),
         "project_ports_set" => s.projects.ports_set(a, p, &[]).await.map(|_| ()),
+        "project_databases_list" => s.projects.databases_list(a, p).await.map(|_| ()),
+        "project_databases_set" => s.projects.databases_set(a, p, &[]).await.map(|_| ()),
         "project_deploy_token_reveal" => s.projects.deploy_token_reveal(a, p).await.map(|_| ()),
         "project_deploy_token_rotate" => s.projects.deploy_token_rotate(a, p).await.map(|_| ()),
         "project_stop" => s.projects.stop(a, p).await.map(|_| ()),
@@ -783,6 +807,7 @@ async fn invoke_m2(f: &Fixture, op: &str, a: &Actor) -> Option<Result<(), CoreEr
             .rollback(a, p, &RollbackRequest::default())
             .await
             .map(|_| ()),
+        "project_reset_checkout" => s.deployments.reset_checkout(a, p).await.map(|_| ()),
         "deployments_list" => s.deployments.list(a, &Default::default()).await.map(|_| ()),
         "deployment_get" => s.deployments.get(a, d).await.map(|_| ()),
         "deployment_logs" => s.deployments.logs(a, d, None).await.map(|_| ()),

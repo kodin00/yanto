@@ -1,6 +1,8 @@
 //! `/api/v1`: `health`, `system_usage`, `system_cleanup_preview`, `system_cleanup`.
 
-use axum::extract::State;
+use axum::extract::{Query, State};
+use axum::http::header;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
@@ -16,6 +18,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/health", get(health))
         .route("/system/usage", get(usage))
+        .route("/system/logs", get(logs))
         .route("/system/cleanup/preview", get(preview))
         .route("/system/cleanup", post(cleanup))
 }
@@ -67,4 +70,24 @@ async fn cleanup(
         confirm: b.confirm,
     };
     Ok(Json(s.services.system.cleanup(&a, &sel).await?))
+}
+
+#[derive(Debug, Deserialize)]
+struct LogsParams {
+    tail: Option<usize>,
+}
+
+/// Recent Yanto application log as text, `LEVEL target message` per line (Owner only).
+async fn logs(
+    State(s): State<AppState>,
+    ApiActor(a): ApiActor,
+    params: Result<Query<LogsParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<Response, ApiError> {
+    let Query(p) = params.map_err(|_| ApiError::bad_request("invalid query string"))?;
+    let lines = s.services.system.logs(&a, p.tail).await?;
+    let body: String = lines
+        .iter()
+        .map(|l| format!("{} {} {}\n", l.level, l.target, l.text))
+        .collect();
+    Ok(([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], body).into_response())
 }

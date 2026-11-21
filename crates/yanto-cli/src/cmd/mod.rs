@@ -1,6 +1,7 @@
 pub mod backup;
 pub mod common;
 pub mod cron_run;
+pub mod deploy;
 pub mod doctor;
 pub mod exec_as;
 pub mod install;

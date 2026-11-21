@@ -1,6 +1,7 @@
 //! Domain types, service layer, config and database for Yanto.
 
 pub mod actor;
+pub mod applog;
 pub mod authkeys;
 pub mod backup;
 pub mod config;

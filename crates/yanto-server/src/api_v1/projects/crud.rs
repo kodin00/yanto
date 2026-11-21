@@ -10,6 +10,7 @@ use serde_json::json;
 use yanto_core::CoreError;
 use yanto_core::deploy::env::VarChange;
 use yanto_core::secrets::Secret;
+use yanto_core::service::project_databases::{DatabaseDto, DatabaseInput};
 use yanto_core::service::projects::{
     ComposeView, DeleteOptions, EnvView, PortDto, PortInput, ProjectDto, ProjectInput,
     ProjectPatch, SourceInput, StackOutput,
@@ -32,6 +33,10 @@ pub fn routes() -> Router<AppState> {
         .route("/projects/{id}/env/content", get(env_content))
         .route("/env/preview", post(env_preview))
         .route("/projects/{id}/ports", get(ports_list).put(ports_set))
+        .route(
+            "/projects/{id}/databases",
+            get(databases_list).put(databases_set),
+        )
         .route("/projects/{id}/deploy-token/reveal", post(token_reveal))
         .route("/projects/{id}/deploy-token/rotate", post(token_rotate))
         .route("/projects/{id}/stop", post(stop))
@@ -386,4 +391,31 @@ async fn restart(
     Path(id): Path<String>,
 ) -> Result<Json<StackOutput>, ApiError> {
     Ok(Json(s.services.projects.restart(&a, &id).await?))
+}
+
+async fn databases_list(
+    State(s): State<AppState>,
+    ApiActor(a): ApiActor,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<DatabaseDto>>, ApiError> {
+    Ok(Json(s.services.projects.databases_list(&a, &id).await?))
+}
+
+#[derive(Debug, Deserialize)]
+struct DatabasesBody {
+    databases: Vec<DatabaseInput>,
+}
+
+async fn databases_set(
+    State(s): State<AppState>,
+    ApiActor(a): ApiActor,
+    Path(id): Path<String>,
+    ApiJson(b): ApiJson<DatabasesBody>,
+) -> Result<Json<Vec<DatabaseDto>>, ApiError> {
+    Ok(Json(
+        s.services
+            .projects
+            .databases_set(&a, &id, &b.databases)
+            .await?,
+    ))
 }

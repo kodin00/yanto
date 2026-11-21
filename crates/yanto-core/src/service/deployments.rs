@@ -41,6 +41,13 @@ pub const OP_PROJECT_ROLLBACK: OpSpec = OpSpec::new(
     Access::Project(Need::Permission(Permission::Deploy)),
     Scope::Admin,
 );
+/// `git reset --hard origin/<branch>` on the Project's checkout (04 1.6): discards local commits
+/// and changes on the Host, so it is a destructive (admin scope) deploy-permission action.
+pub const OP_PROJECT_RESET_CHECKOUT: OpSpec = OpSpec::new(
+    "project_reset_checkout",
+    Access::Project(Need::Permission(Permission::Deploy)),
+    Scope::Admin,
+);
 pub const OP_DEPLOYMENTS_LIST: OpSpec =
     OpSpec::new("deployments_list", Access::Authenticated, Scope::Read);
 pub const OP_DEPLOYMENT_GET: OpSpec =
@@ -78,6 +85,7 @@ pub const OPERATIONS: &[&OpSpec] = &[
     &OP_PROJECT_DEPLOY,
     &OP_PROJECT_ROLLBACK_PREVIEW,
     &OP_PROJECT_ROLLBACK,
+    &OP_PROJECT_RESET_CHECKOUT,
     &OP_DEPLOYMENTS_LIST,
     &OP_DEPLOYMENT_GET,
     &OP_DEPLOYMENT_LOGS,
@@ -111,10 +119,16 @@ pub struct DeploymentDto {
     pub queued_at: i64,
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
+    /// Failed at the fast-forward pull: the UI offers "Reset checkout to origin/<branch>".
+    pub reset_offered: bool,
 }
 
 impl From<DeploymentRow> for DeploymentDto {
     fn from(d: DeploymentRow) -> Self {
+        let reset_offered = d.status == "failed"
+            && d.error
+                .as_deref()
+                .is_some_and(|e| e.contains(crate::deploy::runner::PULL_STEP));
         Self {
             id: d.id,
             project_id: d.project_id,
@@ -133,6 +147,7 @@ impl From<DeploymentRow> for DeploymentDto {
             queued_at: d.queued_at,
             started_at: d.started_at,
             finished_at: d.finished_at,
+            reset_offered,
         }
     }
 }
@@ -143,6 +158,14 @@ pub struct DeployRequest {
     pub target_ref: Option<String>,
     /// `.env` text carried by this Deployment (also needs `secrets`).
     pub env: Option<Secret>,
+}
+
+/// The result of [`DeploymentService::reset_checkout`].
+#[derive(Debug, Clone, Serialize)]
+pub struct ResetOutcome {
+    pub branch: String,
+    pub from: String,
+    pub to: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -997,6 +1020,133 @@ impl DeploymentService {
     }
 
     /// Enqueue a rollback Deployment restoring the target's code/image and snapshotted config (D25).
+    /// `git reset --hard origin/<branch>` after a non-fast-forward pull. Refused while a
+    /// Deployment runs and for image Projects. Audited with the revisions before and after.
+    pub async fn reset_checkout(
+        &self,
+        actor: &Actor,
+        project_id: &str,
+    ) -> Result<ResetOutcome, CoreError> {
+        use crate::deploy::runner::{FETCH_TIMEOUT, REV_TIMEOUT, git_env_for, open_deploy_key};
+        actor.authorize(&OP_PROJECT_RESET_CHECKOUT, Some(project_id))?;
+        let project = {
+            let mut conn = self.ctx.db.reader().acquire().await.map_err(db_err)?;
+            if deployments::running_for(&mut conn, project_id)
+                .await?
+                .is_some()
+            {
+                return Err(CoreError::conflict(
+                    "a deployment is running; wait for it to finish",
+                ));
+            }
+            projects::get(&mut conn, project_id)
+                .await?
+                .ok_or_else(|| CoreError::not_found("project not found"))?
+        };
+        if !project.is_git() {
+            return Err(CoreError::validation(
+                "project",
+                "only Git projects have a checkout to reset",
+            ));
+        }
+        let branch = project.branch.clone().unwrap_or_else(|| "master".into());
+        validate::git_ref("branch", &branch)?;
+        let dir = files::project_dir(&self.eng.data_dir, &project.slug)?;
+        if !dir.join(".git").exists() {
+            return Err(CoreError::conflict(
+                "there is no checkout yet; deploy the project first",
+            ));
+        }
+        let key = open_deploy_key(&self.eng, &project)
+            .await
+            .map_err(|e| e.into_core())?;
+        files::ensure_dir(&self.eng.data_dir.join("ssh"), 0o700)?;
+        let env = git_env_for(&self.eng.data_dir, key.as_ref());
+        let run = |args: &[&str], timeout: Duration, capture: bool| {
+            let mut s = CommandSpec::new("git", args)
+                .cwd(dir.clone())
+                .timeout(timeout);
+            s.env.clone_from(&env);
+            if capture {
+                s = s.capture();
+            }
+            s
+        };
+        let tail = Arc::new(TailSink::default());
+        let exec = |spec: CommandSpec, what: &'static str| {
+            let tail = tail.clone();
+            let command = self.eng.host.command.clone();
+            async move {
+                let out = command
+                    .run(
+                        spec,
+                        tail.clone() as Arc<dyn LogSink>,
+                        &CancellationToken::new(),
+                    )
+                    .await?;
+                if !out.success() {
+                    return Err(CoreError::conflict(format!(
+                        "{what} failed (exit code {}): {}",
+                        out.exit_code,
+                        tail.text()
+                    )));
+                }
+                Ok(out.stdout.trim().to_owned())
+            }
+        };
+        let before = exec(
+            run(&["rev-parse", "HEAD"], REV_TIMEOUT, true),
+            "git rev-parse",
+        )
+        .await
+        .unwrap_or_default();
+        let outcome = async {
+            exec(
+                run(&["fetch", "origin", &branch], FETCH_TIMEOUT, false),
+                "git fetch",
+            )
+            .await?;
+            let remote = format!("origin/{branch}");
+            exec(
+                run(&["reset", "--hard", &remote], REV_TIMEOUT, false),
+                "git reset",
+            )
+            .await?;
+            exec(
+                run(&["rev-parse", "HEAD"], REV_TIMEOUT, true),
+                "git rev-parse",
+            )
+            .await
+        }
+        .await;
+        drop(key);
+        let mut tx = self.ctx.db.begin_write().await?;
+        let mut ev = AuditEvent::new("project.checkout_reset", "project")
+            .entity(project_id)
+            .project(project_id);
+        let meta = match &outcome {
+            Ok(after) => json!({ "branch": branch, "from": before, "to": after }),
+            Err(e) => {
+                ev.outcome = audit::Outcome::Error;
+                json!({ "branch": branch, "from": before, "error": e.message })
+            }
+        };
+        audit::write(
+            &self.ctx,
+            &mut tx,
+            &AuditActor::from_actor(actor),
+            &ev.meta(meta),
+        )
+        .await?;
+        tx.commit().await.map_err(db_err)?;
+        let after = outcome?;
+        Ok(ResetOutcome {
+            branch,
+            from: before,
+            to: after,
+        })
+    }
+
     pub async fn rollback(
         &self,
         actor: &Actor,

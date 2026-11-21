@@ -470,15 +470,15 @@ async fn yanto_backup_create_download_and_delete_over_rest() {
     let t = adm.get("/api/v1/backups/targets").await.value();
     assert_eq!(t[0]["kind"], "yanto_sqlite");
 
-    // Project kinds are not available until M2 merges (TODO(M2-merge)).
-    let p = adm
+    // Project kinds need an existing Project, and answer a list (one archive per volume).
+    let missing = adm
         .json(
             Method::POST,
             "/api/v1/backups",
             &json!({"kind": "project_volumes", "project_id": "prj_1"}),
         )
         .await;
-    assert_eq!(p.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(missing.status, StatusCode::NOT_FOUND);
     assert_eq!(
         adm.json(Method::POST, "/api/v1/backups", &json!({"kind": "r2"}))
             .await
@@ -591,6 +591,10 @@ async fn backups_dashboard_warns_streams_and_deletes() {
         .post_form("/backups", &[("kind", "project_volumes")])
         .await;
     assert_eq!(none.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let none = o
+        .post_form("/backups", &[("kind", "project"), ("target", "x")])
+        .await;
+    assert_eq!(none.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(
         o.htmx(Method::DELETE, &format!("/backups/{id}"), &[])
             .await
@@ -602,4 +606,110 @@ async fn backups_dashboard_warns_streams_and_deletes() {
     let mp = m.get("/backups").await;
     assert_eq!(mp.status, StatusCode::OK);
     assert!(!mp.text().contains("Create Yanto database backup"));
+}
+
+#[tokio::test]
+async fn project_backups_databases_and_restore_over_rest() {
+    let app = TestApp::new().await;
+    install_key(&app);
+    app.core.ensure_project("prj_1").await;
+    app.core.host.project_backups.set_volumes(&["prj-1_data"]);
+    let adm = admin(&app).await;
+
+    // Declare a database, then dump it and archive the volume.
+    let put = adm
+        .json(
+            Method::PUT,
+            "/api/v1/projects/prj_1/databases",
+            &json!({"databases": [{"engine": "postgres", "compose_service": "db", "database": "app"}]}),
+        )
+        .await;
+    assert_eq!(put.status, StatusCode::OK, "{}", put.text());
+    assert_eq!(put.value()[0]["compose_service"], "db");
+    let bad = adm
+        .json(
+            Method::PUT,
+            "/api/v1/projects/prj_1/databases",
+            &json!({"databases": [{"engine": "postgres", "compose_service": "db; id"}]}),
+        )
+        .await;
+    assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        adm.get("/api/v1/projects/prj_1/databases").await.value()[0]["database"],
+        "app"
+    );
+    let dump = adm
+        .json(
+            Method::POST,
+            "/api/v1/backups",
+            &json!({"kind": "project_postgres", "project_id": "prj_1", "target": "db"}),
+        )
+        .await;
+    assert_eq!(dump.status, StatusCode::CREATED, "{}", dump.text());
+    let dump_id = dump.value()[0]["id"].as_str().unwrap().to_owned();
+    let vols = adm
+        .json(
+            Method::POST,
+            "/api/v1/backups",
+            &json!({"kind": "volumes", "project_id": "prj_1"}),
+        )
+        .await;
+    assert_eq!(vols.status, StatusCode::CREATED, "{}", vols.text());
+    assert_eq!(vols.value().as_array().unwrap().len(), 1);
+    let targets = adm.get("/api/v1/backups/targets").await.value();
+    assert!(targets.as_array().unwrap().len() >= 3, "{targets}");
+
+    // Restore: the database needs the typed Project name, then runs through the port.
+    let rid = format!("/api/v1/backups/{dump_id}/restore");
+    assert_eq!(
+        adm.json(Method::POST, &rid, &json!({})).await.status,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let ok = adm
+        .json(Method::POST, &rid, &json!({"confirm_name": "prj_1"}))
+        .await;
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.text());
+    assert_eq!(ok.value()["pre_restore"]["trigger"], "pre_restore");
+    assert_eq!(app.core.host.project_backups.restores().len(), 1);
+}
+
+#[tokio::test]
+async fn dashboard_backs_up_and_restores_a_project() {
+    let app = TestApp::new().await;
+    install_key(&app);
+    app.core.ensure_project("prj_1").await;
+    app.core.host.project_backups.set_volumes(&["prj-1_data"]);
+    let o = app.owner_client().await;
+    let page = o.get("/backups").await.text();
+    assert!(page.contains("Back up a Project") && page.contains("prj-1_data"));
+    no_inline_script(&page);
+    let made = o
+        .post_form(
+            "/backups",
+            &[
+                ("kind", "project"),
+                ("target", "project_volumes|prj_1|prj-1_data"),
+            ],
+        )
+        .await;
+    assert_eq!(made.status, StatusCode::SEE_OTHER, "{}", made.text());
+    let page = o.get("/backups").await.text();
+    assert!(page.contains("-volumes.tar.zst") && page.contains("Restore"));
+    let id = app
+        .core
+        .services
+        .backups
+        .list(&yanto_core::actor::Actor::cli())
+        .await
+        .unwrap()[0]
+        .id
+        .clone();
+    let r = o
+        .post_form(&format!("/backups/{id}/restore"), &[("confirm_name", "")])
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(
+        r.text()
+            .contains("Restored into the new volume prj-1_data-restore-")
+    );
 }

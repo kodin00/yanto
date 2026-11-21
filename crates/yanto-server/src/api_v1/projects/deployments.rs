@@ -24,6 +24,7 @@ pub fn routes() -> Router<AppState> {
         .route("/projects/{id}/deploy", post(deploy))
         .route("/projects/{id}/rollback/preview", post(rollback_preview))
         .route("/projects/{id}/rollback", post(rollback))
+        .route("/projects/{id}/reset-checkout", post(reset_checkout))
         .route("/deployments", get(list))
         .route("/deployments/{id}", get(get_one))
         .route("/deployments/{id}/logs", get(logs))
@@ -99,6 +100,15 @@ async fn rollback(
     let req: RollbackRequest = super::optional_body::<RollbackBody>(&body)?.into();
     let out = s.services.deployments.rollback(&a, &id, &req).await?;
     Ok((StatusCode::ACCEPTED, Json(out)).into_response())
+}
+
+/// `git reset --hard origin/<branch>` after a non-fast-forward pull (audited, admin scope).
+async fn reset_checkout(
+    State(s): State<AppState>,
+    ApiActor(a): ApiActor,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    Ok(Json(s.services.deployments.reset_checkout(&a, &id).await?).into_response())
 }
 
 #[derive(Debug, Deserialize, Default)]

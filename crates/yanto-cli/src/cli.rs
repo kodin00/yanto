@@ -46,6 +46,8 @@ pub enum Command {
     Backup(crate::cmd::backup::BackupCommand),
     /// Restore the Yanto database from a Backup (service must be stopped)
     Restore(crate::cmd::backup::RestoreArgs),
+    /// Enqueue a Deployment of a Project (the service runs it)
+    Deploy(crate::cmd::deploy::DeployArgs),
     /// Run a Cron Entry (called by /etc/cron.d/yanto)
     CronRun {
         /// Cron Entry id

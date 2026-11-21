@@ -1,8 +1,6 @@
 -- Cron Entries and their run history (02 4.4, D11, D26). Prefixes: `crn` (entry), `crr` (run).
 --
--- `project_id` has no FK yet: `projects` is created by M2 (0200). TODO(M2-merge): a follow-up
--- migration in the 05xx range rebuilds this table with
--- `REFERENCES projects (id) ON DELETE SET NULL` after M2 merges.
+-- `project_id` gets its `REFERENCES projects (id) ON DELETE SET NULL` in 0550 (`projects` is M2's).
 CREATE TABLE cron_entries (
     id          TEXT    NOT NULL PRIMARY KEY,
     name        TEXT    NOT NULL UNIQUE,

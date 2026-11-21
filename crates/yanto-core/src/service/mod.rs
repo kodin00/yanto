@@ -21,6 +21,7 @@ pub mod deploy_keys;
 pub mod deployments;
 pub mod frps;
 pub mod hostnames;
+pub mod project_databases;
 pub mod projects;
 pub mod registry;
 pub mod registry_credentials;
@@ -190,19 +191,22 @@ impl Services {
             deps.ingress.clone(),
             inspector.clone(),
         );
+        let compose_command = deps.host.command.clone();
         let engine = Engine::new(ctx.clone(), deps.host, cfg);
         let projects: Arc<dyn containers::ContainerProjects> =
             Arc::new(containers::SlugProjects::new(ctx.clone()));
-        Self {
+        let container_service =
+            containers::ContainerService::new(ctx.clone(), deps.docker.clone(), projects.clone());
+        engine.on_containers_changed({
+            let c = container_service.clone();
+            move || c.invalidate_cache()
+        });
+        let services = Self {
             audit: audit::AuditService::new(ctx.clone()),
             auth: auth::AuthService::new(ctx.clone()),
             users: users::UserService::new(ctx.clone()),
             tokens: tokens::TokenService::new(ctx.clone()),
-            containers: containers::ContainerService::new(
-                ctx.clone(),
-                deps.docker.clone(),
-                projects.clone(),
-            ),
+            containers: container_service,
             system: system::SystemService::new(
                 ctx.clone(),
                 deps.docker,
@@ -244,7 +248,13 @@ impl Services {
             cloudflare,
             engine,
             ctx,
-        }
+        };
+        // Other areas add their own checks here (`system.register_health(...)`): Host Daemons
+        // (frps, cloudflared, Traefik) and the Hosted Registry arrive with their services.
+        services
+            .system
+            .register_health(Arc::new(system::ComposeHealth::new(compose_command)));
+        services
     }
 
     /// Shared context, for service modules in other crates' tests and the audit writer.
@@ -271,6 +281,7 @@ pub fn all_operations() -> Vec<&'static OpSpec> {
     v.extend(authorized_keys::OPERATIONS);
     v.extend(backups::OPERATIONS);
     v.extend(projects::OPERATIONS);
+    v.extend(project_databases::OPERATIONS);
     v.extend(deployments::OPERATIONS);
     v.extend(deploy_keys::OPERATIONS);
     v.extend(registry_credentials::OPERATIONS);

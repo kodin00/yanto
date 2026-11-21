@@ -107,10 +107,21 @@ async fn list_logs_exec_resize_and_lifecycle_against_a_real_daemon() {
     })
     .await;
     assert!(seen2.contains("40 120"), "resize applied: {seen2:?}");
-    io.input.shutdown().await.unwrap();
-    drop(io.input);
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    assert!(!d.exec_inspect(&io.exec_id).await.unwrap().running);
+    // Hang up. Dropping the attached connection alone does NOT end the exec on a real daemon
+    // (OQ-25: the process lingers), but an end-of-transmission byte at the prompt does, so that is
+    // what the service sends before it closes the connection.
+    io.input.write_all(b"\x04").await.unwrap();
+    let exec_id = io.exec_id.clone();
+    drop(io);
+    let mut ended = false;
+    for _ in 0..20 {
+        if !d.exec_inspect(&exec_id).await.unwrap().running {
+            ended = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    assert!(ended, "Ctrl-D ends an idle shell");
 
     // Lifecycle and prune preview.
     d.stop_container(&me.id, 1).await.unwrap();

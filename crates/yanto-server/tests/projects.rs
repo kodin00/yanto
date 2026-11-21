@@ -754,3 +754,106 @@ async fn github_webhook_over_http() {
         StatusCode::PAYLOAD_TOO_LARGE
     );
 }
+
+#[tokio::test]
+async fn failed_pull_offers_the_checkout_reset_in_the_dashboard_and_over_rest() {
+    use yanto_core::service::projects::{ProjectInput, SourceInput};
+    let app = TestApp::new().await;
+    let cli = yanto_core::actor::Actor::cli();
+    let p = app
+        .core
+        .services
+        .projects
+        .create(
+            &cli,
+            &ProjectInput {
+                name: "gitty".into(),
+                slug: Some("gitty".into()),
+                source: SourceInput::Git {
+                    url: "https://github.com/o/g.git".into(),
+                    branch: None,
+                },
+                compose_path: None,
+                compose_content: Some("services:\n  app:\n    image: nginx:alpine\n".into()),
+                env_file: None,
+                auto_start: None,
+                manual_deploy_enabled: None,
+                github_webhook_enabled: None,
+                deploy_key_id: None,
+                generate_deploy_key: false,
+                registry_credential_id: None,
+            },
+        )
+        .await
+        .unwrap()
+        .project;
+    let deploy = || async {
+        let d = app
+            .core
+            .services
+            .deployments
+            .deploy(&cli, &p.id, &Default::default())
+            .await
+            .unwrap()
+            .deployment
+            .id;
+        run_queue(&app).await;
+        d
+    };
+    deploy().await;
+    std::fs::create_dir_all(app.core.dir.path().join("projects/gitty/.git")).unwrap();
+    app.core.commands.on(
+        "pull --ff-only",
+        Reply::fail(128, "fatal: Not possible to fast-forward, aborting."),
+    );
+    let failed = deploy().await;
+
+    let c = app.owner_client().await;
+    let page = c.get(&format!("/deployments/{failed}")).await.text();
+    assert!(page.contains("Reset checkout to origin"), "{page}");
+    let done = c
+        .htmx(
+            Method::POST,
+            &format!("/projects/{}/reset-checkout", p.id),
+            &[],
+        )
+        .await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.text());
+    assert!(done.text().contains("Checkout reset to origin/master"));
+
+    // A Member with only view access sees neither the button nor the action.
+    let m = app.member_client("mia", &[(&p.id, &[])]).await;
+    assert!(
+        !m.get(&format!("/deployments/{failed}"))
+            .await
+            .text()
+            .contains("Reset checkout to origin")
+    );
+    assert_eq!(
+        m.htmx(
+            Method::POST,
+            &format!("/projects/{}/reset-checkout", p.id),
+            &[]
+        )
+        .await
+        .status,
+        StatusCode::FORBIDDEN
+    );
+
+    // REST: admin scope only.
+    let owner = app.owner_user().await;
+    let write = app
+        .client()
+        .with_bearer(&app.bearer(&owner, Scope::Write).await);
+    let admin = app
+        .client()
+        .with_bearer(&app.bearer(&owner, Scope::Admin).await);
+    let path = format!("/api/v1/projects/{}/reset-checkout", p.id);
+    assert_eq!(
+        write.json(Method::POST, &path, &json!({})).await.status,
+        StatusCode::FORBIDDEN
+    );
+    let ok = admin.json(Method::POST, &path, &json!({})).await;
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.text());
+    assert_eq!(ok.value()["branch"], "master");
+}

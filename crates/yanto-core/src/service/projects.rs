@@ -346,6 +346,10 @@ impl ProjectService {
         Self { ctx, eng }
     }
 
+    pub(super) fn ctx(&self) -> &Ctx {
+        &self.ctx
+    }
+
     async fn dto(
         &self,
         conn: &mut sqlx::SqliteConnection,
@@ -816,6 +820,7 @@ impl ProjectService {
         )
         .await?;
         tx.commit().await.map_err(db_err)?;
+        self.eng.containers_changed();
         if let Err(err) = files::remove_project_dir(&self.eng.data_dir, &row.slug) {
             tracing::warn!(error = %err, slug = %row.slug, "project rows deleted but the directory could not be removed");
         }
@@ -1180,6 +1185,7 @@ impl ProjectService {
                 &CancellationToken::new(),
             )
             .await?;
+        self.eng.containers_changed();
         let mut tx = self.ctx.db.begin_write().await?;
         let mut ev = AuditEvent::new(action, "project").entity(id).project(id);
         if out.exit_code != 0 {

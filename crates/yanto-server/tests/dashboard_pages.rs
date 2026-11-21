@@ -43,6 +43,15 @@ async fn owner_manages_members_through_htmx() {
     let detail = owner.get(&format!("/users/{id}")).await;
     assert_eq!(detail.status, StatusCode::OK);
     assert!(detail.text().contains("hx-put"));
+    // The add row is a picker of existing Projects, labelled by name and slug.
+    assert!(
+        detail.text().contains("<select name=\"new_project\"")
+            && detail
+                .text()
+                .contains("<option value=\"prj_1\">prj_1 (prj-1)</option>"),
+        "{}",
+        detail.text()
+    );
     let saved = owner
         .htmx(
             Method::PUT,
@@ -65,6 +74,10 @@ async fn owner_manages_members_through_htmx() {
         .unwrap();
     assert_eq!(user.grants[0].project_id, "prj_1");
     assert_eq!(user.grants[0].permissions, ["deploy", "secrets"]);
+    // Once granted, the Project leaves the picker and the row shows its name.
+    let again = owner.get(&format!("/users/{id}")).await.text();
+    assert!(!again.contains("<option value=\"prj_1\">"));
+    assert!(again.contains("prj_1 (prj-1)"));
 
     // Edit: keep the row, drop `secrets`; the checkbox form posts only what is checked.
     owner

@@ -23,10 +23,12 @@ tokio = { workspace = true, features = ["process", "io-util", "time", "rt", "mac
 tracing.workspace = true
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json", "http2", "query"] }
 serde = { workspace = true, features = ["derive"] }
+zstd = "0.14.4"
 
 [dev-dependencies]
 base64.workspace = true
 sqlx.workspace = true
+tar = "0.4.46"
 tempfile.workspace = true
 wiremock = "0.6.5"
 yanto-core = { workspace = true, features = ["testing"] }

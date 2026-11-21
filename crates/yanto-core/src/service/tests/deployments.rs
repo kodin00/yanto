@@ -1117,3 +1117,101 @@ async fn members_see_only_their_projects_deployments() {
     assert!(d.cancel(&ma, &da).await.is_ok());
     assert_eq!(kind(d.logs(&ma, &db, None).await), ErrorKind::NotFound);
 }
+
+#[tokio::test]
+async fn non_fast_forward_pull_offers_an_audited_checkout_reset() {
+    let c = ctx().await;
+    let d = &c.core.services.deployments;
+    let p = c
+        .core
+        .services
+        .projects
+        .create(&c.owner, &git_input("G", "https://github.com/o/g.git"))
+        .await
+        .unwrap()
+        .project;
+    // First deployment clones; the second finds a diverged checkout and fails at the pull.
+    let id = c.deploy(&p.id).await;
+    c.run_all().await;
+    assert!(
+        !c.status(&id).await.reset_offered,
+        "successful runs offer nothing"
+    );
+    std::fs::create_dir_all(c.core.config.paths.data_dir.join("projects/g/.git")).unwrap();
+    c.core.commands.on(
+        "pull --ff-only",
+        Reply::fail(128, "fatal: Not possible to fast-forward, aborting."),
+    );
+    let failed = c.deploy(&p.id).await;
+    c.run_all().await;
+    let dto = c.status(&failed).await;
+    assert_eq!(dto.status, "failed");
+    assert!(dto.reset_offered, "{:?}", dto.error);
+
+    // Reset: fetch the branch, hard-reset to it, report the revisions, write the audit row.
+    c.core.commands.clear();
+    c.core.commands.on(
+        "rev-parse HEAD",
+        Reply::stdout(format!("{}\n", "c".repeat(40))),
+    );
+    let out = d.reset_checkout(&c.owner, &p.id).await.unwrap();
+    assert_eq!(out.branch, "master");
+    assert_eq!(out.to, "c".repeat(40));
+    let calls = c.core.commands.calls();
+    let pos = |needle: &str| {
+        calls
+            .iter()
+            .position(|x| x.contains(needle))
+            .unwrap_or_else(|| panic!("missing {needle} in {calls:#?}"))
+    };
+    assert!(
+        pos("fetch origin master") < pos("reset --hard origin/master"),
+        "{calls:#?}"
+    );
+    assert_eq!(
+        audit_count(&c.core, "project.checkout_reset", "ok").await,
+        1
+    );
+    let meta: String = sqlx::query_scalar(
+        "SELECT metadata FROM audit_logs WHERE action = 'project.checkout_reset'",
+    )
+    .fetch_one(c.core.db.reader())
+    .await
+    .unwrap();
+    assert!(
+        meta.contains("\"from\"") && meta.contains("\"to\""),
+        "{meta}"
+    );
+
+    // A failing fetch is reported and audited as an error; nothing else runs.
+    c.core.commands.on(
+        "fetch origin",
+        Reply::fail(128, "fatal: could not read from remote"),
+    );
+    let e = d.reset_checkout(&c.owner, &p.id).await.unwrap_err();
+    assert!(e.message.contains("git fetch failed"), "{}", e.message);
+    assert_eq!(
+        audit_count(&c.core, "project.checkout_reset", "error").await,
+        1
+    );
+
+    // Image Projects have no checkout; Members need `deploy` on the Project.
+    let img = c.image_project("Img").await.project;
+    assert!(matches!(
+        kind(d.reset_checkout(&c.owner, &img.id).await),
+        ErrorKind::Validation(_)
+    ));
+    let viewer = c.core.create_member("viewer", &[(&p.id, &[])]).await;
+    let viewer = c.core.session_actor(&viewer).await;
+    assert_eq!(
+        kind(d.reset_checkout(&viewer, &p.id).await),
+        ErrorKind::Forbidden
+    );
+    let runner = c
+        .core
+        .create_member("runner", &[(&p.id, &[Permission::Deploy])])
+        .await;
+    let runner = c.core.session_actor(&runner).await;
+    c.core.commands.on("fetch origin", Reply::ok());
+    d.reset_checkout(&runner, &p.id).await.unwrap();
+}

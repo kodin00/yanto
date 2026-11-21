@@ -13,11 +13,12 @@ use super::Ctx;
 use super::audit::{self, AuditActor, AuditEvent};
 use super::containers::{ContainerProjects, map_docker_err};
 use crate::actor::{Access, Actor, OpSpec, Scope};
+use crate::applog::{AppLogLine, LogBuffer};
 use crate::db::repo::db_err;
 use crate::error::CoreError;
 use crate::ports::{
-    DiskUsage, DockerInfo, DockerPort, HostStatsPort, HostUsage, PruneCandidate, PruneKind,
-    PruneOutcome,
+    CancellationToken, CommandPort, CommandSpec, DiskUsage, DockerInfo, DockerPort, HostStatsPort,
+    HostUsage, NullSink, PruneCandidate, PruneKind, PruneOutcome,
 };
 
 pub const OP_SYSTEM_USAGE: OpSpec = OpSpec::new("system_usage", Access::Owner, Scope::Read);
@@ -25,8 +26,14 @@ pub const OP_SYSTEM_CLEANUP_PREVIEW: OpSpec =
     OpSpec::new("system_cleanup_preview", Access::Owner, Scope::Read);
 pub const OP_SYSTEM_CLEANUP: OpSpec = OpSpec::new("system_cleanup", Access::Owner, Scope::Admin);
 pub const OP_HEALTH: OpSpec = OpSpec::new("health", Access::Authenticated, Scope::Read);
+/// Recent Yanto application log (Owner only; the lines can describe other users' activity).
+pub const OP_SYSTEM_LOGS: OpSpec = OpSpec::new("system_logs", Access::Owner, Scope::Read);
+pub const OP_SYSTEM_LOGS_STREAM: OpSpec =
+    OpSpec::new("system_logs_stream", Access::Owner, Scope::Read);
 
 pub const OPERATIONS: &[&OpSpec] = &[
+    &OP_SYSTEM_LOGS,
+    &OP_SYSTEM_LOGS_STREAM,
     &OP_SYSTEM_USAGE,
     &OP_SYSTEM_CLEANUP_PREVIEW,
     &OP_SYSTEM_CLEANUP,
@@ -148,6 +155,51 @@ pub struct HealthReport {
     pub checks: Vec<HealthCheck>,
 }
 
+/// Extra health checks owned by other areas (Host Daemons: `frps`, `cloudflared`, Traefik; the
+/// Hosted Registry). Register one with [`SystemService::register_health`] in `Services::new`;
+/// its checks join the report and each runs under the same 3 s deadline.
+#[async_trait::async_trait]
+pub trait HealthContributor: Send + Sync + 'static {
+    async fn checks(&self) -> Vec<HealthCheck>;
+}
+
+/// `docker compose version` (the Compose v2 plugin; 04 1.6 "Compose plugin missing").
+pub struct ComposeHealth {
+    command: Arc<dyn CommandPort>,
+}
+
+impl ComposeHealth {
+    pub fn new(command: Arc<dyn CommandPort>) -> Self {
+        Self { command }
+    }
+}
+
+#[async_trait::async_trait]
+impl HealthContributor for ComposeHealth {
+    async fn checks(&self) -> Vec<HealthCheck> {
+        let spec = CommandSpec::new("docker", &["compose", "version", "--short"])
+            .capture()
+            .timeout(PROBE_TIMEOUT);
+        let out = self
+            .command
+            .run(spec, Arc::new(NullSink), &CancellationToken::new())
+            .await;
+        let c = match out {
+            Ok(o) if o.success() && !o.stdout.trim().is_empty() => check(
+                "compose",
+                HealthStatus::Ok,
+                format!("docker compose {}", o.stdout.trim()),
+            ),
+            Ok(o) if o.timed_out => check("compose", HealthStatus::Degraded, "timed out"),
+            // Deployments cannot run without the plugin, but the dashboard still works.
+            _ => check("compose", HealthStatus::Degraded, "docker compose: missing"),
+        };
+        vec![c]
+    }
+}
+
+type Contributors = Arc<std::sync::Mutex<Vec<Arc<dyn HealthContributor>>>>;
+
 #[derive(Clone)]
 pub struct SystemService {
     ctx: Ctx,
@@ -155,6 +207,8 @@ pub struct SystemService {
     host: Arc<dyn HostStatsPort>,
     projects: Arc<dyn ContainerProjects>,
     data_dir: PathBuf,
+    logs: Arc<LogBuffer>,
+    contributors: Contributors,
 }
 
 impl std::fmt::Debug for SystemService {
@@ -177,7 +231,53 @@ impl SystemService {
             host,
             projects,
             data_dir,
+            logs: LogBuffer::global(),
+            contributors: Contributors::default(),
         }
+    }
+
+    /// Read another buffer than the process-wide one (tests).
+    pub fn with_log_buffer(mut self, logs: Arc<LogBuffer>) -> Self {
+        self.logs = logs;
+        self
+    }
+
+    /// Add checks to `health`. Shared by every clone of the service.
+    pub fn register_health(&self, c: Arc<dyn HealthContributor>) {
+        self.contributors.lock().expect("contributors").push(c);
+    }
+
+    /// The newest `tail` lines of the application log (default and cap 500), oldest first.
+    pub async fn logs(
+        &self,
+        actor: &Actor,
+        tail: Option<usize>,
+    ) -> Result<Vec<AppLogLine>, CoreError> {
+        actor.authorize(&OP_SYSTEM_LOGS, None)?;
+        Ok(self.logs.tail(
+            tail.unwrap_or(crate::applog::CAPACITY)
+                .min(crate::applog::CAPACITY),
+        ))
+    }
+
+    /// The last `backlog` lines and a receiver for everything logged afterwards.
+    pub async fn logs_stream(
+        &self,
+        actor: &Actor,
+        backlog: Option<usize>,
+    ) -> Result<
+        (
+            Vec<AppLogLine>,
+            tokio::sync::broadcast::Receiver<AppLogLine>,
+        ),
+        CoreError,
+    > {
+        actor.authorize(&OP_SYSTEM_LOGS_STREAM, None)?;
+        Ok(self.logs.follow(
+            backlog
+                .unwrap_or(crate::applog::CAPACITY)
+                .min(crate::applog::CAPACITY),
+        ))
     }
 
     pub async fn usage(&self, actor: &Actor) -> Result<UsageReport, CoreError> {
@@ -333,7 +433,16 @@ impl SystemService {
         actor.authorize(&OP_HEALTH, None)?;
         let (db, docker, disk) =
             tokio::join!(self.probe_db(), self.probe_docker(), self.probe_disk());
-        let checks = vec![db, docker, disk];
+        let mut checks = vec![db, docker, disk];
+        let extra: Vec<Arc<dyn HealthContributor>> =
+            self.contributors.lock().expect("contributors").clone();
+        let results = futures_join_all(extra.into_iter().map(|c| async move {
+            tokio::time::timeout(PROBE_TIMEOUT, c.checks())
+                .await
+                .unwrap_or_else(|_| vec![check("extra", HealthStatus::Degraded, "timed out")])
+        }))
+        .await;
+        checks.extend(results.into_iter().flatten());
         let status = if checks
             .iter()
             .any(|c| c.name == "database" && c.status == HealthStatus::Down)
@@ -412,4 +521,20 @@ fn check(name: &'static str, status: HealthStatus, detail: impl Into<String>) ->
         status,
         detail: detail.into(),
     }
+}
+
+/// Run the futures concurrently and collect their outputs in order.
+async fn futures_join_all<F, T>(it: impl IntoIterator<Item = F>) -> Vec<T>
+where
+    F: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    let handles: Vec<_> = it.into_iter().map(tokio::spawn).collect();
+    let mut out = Vec::with_capacity(handles.len());
+    for h in handles {
+        if let Ok(v) = h.await {
+            out.push(v);
+        }
+    }
+    out
 }

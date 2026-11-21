@@ -643,6 +643,11 @@ impl ExecTicket {
         bytes_out: u64,
         reason: &str,
     ) {
+        // Dropping the connection does not hang up a TTY exec on a real daemon (the process
+        // lingers, OQ-25); Ctrl-D ends an idle shell, so ask it to leave first.
+        if reason != "exited" {
+            let _ = input.write_all(&[0x04]).await;
+        }
         let _ = input.shutdown().await;
         drop(input);
         let state = self.svc.docker.exec_inspect(&self.exec_id).await.ok();

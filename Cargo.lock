@@ -4322,11 +4322,13 @@ dependencies = [
  "sha2 0.11.1",
  "sqlx",
  "sysinfo",
+ "tar",
  "tempfile",
  "tokio",
  "tracing",
  "wiremock",
  "yanto-core",
+ "zstd",
 ]
 
 [[package]]

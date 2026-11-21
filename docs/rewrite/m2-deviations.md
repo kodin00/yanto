@@ -20,12 +20,13 @@ Recorded by M2 in the style of [08-conventions](08-conventions.md) section 9. Be
 
 ## Not done in M2
 
-- The audited "Reset checkout to origin/<branch>" action offered after a non-fast-forward pull (04 1.6) and `yanto deploy` on the CLI.
-- Project `access`, `hostnames`, `databases` and `backups` tabs (other milestones). The Users page still takes a Project id as text.
-- Registry login probe on credential save (04 4.7, "reported but not blocking") and Hosted Registry credentials (M6).
+Done afterwards (08-conventions section 13): the audited "Reset checkout" action, `yanto deploy`, the Project picker on the Users page, the `databases` section and the Backups form for Projects. Still open:
+
+- Project `access`, `hostnames` and `backups` *tabs* (the Project page has sections for ports and databases; backups live on `/backups`; hostnames belong to M7).
+- Registry login probe on credential save (04 4.7, "reported but not blocking"): needs an HTTP client port and the Bearer challenge flow; left for the Hosted Registry work (M6) that needs the same client. Hosted Registry credentials are M6.
 - Checks that a declared port differs from `frps` ports and the Hosted Registry port; running listeners cover them while those services are up.
 
 ## Unverified
 
-- An end-to-end run against a real Docker daemon: `crates/yanto-host/tests/docker_smoke.rs` (`#[ignore]`) was written but could not be completed because the daemon was not running when M2 was built.
+- ~~An end-to-end run against a real Docker daemon~~: `crates/yanto-host/tests/docker_smoke.rs` (`#[ignore]`) now passes against Docker 29 (OrbStack) with Compose v5.
 - `docker compose config --format json` output shape and `--ignore-buildable` support on the Compose v2 minimum version (OQ-22); `cli-plugins` discovery under a temporary `DOCKER_CONFIG` relies on the `cli-plugins` symlink.
