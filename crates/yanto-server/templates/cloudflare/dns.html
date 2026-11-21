@@ -1,0 +1,73 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>DNS</h1>
+<p class="muted">Records of a Cloudflare zone. Records bound to a Hostname are managed there and cannot be changed here.</p>
+{% if let Some(e) = error %}<p class="error" role="alert">{{ e }}</p>{% endif %}
+
+<form method="get" action="/dns" class="inline">
+  <label>Client
+    <select name="client_id">{% for c in clients %}<option value="{{ c.id }}"{% if c.id == client_id %} selected{% endif %}>{{ c.name }}</option>{% endfor %}</select>
+  </label>
+  <label>Zone
+    <select name="zone_id">{% for z in zones %}<option value="{{ z.id }}"{% if z.selected %} selected{% endif %}>{{ z.name }}</option>{% endfor %}</select>
+  </label>
+  <button type="submit">Show</button>
+  <button type="submit" name="refresh" value="1">Refresh from Cloudflare</button>
+</form>
+
+{% if !zone_id.is_empty() %}
+<table>
+  <thead><tr><th>Type</th><th>Name</th><th>Content</th><th>TTL</th><th>Proxied</th><th></th></tr></thead>
+  <tbody>
+  {% for r in records %}
+    <tr id="rec-{{ r.id }}">
+      <td>{{ r.record_type }}</td><td><code>{{ r.name }}</code></td><td><code>{{ r.content }}</code></td><td>{{ r.ttl }}</td>
+      <td>{% if r.proxied %}yes{% else %}no{% endif %}</td>
+      <td class="actions">
+        {% if r.managed %}<span class="badge active">managed by a Hostname</span>{% else %}
+        <details><summary>Edit</summary>
+          <form hx-put="/dns/{{ r.id }}" class="stack">
+            <input type="hidden" name="client_id" value="{{ client_id }}">
+            <input type="hidden" name="zone_id" value="{{ zone_id }}">
+            <label>Type <input name="type" value="{{ r.record_type }}" size="6"></label>
+            <label>Name <input name="name" value="{{ r.name }}"></label>
+            <label>Content <input name="content" value="{{ r.content }}"></label>
+            <label>TTL <input name="ttl" value="{{ r.ttl }}" size="6"></label>
+            <label>Priority <input name="priority" value="{{ r.priority }}" size="6"></label>
+            <label><input type="checkbox" name="proxied" value="1"{% if r.proxied %} checked{% endif %}> Proxied</label>
+            <label>Comment <input name="comment" value="{{ r.comment }}"></label>
+            <button type="submit">Save</button>
+          </form>
+        </details>
+        <button class="danger" hx-delete="/dns/{{ r.id }}?client_id={{ client_id }}&zone_id={{ zone_id }}" hx-target="closest tr" hx-swap="outerHTML" hx-confirm="Delete {{ r.name }} ({{ r.record_type }})?">Delete</button>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if records.is_empty() %}<p class="muted">No records.</p>{% endif %}
+
+<section class="card">
+  <h2>New record</h2>
+  <form method="post" action="/dns" class="stack">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <input type="hidden" name="client_id" value="{{ client_id }}">
+    <input type="hidden" name="zone_id" value="{{ zone_id }}">
+    <label>Type
+      <select name="type"><option>A</option><option>AAAA</option><option>CNAME</option><option>TXT</option><option>MX</option><option>NS</option></select>
+    </label>
+    <label>Name <input name="name" placeholder="www.example.com" required></label>
+    <label>Content <input name="content" required></label>
+    <label>TTL <input name="ttl" value="auto" size="6"></label>
+    <label>Priority (MX) <input name="priority" size="6"></label>
+    <label><input type="checkbox" name="proxied" value="1"> Proxied (A, AAAA, CNAME)</label>
+    <label>Comment <input name="comment"></label>
+    <button type="submit">Create</button>
+  </form>
+</section>
+{% else %}
+<p class="muted">Add a Cloudflare client first (<a href="/cloudflare">Cloudflare</a>).</p>
+{% endif %}
+{% endblock %}

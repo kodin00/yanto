@@ -1,0 +1,38 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<p><a href="/hostnames">&larr; Hostnames</a></p>
+<h1>Traefik</h1>
+<p class="muted">Traefik is a Host Daemon you install and run. Yanto only checks it and writes one dynamic file, <code>{{ dynamic_dir }}/yanto.yml</code>; it never edits your static configuration and never reads <code>acme.json</code>.</p>
+
+<section class="card">
+  <h2>Status</h2>
+  <p>Daemon: <strong>{{ daemon_state }}</strong>{% if !version.is_empty() %} <span class="muted">{{ version }}</span>{% endif %}</p>
+  {% if !installed %}
+  <ul>{% for i in instructions %}<li>{{ i }}</li>{% endfor %}</ul>
+  {% endif %}
+  <p>Dynamic directory: <code>{{ dynamic_dir }}</code> ({% if dir_exists %}exists{% else %}missing{% endif %}, {% if dir_writable %}writable{% else %}not writable{% endif %})</p>
+  <p>Provider: {% if ready %}<span class="badge pass">ready</span>{% else %}<span class="badge fail">not ready</span> {{ reason }}{% endif %}</p>
+  <p>Generated file: {{ file_state }} &middot; {{ hostnames }} Hostname(s)</p>
+  {% if watch_off %}<p class="error" role="alert">The file provider does not watch: restart Traefik after each change.</p>
+  <form hx-post="/daemons/traefik/restart"><input type="hidden" name="confirm" value="true"><button type="submit" class="danger">Restart Traefik</button></form>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Static configuration checklist</h2>
+  <table>
+    <tbody>
+    {% for c in checklist %}
+      <tr><td>{{ c.name }}</td><td><span class="badge {{ c.status }}">{{ c.status }}</span></td><td>{{ c.detail }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">"unverifiable" means the static config could not be read (flags or environment only); it is not a failure.</p>
+</section>
+
+<section class="card">
+  <h2>What your static configuration needs</h2>
+  <p class="muted">Ports 80 and 443 must be reachable, and Let's Encrypt's HTTP challenge needs port 80. Redirecting HTTP to HTTPS is your choice at the <code>web</code> entry point.</p>
+  <pre><code>{{ prerequisites }}</code></pre>
+</section>
+{% endblock %}

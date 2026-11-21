@@ -1,0 +1,79 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>Cloudflare</h1>
+<p class="muted">Tunnels are remote-managed: Yanto creates them and pushes the ingress list through the API, and your Host's <code>cloudflared</code> connects with the tunnel token. Yanto never installs or starts <code>cloudflared</code>. Manual edits of a tunnel's ingress in the Cloudflare dashboard are overwritten on the next publish.</p>
+
+{% if let Some(e) = error %}<p class="error" role="alert">{{ e }}</p>{% endif %}
+
+<section class="card">
+  <h2>Clients</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Account id</th><th>Tunnels</th><th></th></tr></thead>
+    <tbody>
+    {% for c in clients %}
+      <tr id="client-{{ c.id }}">
+        <td>{{ c.name }}</td><td><code>{{ c.account_id }}</code></td><td>{{ c.tunnels }}</td>
+        <td class="actions">
+          <button hx-get="/cloudflare/clients/{{ c.id }}/zones?refresh=1" hx-target="#zones-{{ c.id }}" hx-swap="innerHTML">Zones</button>
+          <button class="danger" hx-delete="/cloudflare/clients/{{ c.id }}" hx-target="closest tr" hx-swap="outerHTML" hx-confirm="Delete client {{ c.name }}?">Delete</button>
+        </td>
+      </tr>
+      <tr><td colspan="4" id="zones-{{ c.id }}"></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if clients.is_empty() %}<p class="muted">No clients yet.</p>{% endif %}
+
+  <h3>New client</h3>
+  <p class="muted">API token permissions needed (unverified, check Cloudflare's docs):</p>
+  <ul>{% for p in permissions %}<li>{{ p }}</li>{% endfor %}</ul>
+  <form method="post" action="/cloudflare/clients" class="stack">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <label>Name <input name="name" value="{{ form_name }}" maxlength="64" required></label>
+    <label>Account id <input name="account_id" value="{{ form_account }}" maxlength="32" required autocomplete="off"></label>
+    <label>API token <input type="password" name="api_token" autocomplete="off" required></label>
+    <div id="validate-result" aria-live="polite"></div>
+    <button type="submit">Validate and save</button>
+    <button type="button" hx-post="/cloudflare/clients/validate" hx-include="closest form" hx-target="#validate-result" hx-swap="innerHTML">Validate only</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Tunnels</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Status</th><th>Hostnames</th><th></th></tr></thead>
+    <tbody>
+    {% for t in tunnels %}
+      <tr id="tunnel-{{ t.id }}">
+        <td>{{ t.name }}{% if t.active %} <span class="badge active">active</span>{% endif %}</td>
+        <td><span class="badge {{ t.status }}">{{ t.status }}</span> <span class="muted">checked {{ t.checked }}</span></td>
+        <td>{{ t.hostnames }}</td>
+        <td class="actions">
+          <button hx-get="/cloudflare/tunnels/{{ t.id }}/status" hx-target="#tunnel-status-{{ t.id }}" hx-swap="innerHTML">Check</button>
+          {% if !t.active %}<button hx-post="/cloudflare/tunnels/{{ t.id }}/activate">Make active</button>{% endif %}
+          <form method="post" action="/cloudflare/tunnels/{{ t.id }}/token/reveal" class="inline">
+            <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+            <button type="submit">Reveal install command</button>
+          </form>
+          <button class="danger" hx-delete="/cloudflare/tunnels/{{ t.id }}" hx-target="closest tr" hx-swap="outerHTML" hx-confirm="Delete tunnel {{ t.name }}? Stop the Host cloudflared first.">Delete</button>
+        </td>
+      </tr>
+      <tr><td colspan="4" id="tunnel-status-{{ t.id }}"></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if tunnels.is_empty() %}<p class="muted">No tunnels yet.</p>{% endif %}
+
+  <h3>New tunnel</h3>
+  <form method="post" action="/cloudflare/tunnels" class="stack">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <label>Client
+      <select name="client_id">{% for c in clients %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select>
+    </label>
+    <label>Name <input name="name" maxlength="64" required placeholder="my-vps"></label>
+    <button type="submit">Create tunnel</button>
+  </form>
+  <p class="muted">After creating it, install <code>cloudflared</code> on the Host, reveal the install command and run it there as root. Only one tunnel is bound to the Host <code>cloudflared</code> at a time (the active one). See also <a href="/daemons">Host Daemons</a> and <a href="/dns">DNS</a>.</p>
+</section>
+{% endblock %}

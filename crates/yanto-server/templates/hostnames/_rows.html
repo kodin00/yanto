@@ -1,0 +1,20 @@
+<table>
+  <thead><tr><th>Hostname</th><th>Provider</th><th>Target</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr id="row-{{ r.id }}">
+      <td><code>{{ r.hostname }}</code>{% if !r.enabled %} <span class="badge disabled">disabled</span>{% endif %}</td>
+      <td>{{ r.provider }}</td>
+      <td>{{ r.target }}</td>
+      <td><span class="badge {{ r.status }}">{{ r.status }}</span>{% if !r.error.is_empty() %} <span class="muted">{{ r.error }}</span>{% endif %}<br><span class="muted">published {{ r.published }}</span></td>
+      <td class="actions">
+        <a href="/hostnames/diagnostics?id={{ r.id }}">Diagnose</a>
+        <button hx-post="/hostnames/{{ r.id }}/retry">Retry</button>
+        {% if r.enabled %}<button hx-post="/hostnames/{{ r.id }}/disable">Disable</button>{% else %}<button hx-post="/hostnames/{{ r.id }}/enable">Enable</button>{% endif %}
+        <button class="danger" hx-delete="/hostnames/{{ r.id }}" hx-target="closest tr" hx-swap="outerHTML" hx-confirm="Delete {{ r.hostname }}? It stops being served and its managed DNS record is removed.">Delete</button>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if rows.is_empty() %}<p class="muted">No Hostnames yet.</p>{% endif %}

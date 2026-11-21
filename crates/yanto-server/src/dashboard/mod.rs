@@ -15,10 +15,13 @@ mod account;
 mod audit;
 mod auth;
 mod backups;
+mod cloudflare;
 mod containers;
 mod cron;
 mod exec;
+mod frp;
 mod home;
+mod hostnames;
 mod projects;
 mod session;
 mod ssh;
@@ -49,6 +52,9 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .merge(ssh::routes())
         .merge(backups::routes())
         .merge(projects::routes())
+        .merge(hostnames::routes())
+        .merge(cloudflare::routes())
+        .merge(frp::routes())
         .route_layer(from_fn_with_state(state.clone(), session::require_session));
     Router::new()
         .merge(auth::public_routes())

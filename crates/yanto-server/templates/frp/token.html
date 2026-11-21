@@ -1,0 +1,10 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<p><a href="/frp">&larr; FRP</a></p>
+<h1>frps auth token</h1>
+<section class="card">
+  <p class="error"><strong>Anyone with this token can register tunnels on your frps.</strong> It is read from <code>frps.toml</code>, is not stored by Yanto and is shown only on this page.</p>
+  <pre><code>{{ token }}</code></pre>
+</section>
+{% endblock %}

@@ -25,6 +25,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/hostnames", get(hostnames_list).post(hostname_create))
         .route("/hostnames/diagnostics", get(hostnames_diagnostics))
+        .route("/hostnames/options", get(hostnames_options))
         .route("/hostnames/resync", post(hostnames_resync))
         .route("/hostnames/public-ip", post(public_ip_set))
         .route("/hostnames/{id}", axum::routing::delete(hostname_delete))
@@ -180,6 +181,13 @@ async fn hostnames_diagnostics(
             .await?,
     )
     .into_response())
+}
+
+async fn hostnames_options(
+    State(s): State<AppState>,
+    ApiActor(a): ApiActor,
+) -> Result<Response, ApiError> {
+    Ok(Json(s.services.hostnames.options(&a).await?).into_response())
 }
 
 async fn hostnames_resync(
