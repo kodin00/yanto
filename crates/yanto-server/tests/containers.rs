@@ -228,7 +228,7 @@ async fn rest_system_endpoints() {
 
     let h = read.get("/api/v1/health").await.value();
     assert_eq!(h["status"], "ok");
-    assert_eq!(h["checks"].as_array().unwrap().len(), 4);
+    assert_eq!(h["checks"].as_array().unwrap().len(), 7);
     let u = read.get("/api/v1/system/usage").await.value();
     assert_eq!(u["host"]["cpu_count"], 4);
     let p = read.get("/api/v1/system/cleanup/preview").await.value();

@@ -48,6 +48,8 @@ pub enum Command {
     Restore(crate::cmd::backup::RestoreArgs),
     /// Enqueue a Deployment of a Project (the service runs it)
     Deploy(crate::cmd::deploy::DeployArgs),
+    /// MCP server over stdio (API Token from YANTO_API_TOKEN_FILE or YANTO_API_TOKEN)
+    Mcp(crate::cmd::mcp::McpArgs),
     /// Run a Cron Entry (called by /etc/cron.d/yanto)
     CronRun {
         /// Cron Entry id
@@ -74,6 +76,14 @@ mod tests {
         assert!(matches!(cli.command, Command::SetupCode));
         let cli = Cli::try_parse_from(["yanto", "owner-reset"]).unwrap();
         assert!(matches!(cli.command, Command::OwnerReset));
+    }
+
+    #[test]
+    fn mcp_subcommand_parses_without_a_token_argument() {
+        let cli = Cli::try_parse_from(["yanto", "mcp"]).unwrap();
+        assert!(matches!(cli.command, Command::Mcp(_)));
+        // The token itself is never an argument.
+        assert!(Cli::try_parse_from(["yanto", "mcp", "--token", "x"]).is_err());
     }
 
     #[test]

@@ -65,7 +65,7 @@ Legend: **Port** = keep the behavior, **Change** = keep it reshaped, **New** = n
 - [x] **Change** — FRP: `frps` Host Daemon status, config, tunnel listing (frpc generation dropped)
 - [x] **Port** — Audit log
 - [ ] **Change** — Settings: runtime, Cloudflare, SSH, API Tokens (setup wizard moves partly into `yanto install`)
-- [ ] **Change** — MCP: same devops tool surface, rebuilt on `rmcp`, authenticated by API Tokens
+- [x] **Change** — MCP: same devops tool surface, rebuilt on `rmcp`, authenticated by API Tokens _(M1-M6 areas done in M8; M7 tools — Hostnames, Cloudflare, Traefik, frps, daemons — pending, see [m8-deviations](m8-deviations.md))_
 
 ### New
 

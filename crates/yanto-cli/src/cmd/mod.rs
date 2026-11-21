@@ -5,6 +5,7 @@ pub mod deploy;
 pub mod doctor;
 pub mod exec_as;
 pub mod install;
+pub mod mcp;
 pub mod owner_reset;
 pub mod self_update;
 pub mod serve;
