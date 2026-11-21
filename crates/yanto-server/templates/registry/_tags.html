@@ -1,0 +1,17 @@
+<div hx-get="/registry/repos/{{ repo_enc }}/tags" hx-trigger="registry-changed from:body" hx-target="this" hx-swap="outerHTML">
+<h3>{{ repo }}</h3>
+<table>
+  <thead><tr><th>Tag</th><th>Digest</th><th>Size</th><th>Type</th><th></th></tr></thead>
+  <tbody>
+  {% for t in tags %}
+    <tr>
+      <td><code>{{ image_host }}/{{ repo }}:{{ t.tag }}</code></td>
+      <td title="{{ t.digest }}"><code>{{ t.short_digest }}</code></td>
+      <td>{{ t.size }}</td><td>{{ t.kind }}</td>
+      <td><button class="danger" hx-get="/registry/repos/{{ repo_enc }}/tags/{{ t.tag_enc }}" hx-target="#registry-confirm" hx-swap="innerHTML">Delete...</button></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if let Some(n) = next_enc %}<button hx-get="/registry/repos/{{ repo_enc }}/tags?last={{ n }}" hx-target="closest div" hx-swap="outerHTML">Next page</button>{% endif %}
+</div>

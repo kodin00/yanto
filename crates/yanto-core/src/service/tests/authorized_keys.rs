@@ -274,6 +274,7 @@ async fn list_reports_state_outside_keys_and_missing_user() {
             probe: core.probe.clone(),
             registry_auth: core.registry_auth.clone(),
         },
+        registry: crate::ports::RegistryDeps::new(core.registry_api.clone()),
     });
     let o = svc.authorized_keys.list(&a).await.unwrap();
     assert!(o.problem.is_some());

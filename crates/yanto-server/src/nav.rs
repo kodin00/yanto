@@ -34,6 +34,11 @@ pub const NAV: &[NavEntry] = &[
         view: Some(AppView::Ssh),
     },
     NavEntry {
+        label: "Registry",
+        href: "/registry",
+        view: Some(AppView::Registry),
+    },
+    NavEntry {
         label: "Registry credentials",
         href: "/registry-credentials",
         view: Some(AppView::Registry),

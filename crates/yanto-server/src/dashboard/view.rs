@@ -38,7 +38,7 @@ impl PageCtx {
                 active: if e.href == "/" {
                     path == "/"
                 } else {
-                    path.starts_with(e.href)
+                    path == e.href || path.starts_with(&format!("{}/", e.href))
                 },
             })
             .collect();

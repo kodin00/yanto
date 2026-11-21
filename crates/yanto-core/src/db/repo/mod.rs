@@ -15,6 +15,7 @@ pub mod cron;
 pub mod deploy_keys;
 pub mod deployments;
 pub mod projects;
+pub mod registry;
 pub mod registry_credentials;
 pub mod sessions;
 pub mod settings;

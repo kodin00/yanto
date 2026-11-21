@@ -1,0 +1,121 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>Registry</h1>
+<p class="muted">The Hosted Registry is an optional <code>registry:2</code> container that Yanto runs for you, bound to <code>127.0.0.1</code> only. It uses basic auth; every registry user can push, pull and delete every repository (there is no per-repository access control).</p>
+{% if let Some(e) = error %}<p class="error" role="alert">{{ e }}</p>{% endif %}
+{% if let Some(r) = revealed %}
+<section class="card" role="status">
+  <h2>Password for <code>{{ r.username }}</code></h2>
+  <p>Copy it now; it is stored only as a hash and is not shown again.</p>
+  <pre>{{ r.password }}</pre>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Status</h2>
+  <p><span class="badge {% if st.enabled %}active{% else %}disabled{% endif %}">{% if st.enabled %}enabled{% else %}disabled{% endif %}</span>
+     <span class="badge {% if health_ok %}ok{% else %}error{% endif %}">{{ health_label }}</span></p>
+  {% if st.gc_left_readonly %}
+  <div class="error" role="alert">A garbage collection was interrupted; the registry may be left read-only.
+    <form method="post" action="/registry/rerender" class="inline"><input type="hidden" name="_csrf" value="{{ ctx.csrf }}"><button type="submit">Restore normal mode</button></form></div>
+  {% endif %}
+  {% if auth_mismatch %}
+  <div class="error" role="alert">The registry rejected Yanto's internal credential (it still holds an older user file).
+    <form method="post" action="/registry/restart" class="inline"><input type="hidden" name="_csrf" value="{{ ctx.csrf }}"><button type="submit">Restart registry</button></form></div>
+  {% endif %}
+  <dl>
+    <dt>Address</dt><dd><code>{{ st.image_host }}</code> (loopback)</dd>
+    <dt>Container</dt><dd><code>{{ st.container_name }}</code>: {{ container_line }}</dd>
+    {% if let Some(d) = st.image_digest %}<dt>Image</dt><dd><code>{{ d }}</code></dd>{% endif %}
+    <dt>Stored images</dt><dd>{{ disk }}</dd>
+    <dt>Users</dt><dd>{{ st.users }}</dd>
+  </dl>
+  {% if st.enabled %}
+  <div class="inline">
+    <form method="post" action="/registry/restart"><input type="hidden" name="_csrf" value="{{ ctx.csrf }}"><button type="submit">Restart</button></form>
+    <form method="post" action="/registry/rerender"><input type="hidden" name="_csrf" value="{{ ctx.csrf }}"><button type="submit">Re-render config and users</button></form>
+  </div>
+  <form method="post" action="/registry/disable" class="stack">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <label>Delete stored images too? Type <code>{{ delete_phrase }}</code> to do so, leave empty to keep them
+      <input name="delete_data" autocomplete="off"></label>
+    <button type="submit" class="danger">Disable registry</button>
+  </form>
+  {% else %}
+  <form method="post" action="/registry/enable" class="stack">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <label>Loopback port <input name="listen_port" value="{{ st.listen_port }}" inputmode="numeric" size="6"></label>
+    <p class="muted">Pulls <code>registry:2</code> once and pins it by digest. Projects reference images as <code>127.0.0.1:&lt;port&gt;/...</code>, so changing the port later means updating those references.</p>
+    <button type="submit">Enable registry</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Users</h2>
+  <p class="muted">Used by <code>docker login</code> and <code>docker push</code>. Changing users restarts the registry (it reads the user file once at start), which briefly interrupts transfers in progress.</p>
+  <table>
+    <thead><tr><th>Username</th><th>Created</th><th></th></tr></thead>
+    <tbody>
+    {% for u in users %}
+      <tr>
+        <td>{{ u.username }}</td><td>{{ u.created }}</td>
+        <td>
+          <form hx-put="/registry/users/{{ u.id }}" hx-target="#toast" hx-swap="innerHTML" class="inline">
+            <label>New password (empty generates one) <input type="password" name="password" autocomplete="new-password"></label>
+            <button type="submit">Set password</button>
+          </form>
+          <button class="danger" hx-delete="/registry/users/{{ u.id }}" hx-confirm="Delete registry user {{ u.username }}? The registry restarts.">Delete</button>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="/registry/users" class="stack">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <label>Username <input name="username" value="{{ username_value }}" required maxlength="32" pattern="[a-z0-9._-]+" autocomplete="off"></label>
+    <label>Password (empty generates one, shown once) <input type="password" name="password" autocomplete="new-password"></label>
+    <button type="submit">Add user</button>
+  </form>
+</section>
+
+{% if st.enabled %}
+<section class="card">
+  <h2>Repositories</h2>
+  <div id="registry-repos" hx-get="/registry/repos" hx-trigger="load">Loading...</div>
+  <div id="registry-tags"></div>
+  <div id="registry-confirm"></div>
+</section>
+
+<section class="card">
+  <h2>Garbage collection</h2>
+  <p class="muted">Deleting a tag removes only its manifest; blobs stay on disk until garbage collection. During a collection the registry is restarted read-only: pulls keep working, pushes are rejected. Do not push during it.</p>
+  <form hx-post="/registry/gc/preview" hx-target="#gc-preview" class="inline">
+    <label><input type="checkbox" name="delete_untagged" value="1"> Also delete untagged manifests</label>
+    <button type="submit">Preview (dry run)</button>
+  </form>
+  <div id="gc-preview"></div>
+  <form hx-post="/registry/gc" hx-target="#gc-status" hx-swap="outerHTML" hx-confirm="Run garbage collection now? Pushes are rejected until it finishes." class="inline">
+    <label><input type="checkbox" name="delete_untagged" value="1"> Delete untagged manifests (older digests kept for rollbacks are lost)</label>
+    <button type="submit" class="danger">Run garbage collection</button>
+  </form>
+  {{ gc_html|safe }}
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Deploying from this registry</h2>
+  <p>Push an image, then create a Project whose image is:</p>
+  <pre>{{ st.image_host }}/&lt;repository&gt;:&lt;tag&gt;
+{{ st.image_host }}/&lt;repository&gt;@sha256:&lt;digest&gt;</pre>
+  <p>Prefer the digest form: any registry user can overwrite a tag. No login is needed on the Host; Yanto supplies its internal credential for pulls from <code>{{ st.image_host }}</code> (also for compose files in Git Projects that name it). The Docker daemon treats loopback registries as insecure by default, so plain HTTP works on the Host.</p>
+  <p>On the Host: <code>docker login {{ st.image_host }}</code>, <code>docker tag app {{ st.image_host }}/app:1</code>, <code>docker push {{ st.image_host }}/app:1</code>.</p>
+  <p><a href="/registry/remote-push">Pushing from another machine</a></p>
+  <form method="post" action="/registry/settings" class="inline">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <label>Public hostname (display only) <input name="public_host" value="{% if let Some(h) = st.public_host %}{{ h }}{% endif %}" placeholder="registry.example.com"></label>
+    <button type="submit">Save</button>
+  </form>
+</section>
+{% endblock %}

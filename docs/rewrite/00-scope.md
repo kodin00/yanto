@@ -69,7 +69,7 @@ Legend: **Port** = keep the behavior, **Change** = keep it reshaped, **New** = n
 
 ### New
 
-- [ ] Hosted Registry (`registry:2`): enable/disable, htpasswd users, repo/tag browse, tag delete, GC
+- [x] Hosted Registry (`registry:2`): enable/disable, htpasswd users, repo/tag browse, tag delete, GC
 - [x] Registry Credentials for pulling private external images
 - [x] Cron Entries (`/etc/cron.d/yanto`)
 - [x] Authorized Keys
