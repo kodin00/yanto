@@ -474,15 +474,17 @@ impl ContainerService {
         })))
     }
 
-    /// Open an interactive shell in a running container. Returns the attached TTY and a ticket the
-    /// adapter must `finish` when the session ends. Audited at start and end.
-    pub async fn exec_open(
+    /// Authorization and state checks for a terminal, without opening one (the dashboard page
+    /// uses it so a refusal shows before the WebSocket upgrade).
+    pub async fn exec_precheck(&self, actor: &Actor, id: &str) -> Result<ContainerInfo, CoreError> {
+        Ok(self.exec_authorize(actor, id).await?.0)
+    }
+
+    async fn exec_authorize(
         &self,
         actor: &Actor,
         id: &str,
-        cols: u16,
-        rows: u16,
-    ) -> Result<(ExecIo, ExecTicket), CoreError> {
+    ) -> Result<(ContainerInfo, Option<String>), CoreError> {
         actor.authorize(&OP_CONTAINER_EXEC_SESSION, None)?;
         let info = self.resolve(id).await?;
         let project = self
@@ -496,6 +498,19 @@ impl ContainerService {
         if !info.is_running() {
             return Err(CoreError::conflict("container is not running"));
         }
+        Ok((info, project))
+    }
+
+    /// Open an interactive shell in a running container. Returns the attached TTY and a ticket the
+    /// adapter must `finish` when the session ends. Audited at start and end.
+    pub async fn exec_open(
+        &self,
+        actor: &Actor,
+        id: &str,
+        cols: u16,
+        rows: u16,
+    ) -> Result<(ExecIo, ExecTicket), CoreError> {
+        let (info, project) = self.exec_authorize(actor, id).await?;
         let key = actor.user_id.clone().unwrap_or_else(|| actor.label.clone());
         let guard = self.acquire_session(&key)?;
         let io = self
