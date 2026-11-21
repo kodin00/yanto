@@ -40,6 +40,8 @@ pub async fn open(config: Config) -> anyhow::Result<Runtime> {
         clock: Arc::new(SystemClock),
         secrets: Arc::new(secrets),
         passwords: Passwords::default(),
+        docker: Arc::new(yanto_host::BollardDocker::new(&config.docker.socket)),
+        host_stats: Arc::new(yanto_host::SysinfoStats::new()),
     });
     Ok(Runtime {
         config,

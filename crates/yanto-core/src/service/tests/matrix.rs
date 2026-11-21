@@ -16,6 +16,7 @@ use crate::actor::{Actor, Permission, Scope};
 use crate::db::repo::users::UserStatus;
 use crate::error::CoreError;
 use crate::service::all_operations;
+use crate::service::system::CleanupSelection;
 use crate::service::users::GrantInput;
 use crate::testing::{TestCore, TestUser};
 
@@ -54,6 +55,32 @@ const GRID: &[(&str, &str)] = &[
     // Any authenticated actor, read scope.
     ("whoami", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
     ("audit_list", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    // M3 containers. The spec only checks scope and session-only rules; the per-container rule
+    // (Project grant, or Owner for containers outside any Project) lives in the service and is
+    // covered by `service/tests/containers.rs`. A Member passing here gets 404, never 403.
+    ("containers_list", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    ("container_get", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    ("container_logs", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
+    (
+        "container_logs_stream",
+        "Y   Y    Y   Y   Y   Y   Y   Y   Y",
+    ),
+    ("container_start", "Y   Y    N   Y   Y   N   Y   Y   Y"),
+    ("container_stop", "Y   Y    N   N   Y   N   N   Y   Y"),
+    ("container_restart", "Y   Y    N   N   Y   N   N   Y   Y"),
+    // Terminal: dashboard-only (D24), so no token ever passes.
+    (
+        "container_exec_session",
+        "Y   Y    N   N   N   N   N   N   Y",
+    ),
+    // M3 system. Owner-only; read-scope tokens of the Owner may read, only admin may prune.
+    ("system_usage", "Y   N    Y   Y   Y   N   N   N   Y"),
+    (
+        "system_cleanup_preview",
+        "Y   N    Y   Y   Y   N   N   N   Y",
+    ),
+    ("system_cleanup", "Y   N    N   N   Y   N   N   N   Y"),
+    ("health", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
 ];
 
 fn grid_row(name: &str) -> Vec<bool> {
@@ -86,6 +113,7 @@ struct Fixture {
     owner: TestUser,
     alice: TestUser,
     bob: TestUser,
+    cid: String,
 }
 
 async fn fixture() -> Fixture {
@@ -95,11 +123,13 @@ async fn fixture() -> Fixture {
         .create_member("alice", &[("prj_1", &[Permission::Deploy])])
         .await;
     let bob = core.create_member("bob", &[]).await;
+    let cid = core.docker.add_container("web", "running", &[]);
     Fixture {
         core,
         owner,
         alice,
         bob,
+        cid,
     }
 }
 
@@ -198,6 +228,22 @@ async fn invoke(f: &Fixture, op: &str, a: &Actor) -> Result<(), CoreError> {
         "user_delete" => s.users.delete(a, &f.bob.id).await,
         "whoami" => s.tokens.whoami(a).await.map(|_| ()),
         "audit_list" => s.audit.list(a, &Default::default()).await.map(|_| ()),
+        "containers_list" => s.containers.list(a).await.map(|_| ()),
+        "container_get" => s.containers.get(a, &f.cid).await.map(|_| ()),
+        "container_logs" => s.containers.logs(a, &f.cid, None).await.map(|_| ()),
+        "container_logs_stream" => s.containers.logs_stream(a, &f.cid, None).await.map(|_| ()),
+        "container_start" => s.containers.start(a, &f.cid).await,
+        "container_stop" => s.containers.stop(a, &f.cid).await,
+        "container_restart" => s.containers.restart(a, &f.cid).await,
+        "container_exec_session" => s.containers.exec_open(a, &f.cid, 80, 24).await.map(|_| ()),
+        "system_usage" => s.system.usage(a).await.map(|_| ()),
+        "system_cleanup_preview" => s.system.cleanup_preview(a).await.map(|_| ()),
+        "system_cleanup" => s
+            .system
+            .cleanup(a, &CleanupSelection::defaults())
+            .await
+            .map(|_| ()),
+        "health" => s.system.health(a).await.map(|_| ()),
         other => panic!("no invocation for {other}"),
     }
 }

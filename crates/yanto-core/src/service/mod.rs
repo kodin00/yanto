@@ -11,6 +11,8 @@
 
 pub mod audit;
 pub mod auth;
+pub mod containers;
+pub mod system;
 pub mod tokens;
 pub mod users;
 
@@ -27,7 +29,7 @@ use crate::db::repo::access;
 use crate::db::repo::users::UserRow;
 use crate::error::CoreError;
 use crate::password::Passwords;
-use crate::ports::Clock;
+use crate::ports::{Clock, DockerPort, HostStatsPort};
 use crate::ratelimit::FailureLimiter;
 use crate::secrets::Secrets;
 
@@ -56,6 +58,8 @@ pub struct ServiceDeps<'a> {
     pub clock: Arc<dyn Clock>,
     pub secrets: Arc<Secrets>,
     pub passwords: Passwords,
+    pub docker: Arc<dyn DockerPort>,
+    pub host_stats: Arc<dyn HostStatsPort>,
 }
 
 /// Shared, cheaply cloneable context held by every service.
@@ -112,6 +116,8 @@ pub struct Services {
     pub auth: auth::AuthService,
     pub users: users::UserService,
     pub tokens: tokens::TokenService,
+    pub containers: containers::ContainerService,
+    pub system: system::SystemService,
 }
 
 impl Services {
@@ -131,11 +137,25 @@ impl Services {
             base_url: base_url.into(),
             limits: Arc::new(Limits::new()),
         };
+        // M2 replaces `NoProjects` with the Project-slug mapping (08-conventions section 10).
+        let projects: Arc<dyn containers::ContainerProjects> = Arc::new(containers::NoProjects);
         Self {
             audit: audit::AuditService::new(ctx.clone()),
             auth: auth::AuthService::new(ctx.clone()),
             users: users::UserService::new(ctx.clone()),
             tokens: tokens::TokenService::new(ctx.clone()),
+            containers: containers::ContainerService::new(
+                ctx.clone(),
+                deps.docker.clone(),
+                projects.clone(),
+            ),
+            system: system::SystemService::new(
+                ctx.clone(),
+                deps.docker,
+                deps.host_stats,
+                projects,
+                cfg.paths.data_dir.clone(),
+            ),
             ctx,
         }
     }
@@ -153,6 +173,8 @@ pub fn all_operations() -> Vec<&'static OpSpec> {
     v.extend(auth::OPERATIONS);
     v.extend(users::OPERATIONS);
     v.extend(tokens::OPERATIONS);
+    v.extend(containers::OPERATIONS);
+    v.extend(system::OPERATIONS);
     v.push(&audit::OP_AUDIT_LIST);
     v
 }
@@ -179,6 +201,22 @@ pub(crate) async fn actor_for_user(
         ip: origin.ip.clone(),
         request_id: origin.request_id.clone(),
     })
+}
+
+/// `1.5 GiB` style size for health details and the dashboard.
+pub fn fmt_bytes(n: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut v = n as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < UNITS.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{n} B")
+    } else {
+        format!("{v:.1} {}", UNITS[i])
+    }
 }
 
 /// Key for IP-scoped limiters when the client address is unknown.

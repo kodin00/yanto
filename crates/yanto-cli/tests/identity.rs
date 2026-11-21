@@ -73,6 +73,8 @@ async fn setup_code_then_owner_reset() {
         clock: Arc::new(SystemClock),
         secrets: Arc::new(Secrets::ephemeral()),
         passwords: Passwords::cheap_for_tests(),
+        docker: Arc::new(yanto_core::testing::docker::FakeDocker::new()),
+        host_stats: Arc::new(yanto_core::testing::host_stats::FakeHostStats::new()),
     });
     let origin = Origin::new(Channel::Dashboard, None);
     assert!(
