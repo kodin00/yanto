@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, bail};
 use clap::{Args, Subcommand};
 use yanto_core::actor::{Actor, Channel};
-use yanto_core::backup::{self, Trigger, Verify};
+use yanto_core::backup::{self, BackupKind, Trigger, Verify};
 use yanto_core::service::backups::{BUSY_MESSAGE, Retention};
 use yanto_core::{ErrorKind, secrets};
 
@@ -46,14 +46,17 @@ pub enum BackupCommand {
         #[arg(short, long)]
         verbose: bool,
     },
-    /// Back up a Project's volumes or one declared database (needs Projects)
+    /// Back up a Project's named volumes or one declared database (04 7.5)
     Project {
         slug: String,
-        #[arg(long, conflicts_with = "db")]
+        /// Archive every named volume of the Project (one .tar.zst each)
+        #[arg(long, conflicts_with = "db", required_unless_present = "db")]
         volumes: bool,
+        /// Dump the declared database of this compose service
         #[arg(long, value_name = "SERVICE")]
         db: Option<String>,
-        #[arg(long)]
+        /// Stop the Project while archiving volumes (started again afterwards)
+        #[arg(long, requires = "volumes")]
         stop_project: bool,
         #[command(flatten)]
         retain: Retain,
@@ -145,11 +148,31 @@ pub fn run(config_path: &Path, cmd: &BackupCommand) -> anyhow::Result<()> {
                     Err(e) => Err(anyhow::Error::new(e)),
                 }
             }
-            BackupCommand::Project { .. } => {
-                // TODO(M2-merge): resolve the slug and call `backups.create_project`.
-                Err(anyhow::anyhow!(
-                    "Project backups need Projects, which are not available in this build yet"
-                ))
+            BackupCommand::Project {
+                slug,
+                volumes,
+                db,
+                stop_project,
+                retain,
+            } => {
+                let scheduled =
+                    from_cron || retain.keep_last.is_some() || retain.keep_days.is_some();
+                let trigger = if scheduled {
+                    Trigger::Cron
+                } else {
+                    Trigger::Manual
+                };
+                run_project(
+                    &rt,
+                    &actor,
+                    slug,
+                    *volumes,
+                    db.as_deref(),
+                    *stop_project,
+                    trigger,
+                    retain.policy(),
+                )
+                .await
             }
             BackupCommand::List => {
                 for b in rt.services.backups.list(&actor).await? {
@@ -234,5 +257,78 @@ fn ensure_daemon_stopped() -> anyhow::Result<()> {
             "the yanto service is running; stop it first: systemctl stop yanto && yanto restore yanto <archive> && systemctl start yanto"
         ),
         _ => Ok(()),
+    }
+}
+
+/// `yanto backup project <slug> (--volumes | --db <service>)`: print one line per archive.
+#[allow(clippy::too_many_arguments)]
+async fn run_project(
+    rt: &super::common::Runtime,
+    actor: &Actor,
+    slug: &str,
+    volumes: bool,
+    db: Option<&str>,
+    stop_project: bool,
+    trigger: Trigger,
+    retention: Retention,
+) -> anyhow::Result<i32> {
+    let project = rt
+        .services
+        .projects
+        .list(actor)
+        .await?
+        .into_iter()
+        .find(|p| p.slug == slug)
+        .with_context(|| format!("no Project with slug {slug}"))?;
+    let (kind, target) = match (volumes, db) {
+        (true, _) => (BackupKind::ProjectVolumes, None),
+        (false, Some(service)) => {
+            let decl = rt
+                .services
+                .projects
+                .databases_list(actor, &project.id)
+                .await?
+                .into_iter()
+                .find(|d| d.compose_service == service)
+                .with_context(|| {
+                    format!("no database is declared for service {service} on {slug}")
+                })?;
+            let kind = BackupKind::parse(&decl.engine)
+                .with_context(|| format!("unknown engine {}", decl.engine))?;
+            (kind, Some(service))
+        }
+        (false, None) => bail!("pass --volumes or --db <service>"),
+    };
+    match rt
+        .services
+        .backups
+        .create_project_with(
+            actor,
+            &project.id,
+            kind,
+            target,
+            stop_project,
+            trigger,
+            Some(retention),
+        )
+        .await
+    {
+        Ok(list) => {
+            for b in list {
+                println!(
+                    "backup {} {} {} bytes sha256:{}",
+                    b.id,
+                    b.filename,
+                    b.size_bytes.unwrap_or(0),
+                    b.sha256.unwrap_or_default()
+                );
+            }
+            Ok(0)
+        }
+        Err(e) if e.kind == ErrorKind::Conflict && e.message == BUSY_MESSAGE => {
+            eprintln!("yanto backup: busy: {}", e.message);
+            Ok(EXIT_BUSY)
+        }
+        Err(e) => Err(anyhow::Error::new(e)),
     }
 }

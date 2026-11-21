@@ -164,13 +164,35 @@ fn backup_refuses_without_an_instance_key_and_creates_nothing() {
     assert!(!fx.data().join("yanto.db").exists());
 }
 
-#[test]
-fn project_backups_report_that_projects_are_missing() {
+#[tokio::test]
+async fn project_backup_cli_resolves_the_slug_and_the_declaration() {
     let fx = Fx::new();
     fx.init();
+    // Unknown Project.
     let o = fx.yanto(&["backup", "project", "blog", "--volumes"]);
     assert!(!o.status.success());
-    assert!(err(&o).contains("Projects"));
+    assert!(err(&o).contains("no Project with slug blog"), "{}", err(&o));
+    // A flag is required, and `--stop-project` only goes with volumes.
+    assert!(!fx.yanto(&["backup", "project", "blog"]).status.success());
+    assert!(
+        !fx.yanto(&["backup", "project", "blog", "--db", "db", "--stop-project"])
+            .status
+            .success()
+    );
+    // A Project without a declaration for the service.
+    let (s, db) = fx.services().await;
+    sqlx::query(
+        "INSERT INTO projects (id, name, slug, source_kind, image_ref, deploy_token_hash, deploy_token_enc, created_at, updated_at)
+         VALUES ('prj_cli', 'Blog', 'blog', 'image', 'nginx', 'h', 'e', 0, 0)",
+    )
+    .execute(db.writer())
+    .await
+    .unwrap();
+    drop(s);
+    db.close().await;
+    let o = fx.yanto(&["backup", "project", "blog", "--db", "db"]);
+    assert!(!o.status.success());
+    assert!(err(&o).contains("no database is declared"), "{}", err(&o));
 }
 
 #[tokio::test]
