@@ -83,6 +83,8 @@ impl Default for FrpDashboardHttp {
             client: Client::builder()
                 .timeout(Duration::from_secs(2))
                 .redirect(reqwest::redirect::Policy::none())
+                // Loopback frps dashboard with Basic auth: never route it via HTTP(S)_PROXY.
+                .no_proxy()
                 .build()
                 .expect("reqwest client"),
         }
