@@ -14,14 +14,21 @@ yanto-core = { path = "crates/yanto-core" }
 yanto-host = { path = "crates/yanto-host" }
 yanto-server = { path = "crates/yanto-server" }
 
+aes-gcm = "0.11.1"
 anyhow = "1.0.104"
+argon2 = "0.6.0"
 askama = "0.16.1"
 axum = "0.8.9"
+base64 = "0.23.1"
 clap = { version = "4.6.9", features = ["derive", "env"] }
+getrandom = "0.4.3"
 http-body-util = "0.1.5"
 rust-embed = { version = "8.14.0", features = ["mime-guess", "include-exclude"] }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
 sqlx = { version = "0.9.1", default-features = false, features = ["sqlite", "runtime-tokio", "migrate", "macros"] }
+subtle = "2.6.1"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
@@ -30,6 +37,8 @@ tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.1", features = ["trace", "set-header"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+
+zeroize = "1.9.2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -41,4 +50,11 @@ all = { level = "warn", priority = -1 }
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+opt-level = 3
+# Argon2 is unusably slow at opt-level 0; keep password hashing fast in dev and tests.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.aes-gcm]
 opt-level = 3
