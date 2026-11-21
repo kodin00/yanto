@@ -241,14 +241,16 @@ async fn keep_days_prunes_old_scheduled_backups_but_never_the_newest() {
         .await
         .unwrap();
     core.clock.advance(Duration::from_secs(40 * 86_400));
-    // Both older ones go; the newest successful one is always kept, then the fresh one lands.
-    core.services
+    // The fresh backup is the newest and always kept; both older ones are past 10 days.
+    let fresh = core
+        .services
         .backups
         .create_yanto(&a, Trigger::Cron, days)
         .await
         .unwrap();
     let list = core.services.backups.list(&a).await.unwrap();
-    assert_eq!(list.len(), 2);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].id, fresh.id);
     // `prune` with the same flags is a no-op now and refuses tokens (CLI only).
     assert_eq!(
         core.services
