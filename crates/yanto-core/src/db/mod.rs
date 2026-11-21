@@ -11,6 +11,11 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 
 use crate::error::CoreError;
 
+pub mod repo;
+
+/// A write transaction on the single writer connection (`BEGIN IMMEDIATE`).
+pub type WriteTx = sqlx::Transaction<'static, sqlx::Sqlite>;
+
 const READER_CONNECTIONS: u32 = 4;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -64,6 +69,15 @@ impl Db {
 
     pub fn reader(&self) -> &SqlitePool {
         &self.reader
+    }
+
+    /// Start a write transaction with `BEGIN IMMEDIATE` so a read-then-write
+    /// never fails with a lock upgrade error (docs/rewrite/01 section 6.4).
+    pub async fn begin_write(&self) -> Result<WriteTx, CoreError> {
+        self.writer
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(repo::db_err)
     }
 
     /// Cheap liveness probe used by `/healthz`.
