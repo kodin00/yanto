@@ -26,7 +26,6 @@ impl HostTraefik {
             owner,
         }
     }
-
 }
 
 fn refuse_symlink(p: &Path) -> Result<(), CoreError> {

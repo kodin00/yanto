@@ -460,7 +460,7 @@ pub async fn truncate_logs(
     )
     .bind(id)
     .execute(conn)
-        .await
-        .map(|_| ())
-        .map_err(db_err)
+    .await
+    .map(|_| ())
+    .map_err(db_err)
 }
