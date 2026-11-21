@@ -31,10 +31,12 @@ use crate::service::{ServiceDeps, Services};
 
 pub mod command;
 pub mod host_probe;
+pub mod registry_api;
 pub mod registry_auth;
 
 pub use command::{FakeCommands, Reply};
 pub use host_probe::FakeHostProbe;
+pub use registry_api::FakeRegistryApi;
 pub use registry_auth::FakeRegistryAuth;
 
 pub const OWNER_PASSWORD: &str = "owner-password-123";

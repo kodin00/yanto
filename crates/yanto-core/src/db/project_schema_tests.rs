@@ -210,13 +210,19 @@ async fn migration_0201_copies_valid_grants_and_drops_orphans() {
 #[tokio::test]
 async fn hosted_registry_singleton_and_user_constraints() {
     let (_d, db) = temp_db().await;
-    exec(&db, "UPDATE hosted_registry_settings SET listen_port = 5055 WHERE id = 1")
-        .await
-        .unwrap();
+    exec(
+        &db,
+        "UPDATE hosted_registry_settings SET listen_port = 5055 WHERE id = 1",
+    )
+    .await
+    .unwrap();
     assert!(
-        exec(&db, "INSERT INTO hosted_registry_settings (id, updated_at) VALUES (2, 0)")
-            .await
-            .is_err(),
+        exec(
+            &db,
+            "INSERT INTO hosted_registry_settings (id, updated_at) VALUES (2, 0)"
+        )
+        .await
+        .is_err(),
         "settings are a singleton"
     );
     let user = |id: &str, name: &str| {
@@ -225,6 +231,9 @@ async fn hosted_registry_singleton_and_user_constraints() {
         )
     };
     exec(&db, &user("rus_1", "Alice")).await.unwrap();
-    assert!(exec(&db, &user("rus_2", "alice")).await.is_err(), "NOCASE unique");
+    assert!(
+        exec(&db, &user("rus_2", "alice")).await.is_err(),
+        "NOCASE unique"
+    );
     assert!(exec(&db, &user("rus_3", "a:b")).await.is_err(), "no colon");
 }
