@@ -22,6 +22,9 @@ use super::session::Session;
 use super::view::{DashError, PageCtx, fmt_ts, render};
 use crate::app::AppState;
 
+const TERMINAL_CSP: &str = "default-src 'self'; style-src 'self' 'unsafe-inline'; \
+connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/containers", get(index))
@@ -362,9 +365,16 @@ async fn exec_page(
         .exec_precheck(&session.0.actor, &id)
         .await
         .map_err(|e| DashError::new(e, &headers))?;
-    Ok(render(&ExecPage {
+    let mut res = render(&ExecPage {
         ctx: PageCtx::new(&session, format!("Terminal: {}", info.name), "/containers"),
         id: info.id,
         name: info.name,
-    }))
+    });
+    // xterm.js's DOM renderer writes its theme and cell sizes into <style> elements, which the
+    // global `default-src 'self'` policy blocks. Relax styles (never scripts) on this page only.
+    res.headers_mut().insert(
+        axum::http::header::CONTENT_SECURITY_POLICY,
+        axum::http::HeaderValue::from_static(TERMINAL_CSP),
+    );
+    Ok(res)
 }

@@ -273,6 +273,19 @@ async fn terminal_and_log_assets_are_served_and_pages_have_no_inline_script() {
     let html = page.text();
     assert!(html.contains("/assets/vendor/xterm.js") && html.contains("data-ws-path"));
     assert!(!html.contains("<script>"), "CSP forbids inline scripts");
+    let csp = page.header("content-security-policy").unwrap();
+    assert!(csp.contains("style-src 'self' 'unsafe-inline'") && csp.contains("connect-src 'self'"));
+    assert!(
+        !csp.contains("script-src") && !csp.contains("'unsafe-eval'"),
+        "scripts stay default-src 'self'"
+    );
+    let other = c.get("/containers").await;
+    assert!(
+        !other
+            .header("content-security-policy")
+            .unwrap()
+            .contains("unsafe-inline")
+    );
     // A stopped container is refused before any WebSocket.
     app.core.docker.add_container("idle", "exited", &[]);
     assert_eq!(

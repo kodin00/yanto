@@ -57,7 +57,7 @@ Legend: **Port** = keep the behavior, **Change** = keep it reshaped, **New** = n
 - [ ] **Change** — Projects declare loopback-published ports; Yanto detects port collisions
 - [ ] **Port** — Deployments: Git clone/pull or image pull → `docker compose up`, stored logs, live SSE log stream, stop, restart, rollback with preview, queue
 - [ ] **Port** — Webhooks: `POST /deploy?id=` with a bearer Deploy Token; GitHub push webhook
-- [ ] **Port** — Containers: list, start/stop/restart, logs + stream, exec terminal (WebSocket)
+- [x] **Port** — Containers: list, start/stop/restart, logs + stream, exec terminal (WebSocket)
 - [ ] **Port** — System: host usage (CPU/mem/disk), Docker prune with preview, app logs, health
 - [ ] **Port** — Deploy Keys (per-Project SSH keys for cloning)
 - [ ] **Change** — Backups: local + downloadable only (R2 dropped); Yanto's SQLite added
