@@ -24,6 +24,36 @@ _Avoid_: Webhook key, deploy key
 A server Yanto deploys to. The Node running the dashboard is the **Master**; every other Node is a **Worker**.
 _Avoid_: Host, agent, server, machine
 
+**Hosted Registry**:
+The private container image registry Yanto runs on the Master when the operator enables it. Projects can deploy images pushed to it.
+_Avoid_: Docker Hub, repo, local registry
+
+**Registry Credential**:
+Stored login for an external registry (e.g. GHCR, Docker Hub), used to pull private images.
+_Avoid_: Registry login, pull secret
+
+**Cron Entry**:
+A line in the host crontab that Yanto created and manages.
+_Avoid_: Scheduled job, task, timer
+
+**Backup**:
+A local dump of a Project's data (volumes or database) or of Yanto's own database, which the operator can download.
+_Avoid_: Snapshot, export
+
+### Access
+
+**Deploy Key**:
+An SSH key Yanto uses to clone a Project's private Git repository.
+_Avoid_: SSH key (ambiguous), Git key
+
+**Authorized Key**:
+A public key allowed to SSH into a Node, managed by Yanto in that Node's `authorized_keys`.
+_Avoid_: SSH key (ambiguous), login key
+
+**API Token**:
+A scoped bearer token (`read` < `write` < `admin`) that authenticates REST and MCP clients.
+_Avoid_: MCP token, PAT, access key
+
 ### People
 
 **Owner**:
