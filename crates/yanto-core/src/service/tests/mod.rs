@@ -7,6 +7,7 @@ mod backups;
 mod containers;
 mod cron;
 mod deployments;
+mod ingress;
 mod matrix;
 mod matrix_ingress;
 mod projects;
