@@ -7,6 +7,7 @@ mod cloudflare;
 mod containers;
 mod cron;
 mod deployments;
+mod frps;
 mod hostnames;
 mod keys;
 mod projects;
@@ -26,6 +27,7 @@ pub fn register(set: &mut ToolSet) {
     registry::register(set);
     cron::register(set);
     authorized_keys::register(set);
+    frps::register(set);
     cloudflare::register(set);
     hostnames::register(set);
 }

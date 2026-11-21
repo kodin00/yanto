@@ -48,6 +48,8 @@ yanto_deployment_cancel | deployment_cancel | write | Write | false | false
 yanto_deployment_get | deployment_get | read | Read | false | false
 yanto_deployment_logs | deployment_logs | read | Read | false | false
 yanto_deployments_list | deployments_list | read | Read | false | false
+yanto_frps_overview | frps_overview | read | Read | false | false
+yanto_frps_settings_update | frps_settings_update | write | Write | true | false
 yanto_health | health | read | Read | false | false
 yanto_hostname_create | hostname_create | write | Write | false | true
 yanto_hostname_delete | hostname_delete | admin | Destructive | true | true

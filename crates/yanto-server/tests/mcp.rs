@@ -391,6 +391,8 @@ fn sample_args() -> BTreeMap<&'static str, Value> {
             "yanto_cloudflare_dns_delete",
             json!({"client_id":"x","zone_id":"z","record_id":"r"}),
         ),
+        ("yanto_frps_overview", json!({})),
+        ("yanto_frps_settings_update", json!({"bind_port":7000})),
     ] {
         m.insert(k, v);
     }
