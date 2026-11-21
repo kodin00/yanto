@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use yanto_core::password::Passwords;
-use yanto_core::ports::SystemClock;
+use yanto_core::ports::{HostMgmtPorts, SystemClock, UnavailableProjectBackups};
 use yanto_core::secrets::Secrets;
 use yanto_core::service::{ServiceDeps, Services};
 use yanto_core::{Config, Db};
@@ -40,6 +40,7 @@ pub async fn open(config: Config) -> anyhow::Result<Runtime> {
         clock: Arc::new(SystemClock),
         secrets: Arc::new(secrets),
         passwords: Passwords::default(),
+        host_mgmt: host_ports(&config),
     });
     Ok(Runtime {
         config,
@@ -48,8 +49,30 @@ pub async fn open(config: Config) -> anyhow::Result<Runtime> {
     })
 }
 
+/// The real Host ports for cron, `authorized_keys`, users and backups (M5).
+pub fn host_ports(config: &Config) -> HostMgmtPorts {
+    use yanto_host::{HostAuthorizedKeys, HostBackup, HostCron, HostCronExec, SystemUsers};
+    let h = &config.host;
+    // The cron file must be owned by whoever Yanto runs as: root in production (so cron accepts
+    // it), the current user in development and tests.
+    let owner = (
+        rustix::process::geteuid().as_raw(),
+        rustix::process::getegid().as_raw(),
+    );
+    let users = Arc::new(SystemUsers::new(&h.passwd_file));
+    HostMgmtPorts {
+        users: users.clone(),
+        cron: Arc::new(HostCron::new(&h.etc_dir, &h.spool_dir, owner)),
+        cron_exec: Arc::new(HostCronExec::new(&h.run_dir)),
+        authorized_keys: Arc::new(HostAuthorizedKeys::new(users)),
+        backup_host: Arc::new(HostBackup::new(&h.run_dir)),
+        // TODO(M2-merge): the Docker-backed Project backup port replaces this.
+        project_backups: Arc::new(UnavailableProjectBackups),
+    }
+}
+
 /// Run an async subcommand on a fresh runtime.
-pub fn block_on<F: std::future::Future<Output = anyhow::Result<()>>>(f: F) -> anyhow::Result<()> {
+pub fn block_on<T, F: std::future::Future<Output = anyhow::Result<T>>>(f: F) -> anyhow::Result<T> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

@@ -73,6 +73,7 @@ async fn setup_code_then_owner_reset() {
         clock: Arc::new(SystemClock),
         secrets: Arc::new(Secrets::ephemeral()),
         passwords: Passwords::cheap_for_tests(),
+        host_mgmt: yanto_core::ports::HostMgmtPorts::unsupported(),
     });
     let origin = Origin::new(Channel::Dashboard, None);
     assert!(

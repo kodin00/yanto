@@ -41,6 +41,19 @@ pub enum Command {
     Uninstall(crate::cmd::uninstall::UninstallArgs),
     /// Re-run prerequisite, Host Daemon and path checks
     Doctor(crate::cmd::doctor::DoctorArgs),
+    /// Create, list and prune Backups (used by Cron Entries)
+    #[command(subcommand)]
+    Backup(crate::cmd::backup::BackupCommand),
+    /// Restore the Yanto database from a Backup (service must be stopped)
+    Restore(crate::cmd::backup::RestoreArgs),
+    /// Run a Cron Entry (called by /etc/cron.d/yanto)
+    CronRun {
+        /// Cron Entry id
+        id: String,
+    },
+    /// Internal: drop privileges and exec (used by cron-run)
+    #[command(hide = true)]
+    ExecAs(crate::cmd::exec_as::ExecAsArgs),
 }
 
 #[cfg(test)]

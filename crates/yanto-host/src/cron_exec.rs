@@ -161,6 +161,8 @@ impl CronExec for HostCronExec {
             .env("USER", &spec.user.name)
             .env("SHELL", "/bin/sh")
             .env("PATH", DEFAULT_PATH)
+            // Lets `yanto backup` record that it runs from a Cron Entry (04 7.5).
+            .env("YANTO_CRON_RUN", &spec.entry_id)
             .current_dir(home)
             .stdin(Stdio::null())
             .stdout(writer)

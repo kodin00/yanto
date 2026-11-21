@@ -3655,6 +3655,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "yanto-core",
+ "yanto-host",
  "yanto-server",
 ]
 
