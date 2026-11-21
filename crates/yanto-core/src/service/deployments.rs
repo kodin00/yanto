@@ -609,9 +609,9 @@ impl DeploymentService {
                     }
                 }
             };
-            if !replay(&mut last).await {
-                return;
-            }
+            // Read the status before replaying. A terminal status is only written after the
+            // last log chunk is committed, so replaying after it sees every chunk; reading it
+            // after the replay would let chunks committed in between be skipped.
             let status = match ctx.db.reader().acquire().await {
                 Ok(mut c) => deployments::get(&mut c, &id)
                     .await
@@ -620,6 +620,9 @@ impl DeploymentService {
                     .map(|d| d.status),
                 Err(_) => None,
             };
+            if !replay(&mut last).await {
+                return;
+            }
             match status.as_deref() {
                 Some("queued" | "running") => {
                     let _ = tx
