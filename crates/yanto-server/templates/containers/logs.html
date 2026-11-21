@@ -1,0 +1,11 @@
+{% extends "layout.html" %}
+
+{% block head %}<script src="/assets/js/container-logs.js" defer></script>{% endblock %}
+
+{% block content %}
+<p><a href="/containers/{{ id }}">&larr; {{ name }}</a></p>
+<h1>Logs: {{ name }}</h1>
+<p class="muted">Last 500 lines. <label><input type="checkbox" id="follow"> Follow live</label> <span id="follow-state" class="muted"></span></p>
+<pre id="log" class="logs" data-stream-url="/containers/{{ id }}/logs/stream">{% for l in lines %}<span class="{{ l.stream }}">{{ l.ts }} {{ l.text }}
+</span>{% endfor %}</pre>
+{% endblock %}

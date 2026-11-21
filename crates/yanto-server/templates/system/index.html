@@ -1,0 +1,62 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>System</h1>
+
+<section class="card">
+  <h2>Health <span class="badge {{ health_status }}">{{ health_status }}</span></h2>
+  <table>
+    <thead><tr><th>Check</th><th>Status</th><th>Detail</th></tr></thead>
+    <tbody>
+    {% for c in checks %}<tr><td>{{ c.name }}</td><td><span class="badge {{ c.status }}">{{ c.status }}</span></td><td>{{ c.detail }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Host</h2>
+  <dl class="facts">{% for kv in host %}<dt>{{ kv.0 }}</dt><dd>{{ kv.1 }}</dd>{% endfor %}</dl>
+  <table>
+    <thead><tr><th>Mount</th><th>Used</th><th>Free</th><th>Total</th><th>Paths</th></tr></thead>
+    <tbody>
+    {% for d in disks %}
+      <tr><td><code>{{ d.mount }}</code></td><td><meter class="meter" min="0" max="100" value="{{ d.used_percent }}"></meter> {{ d.used_percent }}%</td><td>{{ d.free }}</td><td>{{ d.total }}</td><td>{{ d.paths }}</td></tr>
+    {% else %}<tr><td colspan="5" class="muted">No disks reported.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Docker</h2>
+  {% if let Some(e) = docker_error %}<p class="error" role="alert">Docker unavailable: {{ e }}</p>{% else %}
+  <dl class="facts">{% for kv in docker %}<dt>{{ kv.0 }}</dt><dd>{{ kv.1 }}</dd>{% endfor %}</dl>
+  {% if !df.is_empty() %}
+  <table>
+    <thead><tr><th>Disk usage</th><th>Active / total</th><th>Size</th><th>Reclaimable</th></tr></thead>
+    <tbody>{% for r in df %}<tr><td>{{ r.0 }}</td><td>{{ r.1 }}</td><td>{{ r.2 }}</td><td>{{ r.3 }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% endif %}
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Docker cleanup</h2>
+  <p class="muted">Preview of what a prune would remove. Volumes are never pruned. Stopped containers are off by default because a deliberately stopped Project would lose its containers.</p>
+  {% if let Some(e) = preview_error %}<p class="error" role="alert">{{ e }}</p>{% else %}
+  <form method="post" action="/system/cleanup" class="stack">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    {% for g in groups %}
+    <fieldset>
+      <legend><label><input type="checkbox" name="{{ g.field }}" value="on"{% if g.default_selected %} checked{% endif %}> {{ g.label }}</label>
+        <span class="muted">({{ g.count }} items, {{ g.size }})</span></legend>
+      {% if g.items.is_empty() %}<p class="muted">Nothing to remove.</p>{% else %}
+      <ul>{% for i in g.items %}<li>{{ i }}</li>{% endfor %}{% if g.more > 0 %}<li class="muted">and {{ g.more }} more</li>{% endif %}</ul>
+      {% endif %}
+      {% if g.needs_confirm %}<label>Type <code>{{ confirm_phrase }}</code> to confirm <input name="confirm" autocomplete="off" placeholder="{{ confirm_phrase }}"></label>{% endif %}
+    </fieldset>
+    {% endfor %}
+    <div><button type="submit" class="danger">Run cleanup</button></div>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

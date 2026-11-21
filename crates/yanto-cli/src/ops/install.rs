@@ -161,8 +161,8 @@ pub fn apply(
     r.steps.push("database migrations applied".into());
 
     // 4. setup code (fresh installs without an Owner only)
-    if mode == Mode::Fresh && !setup_code::owner_exists(&db_path)? {
-        r.setup_code = setup_code::issue(&db_path)?;
+    if mode == Mode::Fresh && !setup_code::owner_exists(&data_dir)? {
+        r.setup_code = setup_code::issue(&data_dir)?;
     }
 
     // 5. unit
@@ -259,6 +259,11 @@ mod tests {
         let (_d, l, p) = temp();
         let r = apply(&FakeHost::default(), &l, &p, Mode::Fresh, &opts()).unwrap();
         assert!(r.healthy.is_none());
+        assert_eq!(
+            r.setup_code.as_deref().map(str::len),
+            Some(19),
+            "a fresh install issues a real XXXX-XXXX-XXXX-XXXX code"
+        );
 
         let data = l.path("/var/lib/yanto");
         for sub in [

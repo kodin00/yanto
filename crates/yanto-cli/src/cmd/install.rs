@@ -177,9 +177,9 @@ pub fn execute(
             );
         }
         None if mode == Mode::Fresh => {
-            // TODO(M1): the auth module issues the code; until then point at the command.
+            // An Owner already exists in this data dir (restored or reused): nothing to set up.
             println!(
-                "\n  No setup code was issued here. Run `sudo yanto setup-code` to create one."
+                "\n  An Owner account already exists. Use `sudo yanto owner-reset` if you lost access."
             );
         }
         None => {}

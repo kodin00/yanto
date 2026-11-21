@@ -26,6 +26,8 @@ pub struct AppState {
     pub services: Arc<Services>,
     /// Peers whose `X-Forwarded-For` is honored (`runtime.trusted_proxies`).
     pub trusted_proxies: Arc<Vec<Cidr>>,
+    /// Terminal session timeouts (04 2.2); tests shorten them.
+    pub exec_limits: crate::dashboard::ExecLimits,
 }
 
 impl AppState {
@@ -35,6 +37,7 @@ impl AppState {
             config: Arc::new(config),
             services: Arc::new(services),
             trusted_proxies: Arc::new(default_trusted_proxies()),
+            exec_limits: crate::dashboard::ExecLimits::default(),
         }
     }
 

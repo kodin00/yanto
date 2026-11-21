@@ -7,6 +7,9 @@
 //! Fakes for host-side ports live next to this file, one per port
 //! (docs/rewrite/08-conventions.md "Ports and fakes").
 
+pub mod docker;
+pub mod host_stats;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
@@ -67,6 +70,8 @@ pub struct TestCore {
     pub clock: Arc<FakeClock>,
     pub services: Services,
     pub config: Config,
+    pub docker: Arc<docker::FakeDocker>,
+    pub host_stats: Arc<host_stats::FakeHostStats>,
 }
 
 impl TestCore {
@@ -76,12 +81,16 @@ impl TestCore {
         config.paths.data_dir = dir.path().to_path_buf();
         let db = Db::open(&config.db_path()).await.expect("open db");
         let clock = Arc::new(FakeClock::new());
+        let docker = Arc::new(docker::FakeDocker::new());
+        let host_stats = Arc::new(host_stats::FakeHostStats::new());
         let services = Services::new(ServiceDeps {
             db: db.clone(),
             config: &config,
             clock: clock.clone(),
             secrets: Arc::new(Secrets::ephemeral()),
             passwords: Passwords::cheap_for_tests(),
+            docker: docker.clone(),
+            host_stats: host_stats.clone(),
         });
         Self {
             dir,
@@ -89,6 +98,8 @@ impl TestCore {
             clock,
             services,
             config,
+            docker,
+            host_stats,
         }
     }
 

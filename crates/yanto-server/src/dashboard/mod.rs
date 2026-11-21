@@ -14,11 +14,16 @@
 mod account;
 mod audit;
 mod auth;
+mod containers;
+mod exec;
 mod home;
 mod session;
+mod system;
 mod tokens;
 mod users;
 pub mod view;
+
+pub use exec::ExecLimits;
 
 use axum::Router;
 use axum::middleware::from_fn_with_state;
@@ -34,6 +39,8 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .merge(tokens::routes())
         .merge(account::routes())
         .merge(audit::routes())
+        .merge(containers::routes())
+        .merge(system::routes())
         .route_layer(from_fn_with_state(state.clone(), session::require_session));
     Router::new()
         .merge(auth::public_routes())

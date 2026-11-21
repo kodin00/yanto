@@ -33,3 +33,10 @@ code.link { display: block; overflow-wrap: anywhere; user-select: all; padding: 
 .toast { position: fixed; right: 1rem; bottom: 1rem; max-width: 24rem; }
 .toast-msg { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent); padding: .6rem .9rem; border-radius: 6px; }
 .toast-msg.error { border-left-color: var(--err); }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; margin: 0 0 1rem; }
+.facts dt { color: color-mix(in srgb, var(--fg) 60%, transparent); }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+.logs { background: #0d1117; color: #d0d7de; padding: .75rem; border-radius: 8px; overflow: auto; max-height: 70vh; font: 13px/1.4 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.logs .stderr { color: #ff9b8f; }
+.terminal { height: 65vh; background: #000; padding: 6px; border-radius: 8px; }
+.meter { width: 100%; height: .6rem; }

@@ -19,6 +19,7 @@ struct Rest {
 fn rest_routes(bob: &str) -> Vec<Rest> {
     let any = [true; 6];
     let owner_admin = [false, false, true, false, false, false];
+    let owner_read_up = [true, true, true, false, false, false];
     let r = |method: Method, path: &str, body: serde_json::Value, allowed| Rest {
         method,
         path: path.replace("{bob}", bob),
@@ -28,6 +29,53 @@ fn rest_routes(bob: &str) -> Vec<Rest> {
     vec![
         r(Method::GET, "/api/v1/me", json!({}), any),
         r(Method::GET, "/api/v1/audit", json!({}), any),
+        // M3. Containers: scope and role rules here; the per-container rule is in the core tests.
+        r(Method::GET, "/api/v1/containers", json!({}), any),
+        r(Method::GET, "/api/v1/containers/web", json!({}), any),
+        r(Method::GET, "/api/v1/containers/web/logs", json!({}), any),
+        r(
+            Method::GET,
+            "/api/v1/containers/web/logs/stream",
+            json!({}),
+            any,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/containers/web/start",
+            json!({}),
+            [false, true, true, false, true, true],
+        ),
+        r(
+            Method::POST,
+            "/api/v1/containers/web/stop",
+            json!({}),
+            [false, false, true, false, false, true],
+        ),
+        r(
+            Method::POST,
+            "/api/v1/containers/web/restart",
+            json!({}),
+            [false, false, true, false, false, true],
+        ),
+        r(Method::GET, "/api/v1/health", json!({}), any),
+        r(
+            Method::GET,
+            "/api/v1/system/usage",
+            json!({}),
+            owner_read_up,
+        ),
+        r(
+            Method::GET,
+            "/api/v1/system/cleanup/preview",
+            json!({}),
+            owner_read_up,
+        ),
+        r(
+            Method::POST,
+            "/api/v1/system/cleanup",
+            json!({}),
+            owner_admin,
+        ),
         r(Method::GET, "/api/v1/users", json!({}), owner_admin),
         r(Method::GET, "/api/v1/users/{bob}", json!({}), owner_admin),
         r(
@@ -82,6 +130,7 @@ async fn rest_routes_against_every_principal() {
         .enumerate()
         {
             let app = TestApp::new().await;
+            app.core.docker.add_container("web", "running", &[]);
             let owner = app.owner_user().await;
             let alice = app
                 .core
@@ -194,6 +243,26 @@ fn dash_routes() -> Vec<Dash> {
             false,
             true,
         ),
+        // M3. Members may call the container routes (the core answers 404 for containers they
+        // cannot see) but never /system. Exec is a page plus a WebSocket upgrade, no REST.
+        d(Method::GET, "/containers", &[], false, true),
+        d(Method::GET, "/containers/rows", &[], false, true),
+        d(Method::GET, "/containers/web", &[], false, true),
+        d(Method::GET, "/containers/web/logs", &[], false, true),
+        d(Method::GET, "/containers/web/logs/stream", &[], false, true),
+        d(Method::GET, "/containers/web/exec", &[], false, true),
+        d(Method::GET, "/containers/web/exec/ws", &[], false, true),
+        d(Method::POST, "/containers/web/start", &[], true, true),
+        d(Method::POST, "/containers/web/stop", &[], true, true),
+        d(Method::POST, "/containers/web/restart", &[], true, true),
+        d(Method::GET, "/system", &[], false, false),
+        d(
+            Method::POST,
+            "/system/cleanup",
+            &[("build_cache", "on")],
+            false,
+            false,
+        ),
         d(Method::GET, "/users", &[], false, false),
         d(Method::GET, "/users/{bob}", &[], false, false),
         d(
@@ -233,6 +302,7 @@ async fn dashboard_routes_against_every_principal() {
     for i in 0..dash_routes().len() {
         for who in [Who::Owner, Who::Member] {
             let app = TestApp::new().await;
+            app.core.docker.add_container("web", "running", &[]);
             let owner = app.owner_client().await;
             let alice = app
                 .member_client("alice", &[("prj_1", &[Permission::Deploy])])

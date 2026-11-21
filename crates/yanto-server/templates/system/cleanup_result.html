@@ -1,0 +1,17 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<p><a href="/system">&larr; System</a></p>
+<h1>Cleanup result</h1>
+<p>Reclaimed <strong>{{ total }}</strong>.</p>
+<table>
+  <thead><tr><th>Step</th><th>Result</th><th>Removed</th><th>Reclaimed</th></tr></thead>
+  <tbody>
+  {% for s in steps %}
+    <tr><td>{{ s.label }}</td>
+    <td>{% if s.ok %}<span class="badge ok">ok</span>{% else %}<span class="badge error">failed</span> {{ s.error }}{% endif %}</td>
+    <td>{{ s.deleted }}</td><td>{{ s.reclaimed }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
