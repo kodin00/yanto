@@ -13,6 +13,7 @@ use yanto_core::secrets::Secret;
 use yanto_core::service::deployments::{
     self as dep, DeployRequest, RollbackPreview, RollbackRequest,
 };
+use yanto_core::service::project_databases::{DatabaseDto, DatabaseInput};
 use yanto_core::service::projects::{
     self as prj, DeleteOptions, PortInput, ProjectDto, ProjectInput, ProjectPatch, SourceInput,
 };
@@ -44,6 +45,10 @@ pub fn routes() -> Router<AppState> {
         .route("/projects/{id}/deploy-token/reveal", post(token_reveal))
         .route("/projects/{id}/deploy-token/rotate", post(token_rotate))
         .route("/projects/{id}/ports", get(ports_get).put(ports_put))
+        .route(
+            "/projects/{id}/databases",
+            axum::routing::put(databases_put),
+        )
 }
 
 fn err(e: CoreError, headers: &HeaderMap) -> DashError {
@@ -324,6 +329,7 @@ struct DetailPage {
     keys: Vec<Choice>,
     creds: Vec<Choice>,
     ports: Vec<prj::PortDto>,
+    databases: Vec<DatabaseDto>,
     webhook_base: String,
 }
 
@@ -384,6 +390,12 @@ async fn detail(
         .last_deployment
         .as_ref()
         .map_or_else(|| "never deployed".to_owned(), |d| d.status.clone());
+    let databases = s
+        .services
+        .projects
+        .databases_list(actor, &id)
+        .await
+        .map_err(e)?;
     Ok(render(&DetailPage {
         ctx: PageCtx::new(&session, p.name.clone(), "/projects"),
         source: source_label(&p),
@@ -419,6 +431,7 @@ async fn detail(
         keys,
         creds,
         ports: p.ports.clone(),
+        databases,
         webhook_base: s.config.server.public_url.trim_end_matches('/').to_owned(),
         p,
     }))
@@ -947,4 +960,68 @@ async fn ports_put(
         .await
         .map_err(e)?;
     Ok(toast("Ports saved.", false).into_response())
+}
+
+/// Keep the checked rows (`keep=<service>`) and add one optional new declaration.
+async fn databases_put(
+    State(s): State<AppState>,
+    session: Session,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    body: axum::body::Bytes,
+) -> Result<Response, DashError> {
+    let e = |c| err(c, &headers);
+    let actor = &session.0.actor;
+    let current = s
+        .services
+        .projects
+        .databases_list(actor, &id)
+        .await
+        .map_err(e)?;
+    let mut keep: Vec<String> = Vec::new();
+    let (mut engine, mut service, mut database, mut user_env, mut password_env) = (
+        String::from("postgres"),
+        String::new(),
+        String::new(),
+        String::new(),
+        String::new(),
+    );
+    for (k, v) in form_urlencoded::parse(&body) {
+        match k.as_ref() {
+            "keep" => keep.push(v.into_owned()),
+            "new_engine" => engine = v.into_owned(),
+            "new_service" => service = v.into_owned(),
+            "new_database" => database = v.into_owned(),
+            "new_user_env" => user_env = v.into_owned(),
+            "new_password_env" => password_env = v.into_owned(),
+            _ => {}
+        }
+    }
+    let mut set: Vec<DatabaseInput> = current
+        .into_iter()
+        .filter(|d| keep.contains(&d.compose_service))
+        .map(|d| DatabaseInput {
+            engine: d.engine,
+            compose_service: d.compose_service,
+            database: d.database,
+            user_env: d.user_env,
+            password_env: d.password_env,
+        })
+        .collect();
+    if !service.trim().is_empty() {
+        set.retain(|d| d.compose_service != service.trim());
+        set.push(DatabaseInput {
+            engine,
+            compose_service: service,
+            database: Some(database),
+            user_env: Some(user_env),
+            password_env: Some(password_env),
+        });
+    }
+    s.services
+        .projects
+        .databases_set(actor, &id, &set)
+        .await
+        .map_err(e)?;
+    Ok(toast("Databases saved.", false).into_response())
 }

@@ -74,6 +74,30 @@
   {% endif %}
 </section>
 
+<section class="card">
+  <h2>Databases</h2>
+  <p class="muted">Declare a Postgres or MySQL/MariaDB service so Backups can dump it with <code>docker exec</code>. Credentials stay in the container: leave the variable names empty to use the image defaults (<code>POSTGRES_USER</code>/<code>POSTGRES_PASSWORD</code>, <code>MYSQL_ROOT_PASSWORD</code>/<code>MARIADB_ROOT_PASSWORD</code>), or give the <em>names</em> of your own variables.</p>
+  {% if can_config %}
+  <form hx-put="/projects/{{ p.id }}/databases" hx-target="#db-msg">
+    <table>
+      <thead><tr><th>Keep</th><th>Service</th><th>Engine</th><th>Database</th><th>User variable</th><th>Password variable</th></tr></thead>
+      <tbody>
+      {% for d in databases %}
+        <tr><td><input type="checkbox" name="keep" value="{{ d.compose_service }}" checked aria-label="Keep {{ d.compose_service }}"></td><td>{{ d.compose_service }}</td><td>{{ d.engine }}</td><td>{% if let Some(x) = d.database %}{{ x }}{% endif %}</td><td>{% if let Some(x) = d.user_env %}{{ x }}{% endif %}</td><td>{% if let Some(x) = d.password_env %}{{ x }}{% endif %}</td></tr>
+      {% endfor %}
+        <tr><td>add</td><td><input name="new_service" placeholder="compose service" size="14"></td><td><select name="new_engine"><option value="postgres">postgres</option><option value="mysql">mysql</option></select></td><td><input name="new_database" placeholder="default" size="10"></td><td><input name="new_user_env" placeholder="default" size="12"></td><td><input name="new_password_env" placeholder="default" size="12"></td></tr>
+      </tbody>
+    </table>
+    <button type="submit">Save databases</button> <span id="db-msg"></span>
+  </form>
+  {% else %}
+  <table>
+    <thead><tr><th>Service</th><th>Engine</th><th>Database</th></tr></thead>
+    <tbody>{% for d in databases %}<tr><td>{{ d.compose_service }}</td><td>{{ d.engine }}</td><td>{% if let Some(x) = d.database %}{{ x }}{% endif %}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% endif %}
+</section>
+
 {% if can_config %}
 <section class="card">
   <h2>Settings</h2>
