@@ -25,7 +25,7 @@ The single server Yanto is installed on and manages.
 _Avoid_: Node, master, worker, machine
 
 **Host Daemon**:
-A service installed on the Host outside Docker that Yanto drives (`cloudflared`, `frps`, Traefik).
+A service installed by the operator on the Host outside Docker that Yanto checks for and drives, but never installs (`cloudflared`, `frps`, Traefik).
 _Avoid_: Sidecar, managed container
 
 **Hostname**:
@@ -37,7 +37,7 @@ The mechanism that carries public traffic for a Hostname to the Host: a Cloudfla
 _Avoid_: Proxy, router, gateway
 
 **FRP Tunnel**:
-A port on the Host that `frps` forwards to a service on a remote machine running `frpc`.
+A port on the Host that `frps` forwards to a service on a remote machine running `frpc`. Yanto manages only the `frps` side; clients are configured by hand.
 _Avoid_: Port forward, reverse tunnel
 
 **Hosted Registry**:
