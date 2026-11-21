@@ -502,6 +502,53 @@ async fn dns_conflict_is_refused_without_overwrite() {
 }
 
 #[tokio::test]
+async fn member_cannot_repoint_a_dns_record_yanto_did_not_create() {
+    let core = TestCore::new().await;
+    let f = core.setup_cloudflare().await;
+    let port = core.ensure_port("prj_1", 18080).await;
+    let foreign = CfDnsRecord {
+        id: "rec-c".into(),
+        record_type: "CNAME".into(),
+        name: "www.example.com".into(),
+        content: "owner-site.example.net".into(),
+        ttl: 1,
+        proxied: true,
+        priority: None,
+        comment: None,
+    };
+    core.ingress.cloudflare.seed_dns(&f.zone_id, foreign);
+    let m = core
+        .create_member("mia", &[("prj_1", &[Permission::Hostnames])])
+        .await;
+    let ma = core.session_actor(&m).await;
+    let s = &core.services.hostnames;
+    let out = s
+        .create(&ma, &cf_input(&f, &port, "www.example.com"))
+        .await
+        .unwrap();
+    assert_eq!(out.hostname.sync_status, "error");
+    assert!(
+        out.hostname
+            .last_error
+            .unwrap()
+            .contains("only the Owner can replace it")
+    );
+    let recs = core.ingress.cloudflare.dns(&f.zone_id);
+    assert_eq!(recs[0].content, "owner-site.example.net", "not repointed");
+    // Deleting the Member's Hostname must not remove the Owner's record either.
+    s.delete(&ma, &out.hostname.id).await.unwrap();
+    assert_eq!(core.ingress.cloudflare.dns(&f.zone_id).len(), 1);
+    // The Owner may adopt it (legacy "create or update").
+    let out = s
+        .create(&Actor::cli(), &cf_input(&f, &port, "www.example.com"))
+        .await
+        .unwrap();
+    assert_eq!(out.hostname.sync_status, "active");
+    let recs = core.ingress.cloudflare.dns(&f.zone_id);
+    assert_eq!(recs[0].comment.as_deref(), Some(MANAGED_COMMENT));
+}
+
+#[tokio::test]
 async fn disable_removes_from_provider_and_enable_restores() {
     let core = TestCore::new().await;
     let f = core.setup_cloudflare().await;
