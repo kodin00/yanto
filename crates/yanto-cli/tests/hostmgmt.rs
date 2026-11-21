@@ -74,6 +74,11 @@ impl Fx {
             passwords: Passwords::cheap_for_tests(),
             docker: Arc::new(yanto_core::testing::docker::FakeDocker::new()),
             host_stats: Arc::new(yanto_core::testing::host_stats::FakeHostStats::new()),
+            ingress: yanto_host::ingress_ports_without_registry(
+                &config,
+                Arc::new(yanto_host::TokioCommands),
+                None,
+            ),
             host: yanto_core::deploy::HostPorts {
                 command: Arc::new(yanto_host::TokioCommands),
                 probe: Arc::new(yanto_host::ProcProbe),
