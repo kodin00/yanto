@@ -51,6 +51,7 @@ impl Db {
             .connect_with(options(path).create_if_missing(true))
             .await
             .map_err(|e| CoreError::unavailable("cannot open database", e))?;
+        restrict_file(path)?;
         MIGRATOR
             .run(&writer)
             .await
@@ -95,6 +96,20 @@ impl Db {
     }
 }
 
+/// The database holds password hashes and token hashes: owner-only (`0600`) on Unix.
+/// SQLite creates the `-wal`/`-shm` files with the main file's mode.
+fn restrict_file(path: &Path) -> Result<(), CoreError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| CoreError::internal("cannot restrict database file permissions", e))?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
 /// Create `dir` (and parents) if missing; a newly created leaf is `0700` on Unix.
 fn ensure_private_dir(dir: &Path) -> Result<(), CoreError> {
     let existed = dir.exists();
@@ -136,6 +151,18 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(table, "app_settings");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn database_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let (dir, _db) = temp_db().await;
+        let mode = std::fs::metadata(dir.path().join("data/yanto.db"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[tokio::test]
