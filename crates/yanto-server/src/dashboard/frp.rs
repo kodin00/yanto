@@ -84,7 +84,7 @@ fn parse_ranges(text: &str) -> Result<Vec<PortRange>, CoreError> {
     };
     let mut out = Vec::new();
     for t in text
-        .split(|c: char| c == '\n' || c == ',')
+        .split(['\n', ','])
         .map(str::trim)
         .filter(|t| !t.is_empty())
     {

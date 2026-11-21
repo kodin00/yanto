@@ -308,6 +308,20 @@ impl HostnameService {
         self.ctx.db.reader().acquire().await.map_err(db_err)
     }
 
+    /// Token scope is checked before the row is loaded, so a too-weak token learns nothing
+    /// about which ids exist (403, not 404).
+    fn scope_guard(actor: &Actor, op: &OpSpec) -> Result<(), CoreError> {
+        match actor.token_scope() {
+            Some(sc) if !op.token_allowed || sc < op.min_scope => {
+                Err(CoreError::forbidden(format!(
+                    "{} requires an API Token with {} scope",
+                    op.name, op.min_scope
+                )))
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// Authorization for an existing row: the Project permission, or Owner/admin for the registry.
     fn authorize_row(
         &self,
@@ -590,6 +604,7 @@ impl HostnameService {
     // ---- state changes -------------------------------------------------------------------
 
     pub async fn retry(&self, actor: &Actor, id: &str) -> Result<PublishOutcome, CoreError> {
+        Self::scope_guard(actor, &OP_HOSTNAME_RETRY)?;
         let row = self.load(id).await?;
         self.authorize_row(actor, &OP_HOSTNAME_RETRY, &row)?;
         self.publish(id).await
@@ -609,12 +624,13 @@ impl HostnameService {
         id: &str,
         enabled: bool,
     ) -> Result<PublishOutcome, CoreError> {
-        let row = self.load(id).await?;
         let op = if enabled {
             &OP_HOSTNAME_ENABLE
         } else {
             &OP_HOSTNAME_DISABLE
         };
+        Self::scope_guard(actor, op)?;
+        let row = self.load(id).await?;
         self.authorize_row(actor, op, &row)?;
         let mut tx = self.ctx.db.begin_write().await?;
         repo::hostname_set_enabled(&mut tx, id, enabled, self.ctx.now()).await?;
@@ -639,6 +655,7 @@ impl HostnameService {
     /// Remove the Hostname from its provider first (a failure keeps the row so it can be retried),
     /// then delete the row. DNS cleanup problems are reported as warnings.
     pub async fn delete(&self, actor: &Actor, id: &str) -> Result<DeleteOutcome, CoreError> {
+        Self::scope_guard(actor, &OP_HOSTNAME_DELETE)?;
         let row = self.load(id).await?;
         self.authorize_row(actor, &OP_HOSTNAME_DELETE, &row)?;
         let _g = self.lock.lock().await;
