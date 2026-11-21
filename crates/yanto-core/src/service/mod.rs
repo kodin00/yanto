@@ -11,7 +11,10 @@
 
 pub mod audit;
 pub mod auth;
+pub mod authorized_keys;
+pub mod backups;
 pub mod containers;
+pub mod cron;
 pub mod system;
 pub mod tokens;
 pub mod users;
@@ -29,6 +32,7 @@ use crate::db::repo::access;
 use crate::db::repo::users::UserRow;
 use crate::error::CoreError;
 use crate::password::Passwords;
+use crate::ports::HostMgmtPorts;
 use crate::ports::{Clock, DockerPort, HostStatsPort};
 use crate::ratelimit::FailureLimiter;
 use crate::secrets::Secrets;
@@ -60,6 +64,8 @@ pub struct ServiceDeps<'a> {
     pub passwords: Passwords,
     pub docker: Arc<dyn DockerPort>,
     pub host_stats: Arc<dyn HostStatsPort>,
+    /// Host side of Cron Entries, Authorized Keys and Backups (M5).
+    pub host_mgmt: HostMgmtPorts,
 }
 
 /// Shared, cheaply cloneable context held by every service.
@@ -118,6 +124,9 @@ pub struct Services {
     pub tokens: tokens::TokenService,
     pub containers: containers::ContainerService,
     pub system: system::SystemService,
+    pub cron: cron::CronService,
+    pub authorized_keys: authorized_keys::AuthorizedKeysService,
+    pub backups: backups::BackupService,
 }
 
 impl Services {
@@ -156,6 +165,17 @@ impl Services {
                 projects,
                 cfg.paths.data_dir.clone(),
             ),
+            cron: cron::CronService::new(ctx.clone(), deps.host_mgmt.clone()),
+            backups: backups::BackupService::new(
+                ctx.clone(),
+                deps.host_mgmt.clone(),
+                cfg.paths.data_dir.clone(),
+            ),
+            authorized_keys: authorized_keys::AuthorizedKeysService::new(
+                ctx.clone(),
+                deps.host_mgmt.clone(),
+                cfg.ssh.authorized_keys_user.clone(),
+            ),
             ctx,
         }
     }
@@ -175,6 +195,9 @@ pub fn all_operations() -> Vec<&'static OpSpec> {
     v.extend(tokens::OPERATIONS);
     v.extend(containers::OPERATIONS);
     v.extend(system::OPERATIONS);
+    v.extend(cron::OPERATIONS);
+    v.extend(authorized_keys::OPERATIONS);
+    v.extend(backups::OPERATIONS);
     v.push(&audit::OP_AUDIT_LIST);
     v
 }

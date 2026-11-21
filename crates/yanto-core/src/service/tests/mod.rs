@@ -2,7 +2,10 @@
 
 mod audit;
 mod auth;
+mod authorized_keys;
+mod backups;
 mod containers;
+mod cron;
 mod matrix;
 mod system;
 mod tokens;

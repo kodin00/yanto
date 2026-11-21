@@ -26,6 +26,13 @@ async fn serve(config: yanto_core::Config) -> anyhow::Result<()> {
         tracing::warn!("no Owner exists yet: run `yanto setup-code` and open /setup to create one");
     }
 
+    // Backups cut short by a crash or restart become `failed` and their partial files go (04 7.8).
+    match rt.services.backups.recover_interrupted().await {
+        Ok(n) if n > 0 => tracing::warn!(interrupted = n, "marked interrupted backups as failed"),
+        Ok(_) => {}
+        Err(err) => tracing::warn!(error = %err, "backup recovery failed"),
+    }
+
     let purge = tokio::spawn(purge_loop(rt.services.clone()));
     let state = AppState::load(rt.db.clone(), rt.config.clone(), rt.services.clone()).await;
     yanto_server::serve(listener, state, shutdown_signal()).await?;

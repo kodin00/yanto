@@ -17,3 +17,10 @@ futures-util = "0.3.34"
 sysinfo = "0.40.4"
 tokio.workspace = true
 serde_json.workspace = true
+nix = { version = "0.32.0", features = ["user", "fs", "signal", "process"] }
+sha2.workspace = true
+
+[dev-dependencies]
+base64.workspace = true
+tempfile.workspace = true
+yanto-core = { workspace = true, features = ["testing"] }

@@ -217,3 +217,45 @@ Anything with a side effect outside SQLite and the data dir (time, Docker, Compo
 - **Prune.** Groups are build cache, dangling images, unused networks and stopped containers. **Volumes are not a prune kind** (04 3.1 and its acceptance criterion win over a looser reading). Stopped containers are off by default and need the typed phrase `prune containers`. Execution order is build, images, networks, containers; a failing step is reported and later steps run.
 - **Health** (`GET /api/v1/health`, 3 s per probe): database, Docker (ping and version), data-dir disk. Compose version and Host Daemon statuses are listed in 04 3.1 but belong to M2/M5 (no `docker compose` or daemon port exists yet); add them as further `HealthCheck`s in `SystemService::health`. App logs (`system_logs`, SSE) are not implemented in M3.
 - **Deviations.** CPU percent in the list comes from two consecutive stats samples (the bollard stats model has no `precpu_stats`); host CPU percent is measured between two calls (no 5 s background sampler or 1-minute average). Build-cache preview items come from `system df` and are best effort on daemons that report it in the older shape.
+
+## 11. M5 (Host management) notes, deviations and the Yanto-DB restore runbook
+
+What M5 added: migrations `0500_cron`, `0501_authorized_keys`, `0502_backups`; services `cron`, `authorized_keys`, `backups`; ports `HostUsers`, `CronPort`, `CronExec`, `AuthorizedKeysPort`, `BackupHost`, `ProjectBackupPort` (bundled as `HostMgmtPorts` in `ServiceDeps::host_mgmt`) with fakes under `testing/` (`TestCore::host`); real implementations in `yanto-host`; CLI `cron-run`, `backup yanto|list|prune|project`, `restore yanto`, hidden `exec-as`; id prefixes `crn`, `crr`, `akey`, `bak`; config section `[host]` (`etc_dir`, `spool_dir`, `passwd_file`, `run_dir`) so every host path is rootable in tests.
+
+Deviations from 00-05 (recorded for later readers):
+
+- **Next-run previews are UTC.** The service computes "next 5 runs" in UTC and the UI says so (04 5.3 asks for the Host's timezone; reading the local zone safely without `unsafe` needs a dependency we did not add). Cron itself still uses the Host's zone.
+- **Privilege drop goes through a helper process.** The workspace forbids `unsafe` and `CommandExt::groups` is unstable, so `cron-run` starts `yanto exec-as --uid --gid --name -- /bin/sh -c <cmd>`; the helper runs `initgroups`, `setgid`, `setuid`, verifies root cannot be regained, then `exec`s. Linux only (other platforms refuse a user switch). Same-user runs skip the helper.
+- **Extra operation names.** The Yanto-DB archive is Owner-only, Project kinds need `backups` on the Project, so `backup_create`, `backup_download`, `backup_delete` each have a `*_yanto` twin chosen by the row's kind. Also added: `cron_preview`, `cron_reapply`, `cron_run` (session-only, CLI), `backup_prune` (session-only), `backup_targets_list`.
+- **`CronService::patch`** backs REST `PATCH /cron/{id}` (merge in the service so the permission check comes before the 404).
+- **No Range support** on backup downloads (04 7.7 marks it ASSUMPTION); full streaming with `Content-Length` and `X-Content-SHA256`.
+- **Checksum sidecar.** Each backup file gets `<file>.sha256` (`sha256sum` format) so `yanto restore yanto` can verify an archive while the DB is not available. Restore refuses an archive without one unless `--allow-unverified`.
+- **Backup trigger from the CLI.** `yanto backup yanto` records `trigger=cron` when `--keep-last/--keep-days` is passed or when run under `cron-run` (`YANTO_CRON_RUN` set), otherwise `manual` (never pruned). Retention keeps the newest successful scheduled backup even if it is older than `--keep-days`.
+- **No flock around `authorized_keys`.** The service holds the single DB writer while it writes; concurrent manual edits are caught by the `(size, mtime, sha256)` re-check and one retry (04 6.4 step 5).
+- **`cron_entries.project_id`, `backups.project_id/database_id` have no FK** until M2's `projects` exists (same reason as 0103).
+- **`block_on`** in `yanto-cli` is generic over the result type; `ServiceDeps` gained `host_mgmt` (every constructor, including `tests/identity.rs`, sets it).
+- The core permission matrix passes `Some("prj_1")` for `Access::Project` operations so a Member holding other permissions on that Project is denied with 403; id-based backup operations are exercised against seeded rows.
+
+### Yanto-DB restore runbook (D22, 04 7.6)
+
+The archive `<ts>-yanto.tar.zst` holds `yanto.db` and `keys/app.key`: treat it as RESTRICTED. The restore is CLI-only because the database is open while the service runs.
+
+```sh
+sudo systemctl stop yanto
+sudo yanto restore yanto /var/lib/yanto/backups/yanto/<ts>-yanto.tar.zst   # asks to confirm; --yes skips
+sudo systemctl start yanto
+```
+
+1. The command refuses while `systemctl is-active yanto` succeeds.
+2. It verifies the archive against the `.sha256` file next to it (or pass `--allow-unverified` for an archive without one), extracts to a private temp dir, and runs `PRAGMA integrity_check` on the copy. Any failure leaves the current files untouched.
+3. The current database is kept as `yanto.db.pre-restore-<ts>` (plus `-wal`/`-shm`); a different `keys/app.key` is kept as `keys/app.key.pre-restore-<ts>`.
+4. Sessions and API Tokens revert to the backup's time; users may have to sign in again.
+5. To undo, stop the service and move the `*.pre-restore-*` files back.
+
+### Remaining `TODO(M2-merge)` (grep for the marker)
+
+- `service/backups.rs`: `project_slug` (resolve a Project id to its slug), `targets` (list Project volumes/databases), `prune` (per-Project series), `create_project` (enable after the slug resolves) and the cfg(test) `run_project_for_test`.
+- `ports/backup.rs`: replace `UnavailableProjectBackups` with the Docker-backed `ProjectBackupPort` (volume helper container, `pg_dump`/`mysqldump` exec, stop/start guard), wired in `yanto-cli/src/cmd/common.rs::host_ports`.
+- `yanto-cli/src/cmd/backup.rs`: `backup project <slug> (--volumes|--db <service>)`; `dashboard/backups.rs` create form for Project kinds; `backup_restore` for volumes and dumps (04 7.6).
+- Migrations: follow-up `05xx` rebuilding `cron_entries` and `backups` with `REFERENCES projects (id) ON DELETE SET NULL` (and `project_databases` for `backups.database_id`).
+- Tests: `project_volume_and_database_backups_end_to_end` is `#[ignore]`d in `service/tests/backups.rs`.

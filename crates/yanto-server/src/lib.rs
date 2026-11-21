@@ -7,6 +7,7 @@ mod api_v1;
 mod app;
 mod assets;
 mod dashboard;
+mod download;
 mod error;
 mod nav;
 mod net;

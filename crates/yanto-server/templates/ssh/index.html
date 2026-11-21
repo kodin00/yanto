@@ -1,0 +1,40 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>SSH keys</h1>
+<p class="muted">Keys here are written to a marked block in <code>{{ file_path }}</code> for the Unix user <code>{{ unix_user }}</code>. Anything outside the block is never touched. Keys grant shell access as that user.</p>
+
+{% if let Some(p) = problem %}<p class="error" role="alert">{{ p }}</p>{% endif %}
+{% if let Some(n) = file_note %}<p class="{% if markers_broken %}error{% else %}muted{% endif %}" role="status">{{ n }}{% if markers_broken %}. The block is read-only until the markers are fixed by hand.{% endif %}</p>{% endif %}
+{% for w in warnings %}<p class="error" role="status">{{ w }}</p>{% endfor %}
+{% if !block_in_sync %}<p class="error" role="status">The block on disk differs from Yanto's list. Adding or removing a key rewrites it.</p>{% endif %}
+<p class="muted">{{ outside_keys }} key(s) outside the Yanto block (managed by hand).</p>
+
+<table>
+  <thead><tr><th>Name</th><th>Type</th><th>Fingerprint</th><th>Added</th><th></th></tr></thead>
+  <tbody>
+  {% for k in keys %}
+    <tr>
+      <td>{{ k.name }}</td><td>{{ k.key_type }}</td><td><code>{{ k.fingerprint }}</code></td><td>{{ k.created }}</td>
+      <td>
+        <button class="danger" hx-delete="/ssh/{{ k.id }}" hx-include="#confirm-{{ k.id }}" hx-confirm="Remove {{ k.name }} ({{ k.fingerprint }})? {{ outside_keys }} key(s) exist outside the block.">Remove</button>
+        <input id="confirm-{{ k.id }}" name="confirm_user" placeholder="{{ unix_user }}" aria-label="Type {{ unix_user }} to remove the last key" size="10">
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="muted">Removing the last key in the file is refused (lockout guard). To force it, type the Unix user name <code>{{ unix_user }}</code> next to the button. A copy of the previous file is kept as <code>authorized_keys.yanto.bak</code> next to it; restore with <code>cp authorized_keys.yanto.bak authorized_keys</code>.</p>
+
+<section class="card">
+  <h2>Add a key</h2>
+  {% if let Some(e) = error %}<p class="error" role="alert">{{ e }}</p>{% endif %}
+  <form method="post" action="/ssh" class="stack">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <label>Name <input name="name" value="{{ name }}" maxlength="64" placeholder="laptop" autocomplete="off"></label>
+    <label>Public key <textarea name="public_key" rows="3" required placeholder="ssh-ed25519 AAAA... comment">{{ public_key }}</textarea></label>
+    <p class="muted">One line, <code>type key [comment]</code>. Key options (<code>command=</code>, <code>from=</code>), DSA and RSA below 2048 bits are rejected.</p>
+    <button type="submit">Add key</button>
+  </form>
+</section>
+{% endblock %}

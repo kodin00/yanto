@@ -23,11 +23,12 @@ rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile = { workspace = true, optional = true }
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs"] }
 tower = { workspace = true, optional = true }
 tower-http.workspace = true
 tracing.workspace = true
 futures-util = { version = "0.3.34", default-features = false, features = ["alloc", "sink"] }
+tokio-util = { version = "0.7.20", features = ["io"] }
 
 [dev-dependencies]
 sqlx.workspace = true

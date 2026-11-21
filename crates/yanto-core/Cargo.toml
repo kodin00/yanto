@@ -21,13 +21,16 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 sqlx.workspace = true
+ssh-key = { version = "0.6.7", features = ["alloc", "ed25519", "ecdsa"] }
 subtle.workspace = true
+tar = "0.4.46"
 tempfile = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true
 zeroize.workspace = true
+zstd = "0.14.4"
 
 [dev-dependencies]
 tempfile.workspace = true

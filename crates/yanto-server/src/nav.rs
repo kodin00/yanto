@@ -34,6 +34,21 @@ pub const NAV: &[NavEntry] = &[
         view: Some(AppView::Users),
     },
     NavEntry {
+        label: "Cron",
+        href: "/cron",
+        view: Some(AppView::Cron),
+    },
+    NavEntry {
+        label: "SSH keys",
+        href: "/ssh",
+        view: Some(AppView::Ssh),
+    },
+    NavEntry {
+        label: "Backups",
+        href: "/backups",
+        view: Some(AppView::Backups),
+    },
+    NavEntry {
         label: "Audit",
         href: "/audit",
         view: Some(AppView::Audit),

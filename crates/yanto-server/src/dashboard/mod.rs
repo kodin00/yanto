@@ -14,10 +14,13 @@
 mod account;
 mod audit;
 mod auth;
+mod backups;
 mod containers;
+mod cron;
 mod exec;
 mod home;
 mod session;
+mod ssh;
 mod system;
 mod tokens;
 mod users;
@@ -41,6 +44,9 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .merge(audit::routes())
         .merge(containers::routes())
         .merge(system::routes())
+        .merge(cron::routes())
+        .merge(ssh::routes())
+        .merge(backups::routes())
         .route_layer(from_fn_with_state(state.clone(), session::require_session));
     Router::new()
         .merge(auth::public_routes())

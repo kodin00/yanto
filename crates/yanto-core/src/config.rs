@@ -33,6 +33,7 @@ pub struct Config {
     pub server: ServerConfig,
     pub paths: PathsConfig,
     pub ssh: SshConfig,
+    pub host: HostConfig,
     pub docker: DockerConfig,
     pub registry: RegistryConfig,
     pub ingress: IngressConfig,
@@ -60,6 +61,32 @@ pub struct PathsConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct SshConfig {
     pub authorized_keys_user: String,
+}
+
+/// Host file locations (docs/rewrite/04 sections 5-7). The defaults are the real system paths;
+/// tests and fixtures point them at temp directories.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HostConfig {
+    /// Holds `cron.d/`, `crontab` and `cron.{hourly,daily,weekly,monthly}/`.
+    pub etc_dir: PathBuf,
+    /// Per-user crontab spool.
+    pub spool_dir: PathBuf,
+    /// Account database listed for the "run as" dropdown.
+    pub passwd_file: PathBuf,
+    /// Runtime directory for lock files (systemd `RuntimeDirectory`).
+    pub run_dir: PathBuf,
+}
+
+impl Default for HostConfig {
+    fn default() -> Self {
+        Self {
+            etc_dir: "/etc".into(),
+            spool_dir: "/var/spool/cron".into(),
+            passwd_file: "/etc/passwd".into(),
+            run_dir: "/run/yanto".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -134,6 +161,7 @@ impl Default for Config {
             server: ServerConfig::default(),
             paths: PathsConfig::default(),
             ssh: SshConfig::default(),
+            host: HostConfig::default(),
             docker: DockerConfig::default(),
             registry: RegistryConfig::default(),
             ingress: IngressConfig::default(),
