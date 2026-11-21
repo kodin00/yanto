@@ -96,6 +96,8 @@ yanto_registry_tags_list | registry_tags_list | read | Read | false | false
 yanto_registry_user_create | registry_user_create | write | Write | false | false
 yanto_registry_user_delete | registry_user_delete | admin | Destructive | true | false
 yanto_registry_users_list | registry_users_list | read | Read | false | false
+yanto_settings_read | settings_read | read | Read | false | false
+yanto_settings_update | settings_update | admin | Write | true | false
 yanto_system_logs | system_logs | read | Read | false | false
 yanto_system_usage | system_usage | read | Read | false | false
 yanto_traefik_status | traefik_status | read | Read | false | false

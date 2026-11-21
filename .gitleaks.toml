@@ -1,0 +1,17 @@
+title = "Yanto gitleaks config"
+
+[extend]
+useDefault = true
+
+# The vendored, minified xterm.js bundle contains long high-entropy identifiers
+# that trip generic-api-key. Scoped to that rule and those files only.
+[[allowlists]]
+description = "Vendored minified JS: generic-api-key false positives"
+targetRules = ["generic-api-key"]
+paths = ['''^crates/yanto-server/assets/vendor/[^/]+\.js$''']
+
+# Cargo build output is gitignored; `gitleaks dir .` does not honor .gitignore and flags the
+# PEM test fixtures compiled into dependency metadata.
+[[allowlists]]
+description = "Gitignored Cargo build output"
+paths = ['''^target/''']

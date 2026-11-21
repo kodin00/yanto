@@ -25,6 +25,7 @@ pub mod project_databases;
 pub mod projects;
 pub mod registry;
 pub mod registry_credentials;
+pub mod settings;
 pub mod system;
 pub mod tokens;
 pub mod users;
@@ -152,6 +153,7 @@ pub struct Services {
     pub cloudflare: cloudflare::CloudflareService,
     pub hostnames: hostnames::HostnameService,
     pub frps: frps::FrpService,
+    pub settings: settings::SettingsService,
     engine: Arc<Engine>,
 }
 
@@ -245,6 +247,7 @@ impl Services {
                 inspector.clone(),
                 listeners,
             ),
+            settings: settings::SettingsService::new(ctx.clone(), cfg),
             cloudflare,
             engine,
             ctx,
@@ -292,6 +295,7 @@ pub fn all_operations() -> Vec<&'static OpSpec> {
     v.extend(cloudflare::OPERATIONS);
     v.extend(hostnames::OPERATIONS);
     v.extend(frps::OPERATIONS);
+    v.extend(settings::OPERATIONS);
     v.push(&audit::OP_AUDIT_LIST);
     v
 }

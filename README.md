@@ -1,125 +1,128 @@
-# Yanto Deploy
+# Yanto
 
-Yanto is a small VPS deployment platform for Git projects and Docker images. It includes a dashboard for deployments, containers, logs, host usage, FRP forwarding, and AI coding tasks.
+Yanto is a self-hosted deployment and operations tool for **one Linux server**. It deploys Projects (from a Git repository or a container image) with Docker Compose and operates their containers. It also manages the Host's cron entries, SSH authorized keys and Host Daemons, and can run a private container registry.
 
-## Quick Start
+It is one static Rust binary that runs as a systemd service. It is built for DevOps tasks only: it has no AI features and never edits your application code.
 
-Build from source:
+## Install
 
-```bash
-git clone https://github.com/kodin00/yanto.git
-cd yanto
-docker compose up -d --build
+Requirements: Linux with systemd (Debian 12+ or Ubuntu 22.04+, amd64 or arm64), Docker with the Compose plugin, and Git. The installer checks for them and prints what is missing; it does not install anything for you.
+
+```sh
+curl -fsSL https://github.com/kodin00/yanto/releases/latest/download/install.sh | sudo bash
 ```
 
-Or use the prebuilt image without cloning the repository:
+The script downloads the release binary to `/usr/local/bin/yanto`, verifies its SHA256 (and its build attestation when the `gh` CLI is present), then runs `yanto install`. The wizard writes `/etc/yanto/config.toml` and the systemd unit, starts the service and prints a one-time **setup code**. Every prompt has a flag; for unattended installs use `--non-interactive`:
 
-```bash
-mkdir yanto && cd yanto
-curl -fsSLO https://raw.githubusercontent.com/kodin00/yanto/master/compose.yml
-docker compose up -d
+```sh
+curl -fsSL https://github.com/kodin00/yanto/releases/latest/download/install.sh \
+  | sudo bash -s -- --non-interactive --ssh-user deploy
 ```
 
-No `.env` file is required. Both options start Yanto, PostgreSQL, and FRP and persist their data in Docker volumes. Open `http://localhost:8080` and create the first owner. Keep port 8080 private until the owner is created.
+### Build from source
 
-The downloaded Compose file pulls `ghcr.io/kodin00/yanto:latest`. Pin a release with `YANTO_VERSION=0.14.0 docker compose up -d`.
+[mise](https://mise.jdx.dev) pins the Rust toolchain and dev tools.
 
-## Runtime and security
-
-Yanto needs access to:
-
-- Docker through `/var/run/docker.sock`
-- projects at `/projects` (host default: `~/projects`)
-- an optional read-only host SSH directory at `/root/.ssh`
-
-Docker access and deployed code are not security boundaries. Keep the host and owner account trusted, and grant deployment or configuration permissions only to trusted operators.
-
-The first account is the owner. Manage other users and project permissions in **Settings → Users & Access**. Invitations and password-reset links expire after 24 hours. If the owner is locked out, run:
-
-```bash
-docker compose exec app npm run owner:reset
+```sh
+git clone https://github.com/kodin00/yanto && cd yanto
+mise install
+mise x -- cargo build --release -p yanto-cli
+sudo ./target/release/yanto install
 ```
 
-## AI Tasks
+## First run
 
-The owner-only **AI Tasks** workspace can run Codex, OpenAI-compatible, or Anthropic-backed coding tasks against Git projects. Each task uses a separate worktree under `/projects/.yanto-worktrees`, leaving the deployment checkout untouched.
+1. Open the dashboard. It listens on `127.0.0.1:9197` by default, so from your own machine use an SSH tunnel:
 
-Tasks can stream tool activity, continue conversations, review changes, commit, push, and clean up worktrees. Auto-commit, auto-push, and auto-clean are off by default. Tasks run inside the Yanto container with host-level capabilities, so use only trusted repositories and instructions.
+   ```sh
+   ssh -L 9197:127.0.0.1:9197 you@your-server
+   ```
 
-## Deploy webhook
+   then browse to <http://127.0.0.1:9197>.
+2. Enter the setup code and create the first Owner account. If you lost the code, run `sudo yanto setup-code` (works only while no Owner exists).
+3. Create a Project, deploy it, and optionally put a Hostname in front of it.
 
-Each project provides a token-protected deploy endpoint:
+To expose the dashboard on a real domain, set `public_url` and put it behind your own Traefik or Cloudflare Tunnel (see `yanto install --help`). Keep it off the open internet unless you need it.
 
-```bash
-curl -X POST "$APP_BASE_URL/deploy?id=<project-id>" \
-  -H "Authorization: Bearer <project-deploy-token>"
+## Features
+
+- **Projects and Deployments**: Git or image Projects, compose and `.env` editing, queued Deployments with live logs, stop, restart and rollback to the exact previous config.
+- **Webhooks**: `POST /deploy` with a Deploy Token and a GitHub push webhook.
+- **Containers**: list, start/stop/restart, logs, and an exec terminal in the dashboard (needs the `runtime` permission, audited).
+- **Users**: one Owner plus Members with per-Project permissions; invites, password resets, revocable sessions.
+- **Hostnames**: route a Project's loopback port through Cloudflare Tunnel or host Traefik, with Cloudflare zone and DNS management.
+- **Hosted Registry**: a `registry:2` container on `127.0.0.1:5000` with users, a repo/tag browser and garbage collection. Registry Credentials pull private external images.
+- **Host management**: Cron Entries in `/etc/cron.d/yanto` with run history, Authorized Keys in a marked block, Deploy Keys for private Git repos.
+- **Backups**: local and downloadable: Project volumes, Postgres/MySQL dumps and Yanto's own database. Schedule them with Cron Entries that call `yanto backup`.
+- **System**: host usage, a protected Docker prune with preview, health, audit log and runtime settings.
+- **API and MCP**: a REST API and an MCP server, both authenticated by API Tokens.
+
+### Host Daemons
+
+`cloudflared`, `frps` and Traefik are **Host Daemons**: you install and configure them on the server. Yanto only checks that they are present and running, shows install hints when they are not, and drives them (for example restarting `frps` after you confirm a config change). It never installs them. For `frps` it manages the server side only; `frpc` clients are yours to set up.
+
+## Trust model
+
+Read this before installing.
+
+- Yanto runs as **root**, on purpose. Access to the Docker socket is already root-equivalent on the Host, so a non-root user would add moving parts without a real security boundary. Yanto writes `/etc/cron.d/yanto`, edits `authorized_keys` for the configured user and controls Host Daemons.
+- **The Owner account and the Host are fully trusted.** The Owner can run containers and commands as root through Deployments, Cron Entries and Authorized Keys. Anyone who becomes the Owner owns the server.
+- Members are limited to the Projects and permissions the Owner grants. A bug in permission checks is a host compromise, so only add Members you trust with a Project's code and containers.
+- Yanto manages only the machine it runs on. Secrets at rest are encrypted with a key at `/var/lib/yanto/keys/app.key`; the Yanto database backup includes that key and is downloadable by the Owner only.
+
+## API Tokens, REST and MCP
+
+Create a token in the dashboard under **API tokens**. A token acts as its user, capped by a scope: `read` < `write` < `admin`. It is shown once. Tokens work only on `/api/v1` and `/mcp`, never on dashboard pages.
+
+REST:
+
+```sh
+curl -H "Authorization: Bearer $YANTO_TOKEN" http://127.0.0.1:9197/api/v1/projects
+curl -X POST -H "Authorization: Bearer $YANTO_TOKEN" http://127.0.0.1:9197/api/v1/projects/<id>/deploy
 ```
 
-Deployments clone or update the configured Git branch, or pull the configured image, then run Docker Compose and store the result and logs.
+Errors look like `{"error":{"code","message"}}`. The endpoints and their required scopes are listed in [docs/rewrite/03-interfaces.md](docs/rewrite/03-interfaces.md).
 
-## Configuration
+MCP:
 
-Use the setup wizard or **Settings → Runtime** for the public URL, secure cookies, Turnstile, command limits, and log retention.
+- Over HTTP, point your client at `http://127.0.0.1:9197/mcp` with the `Authorization: Bearer` header.
+- Over stdio, run `yanto mcp` with the token in a file (mode 0600) named by `YANTO_API_TOKEN_FILE`. The token is never taken from command-line arguments.
 
-Compose provides defaults for optional environment variables. The most commonly changed are:
+Sensitive tools require `confirm: true`. Container exec is not available over REST or MCP.
 
-- `YANTO_VERSION` and `PORT`
-- `POSTGRES_PASSWORD` and `DATABASE_URL`
-- `HOST_PROJECTS_ROOT` and `SSH_SOURCE_DIR`
-- `APP_BASE_URL` and `YANTO_SETUP_CODE`
-- `MCP_TOKEN_SECRET`, `MCP_ALLOWED_HOSTS`, and `MCP_ALLOWED_ORIGINS`
-- `FRP_BIND_PORT`, `FRP_PORT_START`, and `FRP_PORT_END`
+## Upgrade and uninstall
 
-Signing secrets are generated and persisted automatically unless explicitly provided. Settings supplied through the UI are stored in PostgreSQL.
-
-## MCP
-
-Create a scoped token in **Settings → MCP access**. HTTP clients connect to `POST /mcp` with `Authorization: Bearer ymcp_...`. Tokens support `read`, `write`, and `admin` scopes; sensitive admin operations also require `confirm: true`.
-
-For local stdio access:
-
-```bash
-docker compose exec -T -e YANTO_MCP_TOKEN=ymcp_... app \
-  node dist/server/server/mcp/stdio.js
+```sh
+sudo yanto self-update --check   # is there a newer release?
+sudo yanto self-update           # verify, copy the database, swap the binary, restart
+sudo yanto self-update --rollback
 ```
 
-## FRP forwarding
+Rolling back after a database migration means restoring the pre-update copy under `/var/lib/yanto/backups/yanto/` by hand while the service is stopped.
 
-Use the **FRP** screen to expose TCP or UDP services behind CGNAT. Configure the VPS IP or a DNS-only hostname, then copy the generated client script or `frpc.toml` to the client server.
-
-With the default ports, allow:
-
-```bash
-sudo ufw allow 7000/tcp
-sudo ufw allow 25560:25600/tcp
-sudo ufw allow 25560:25600/udp
+```sh
+sudo yanto uninstall             # keeps your data
+sudo yanto uninstall --purge     # also deletes config, database, backups and keys
 ```
 
-Yanto does not manage firewall rules. See [FRP_GUIDE.md](FRP_GUIDE.md) for setup and troubleshooting.
-
-## Git SSH
-
-If Git authentication fails, verify the key inside the app container:
-
-```bash
-docker compose exec app ssh -T git@github.com
-docker compose exec app ls -la /root/.ssh
-```
-
-Set `SSH_SOURCE_DIR` to the host user’s SSH directory, or add a key in **Settings → Git SSH key**.
+Other commands: `yanto doctor`, `yanto owner-reset`, `yanto backup`, `yanto version`.
 
 ## Development
 
-```bash
-npm install
-npm run dev:full
-npm run typecheck
-npm test
-npm run lint
+Everything runs through [mise](https://mise.jdx.dev):
+
+```sh
+mise install        # Rust, cargo-audit, gitleaks, sqlx-cli
+mise run dev        # serve against ./dev-data on 127.0.0.1:9197
+mise run fmt        # cargo fmt --check
+mise run clippy     # clippy with warnings denied
+mise run test       # tests (no Docker needed)
+mise run audit      # cargo audit
+mise run secrets    # gitleaks
+mise run ci         # all of the above
+mise run build      # static musl release build (Linux with musl-tools)
 ```
 
-## Releases and deployment
+Docker-backed tests are ignored by default: `cargo test -p yanto-host -- --ignored`.
 
-Pushing a semantic version tag such as `v0.14.0` publishes `linux/amd64` and `linux/arm64` images to `ghcr.io/kodin00/yanto`. Stable releases also update `latest`.
-
-Pushes to `master` run typecheck, lint, tests, and build before deploying over SSH. Configure `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, and `VPS_APP_DIR` as GitHub Actions secrets; `VPS_PORT` is optional.
+The design lives in [docs/rewrite](docs/rewrite) and [docs/adr](docs/adr); vocabulary is in [CONTEXT.md](CONTEXT.md); the legacy TypeScript system is described in [docs/legacy](docs/legacy). See [CHANGELOG.md](CHANGELOG.md) for release notes.

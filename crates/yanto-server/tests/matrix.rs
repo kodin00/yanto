@@ -226,6 +226,13 @@ fn rest_routes(bob: &str, yb: &str, pb: &str) -> Vec<Rest> {
             json!({}),
             owner_admin,
         ),
+        r(Method::GET, "/api/v1/settings", json!({}), owner_read),
+        r(
+            Method::PATCH,
+            "/api/v1/settings",
+            json!({"deploy.max_concurrent": 3}),
+            owner_admin,
+        ),
         r(Method::GET, "/api/v1/backups", json!({}), any),
         r(Method::GET, "/api/v1/backups/targets", json!({}), any),
         r(
@@ -655,6 +662,14 @@ fn dash_routes() -> Vec<Dash> {
         ),
         d(Method::POST, "/cron/crn_x/toggle", &[], true, false),
         d(Method::DELETE, "/cron/crn_x", &[], true, false),
+        d(Method::GET, "/settings", &[], false, false),
+        d(
+            Method::POST,
+            "/settings",
+            &[("deploy.max_concurrent", "3")],
+            false,
+            false,
+        ),
         d(Method::GET, "/ssh", &[], false, false),
         d(
             Method::POST,

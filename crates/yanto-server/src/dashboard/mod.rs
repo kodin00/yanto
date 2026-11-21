@@ -25,6 +25,7 @@ mod hostnames;
 mod projects;
 mod registry;
 mod session;
+mod settings;
 mod ssh;
 mod system;
 mod tokens;
@@ -57,6 +58,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .merge(hostnames::routes())
         .merge(cloudflare::routes())
         .merge(frp::routes())
+        .merge(settings::routes())
         .route_layer(from_fn_with_state(state.clone(), session::require_session));
     Router::new()
         .merge(auth::public_routes())

@@ -1,11 +1,7 @@
-node_modules
-dist
+/target
+/dev-data
 .env
 .DS_Store
-coverage
 *.log
 tmp
 .mcp.json
-
-/target
-/dev-data

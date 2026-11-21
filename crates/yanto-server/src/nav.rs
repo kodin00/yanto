@@ -104,6 +104,11 @@ pub const NAV: &[NavEntry] = &[
         view: Some(AppView::Audit),
     },
     NavEntry {
+        label: "Settings",
+        href: "/settings",
+        view: Some(AppView::Settings),
+    },
+    NavEntry {
         label: "API tokens",
         href: "/settings/api-tokens",
         view: None,

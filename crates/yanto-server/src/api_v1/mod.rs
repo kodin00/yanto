@@ -17,6 +17,7 @@ mod ingress;
 mod me;
 mod projects;
 mod registry;
+mod settings;
 mod system;
 mod users;
 
@@ -50,6 +51,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .merge(backups::routes())
         .merge(projects::routes())
         .merge(registry::routes())
+        .merge(settings::routes())
         .merge(ingress::routes())
         .fallback(not_found)
         .layer(axum::middleware::map_response(no_store))

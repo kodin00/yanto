@@ -62,7 +62,7 @@ impl Engine {
                 .command_timeout()
                 .unwrap_or(Duration::from_secs(3600)),
             log_max_bytes: i64::try_from(config.deploy.log_max_bytes).unwrap_or(500_000),
-            retention: 50,
+            retention: i64::from(config.deploy.retention_per_project.max(1)),
             wake: Notify::new(),
             cancels: Mutex::new(HashMap::new()),
             containers_changed: std::sync::OnceLock::new(),
