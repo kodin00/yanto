@@ -10,6 +10,7 @@
 
 mod audit;
 mod me;
+mod projects;
 mod users;
 
 use axum::extract::{ConnectInfo, FromRequest, FromRequestParts, Request};
@@ -35,6 +36,7 @@ pub fn routes(state: &AppState) -> Router<AppState> {
         .merge(me::routes())
         .merge(audit::routes())
         .merge(users::routes())
+        .merge(projects::routes())
         .fallback(not_found)
         .layer(axum::middleware::map_response(no_store))
 }
