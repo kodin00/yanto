@@ -77,6 +77,7 @@ pub fn router(state: AppState) -> Router {
         .merge(assets::routes())
         .merge(webhooks::routes())
         .nest("/api/v1", api_v1::routes(&state))
+        .nest_service("/mcp", crate::mcp::router(&state))
         .merge(dashboard::routes(&state))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .layer(header(

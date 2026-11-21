@@ -9,6 +9,7 @@ mod assets;
 mod dashboard;
 mod download;
 mod error;
+pub mod mcp;
 mod nav;
 mod net;
 mod webhooks;
