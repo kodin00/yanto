@@ -7,6 +7,12 @@
 //! Fakes for host-side ports live next to this file, one per port
 //! (docs/rewrite/08-conventions.md "Ports and fakes").
 
+pub mod authkeys;
+pub mod backup;
+pub mod cron;
+pub mod hostmgmt;
+pub mod users;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
@@ -67,6 +73,8 @@ pub struct TestCore {
     pub clock: Arc<FakeClock>,
     pub services: Services,
     pub config: Config,
+    /// Fakes behind the M5 host-management ports (cron, authorized_keys, backups, users).
+    pub host: hostmgmt::HostFakes,
 }
 
 impl TestCore {
@@ -76,12 +84,14 @@ impl TestCore {
         config.paths.data_dir = dir.path().to_path_buf();
         let db = Db::open(&config.db_path()).await.expect("open db");
         let clock = Arc::new(FakeClock::new());
+        let host = hostmgmt::HostFakes::new(&dir.path().join("home"));
         let services = Services::new(ServiceDeps {
             db: db.clone(),
             config: &config,
             clock: clock.clone(),
             secrets: Arc::new(Secrets::ephemeral()),
             passwords: Passwords::cheap_for_tests(),
+            host_mgmt: host.ports(),
         });
         Self {
             dir,
@@ -89,6 +99,7 @@ impl TestCore {
             clock,
             services,
             config,
+            host,
         }
     }
 

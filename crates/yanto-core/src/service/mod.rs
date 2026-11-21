@@ -11,6 +11,7 @@
 
 pub mod audit;
 pub mod auth;
+pub mod cron;
 pub mod tokens;
 pub mod users;
 
@@ -27,7 +28,7 @@ use crate::db::repo::access;
 use crate::db::repo::users::UserRow;
 use crate::error::CoreError;
 use crate::password::Passwords;
-use crate::ports::Clock;
+use crate::ports::{Clock, HostMgmtPorts};
 use crate::ratelimit::FailureLimiter;
 use crate::secrets::Secrets;
 
@@ -56,6 +57,8 @@ pub struct ServiceDeps<'a> {
     pub clock: Arc<dyn Clock>,
     pub secrets: Arc<Secrets>,
     pub passwords: Passwords,
+    /// Host side of Cron Entries, Authorized Keys and Backups (M5).
+    pub host_mgmt: HostMgmtPorts,
 }
 
 /// Shared, cheaply cloneable context held by every service.
@@ -112,6 +115,7 @@ pub struct Services {
     pub auth: auth::AuthService,
     pub users: users::UserService,
     pub tokens: tokens::TokenService,
+    pub cron: cron::CronService,
 }
 
 impl Services {
@@ -136,6 +140,7 @@ impl Services {
             auth: auth::AuthService::new(ctx.clone()),
             users: users::UserService::new(ctx.clone()),
             tokens: tokens::TokenService::new(ctx.clone()),
+            cron: cron::CronService::new(ctx.clone(), deps.host_mgmt.clone()),
             ctx,
         }
     }
@@ -153,6 +158,7 @@ pub fn all_operations() -> Vec<&'static OpSpec> {
     v.extend(auth::OPERATIONS);
     v.extend(users::OPERATIONS);
     v.extend(tokens::OPERATIONS);
+    v.extend(cron::OPERATIONS);
     v.push(&audit::OP_AUDIT_LIST);
     v
 }
