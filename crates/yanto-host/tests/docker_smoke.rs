@@ -176,6 +176,82 @@ async fn git_and_image_projects_deploy_roll_back_and_clean_up() {
         1
     );
 
+    // --- container -> Project mapping against the real Compose labels: a Member with `runtime`
+    // on this Project sees and can restart its container, a Member of another Project and a
+    // Member with view-only access cannot act, and unrelated containers on this Host stay hidden.
+    {
+        use std::collections::{BTreeMap, BTreeSet};
+        use yanto_core::actor::{ActorKind, Channel, Permission, Role};
+        let member = |perm: &[Permission], project: &str| {
+            let mut grants = BTreeMap::new();
+            grants.insert(
+                project.to_owned(),
+                perm.iter().copied().collect::<BTreeSet<_>>(),
+            );
+            Actor {
+                kind: ActorKind::User,
+                user_id: Some("usr_smoke".into()),
+                label: "smoke".into(),
+                role: Role::Member,
+                grants,
+                channel: Channel::Dashboard,
+                ip: None,
+                request_id: None,
+            }
+        };
+        let runner = member(&[Permission::Runtime], &img.id);
+        let viewer = member(&[], &img.id);
+        let elsewhere = member(&[Permission::Runtime], "prj_other");
+        let list = services.containers.list(&runner).await.unwrap().containers;
+        assert_eq!(list.len(), 1, "only this Project's container: {list:?}");
+        let web = list[0].clone();
+        assert_eq!(web.project.as_deref(), Some(img.id.as_str()));
+        assert_eq!(web.compose_project.as_deref(), Some(img_slug.as_str()));
+        services.containers.restart(&runner, &web.id).await.unwrap();
+        assert_eq!(
+            services
+                .containers
+                .stop(&viewer, &web.id)
+                .await
+                .unwrap_err()
+                .kind,
+            yanto_core::ErrorKind::Forbidden
+        );
+        assert_eq!(
+            services
+                .containers
+                .stop(&elsewhere, &web.id)
+                .await
+                .unwrap_err()
+                .kind,
+            yanto_core::ErrorKind::NotFound
+        );
+        assert!(
+            services
+                .containers
+                .list(&elsewhere)
+                .await
+                .unwrap()
+                .containers
+                .is_empty()
+        );
+        assert!(
+            services
+                .containers
+                .list(&cli)
+                .await
+                .unwrap()
+                .containers
+                .len()
+                >= list.len(),
+            "the Owner sees every container on the Host"
+        );
+        assert!(
+            http_get(p_img).contains("200 OK"),
+            "the container restarted by the Member serves again"
+        );
+    }
+
     let d2 = services
         .deployments
         .deploy(&cli, &img.id, &DeployRequest::default())
