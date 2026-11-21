@@ -29,6 +29,11 @@ const GIT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const PULL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const QUICK_TIMEOUT: Duration = Duration::from_secs(60);
 pub const OVERRIDE_FILE: &str = ".yanto.restart.override.yml";
+/// Label of the fast-forward pull step. A Deployment that fails here carries it in `error`, which
+/// is how the UI knows to offer "Reset checkout" (04 1.6).
+pub const PULL_STEP: &str = "git pull (fast-forward only)";
+pub(crate) const FETCH_TIMEOUT: Duration = GIT_TIMEOUT;
+pub(crate) const REV_TIMEOUT: Duration = QUICK_TIMEOUT;
 
 #[derive(Debug)]
 pub struct StepError {
@@ -247,6 +252,93 @@ async fn finalize(
     });
 }
 
+/// `GIT_SSH_COMMAND` and friends for every git command run for a Project: no prompts, only
+/// ssh/https, a private `known_hosts`, and the Deploy Key when there is one.
+pub(crate) fn git_env_for(
+    data_dir: &std::path::Path,
+    key: Option<&KeyFile>,
+) -> Vec<(String, String)> {
+    let known = data_dir.join("ssh").join("known_hosts");
+    let mut ssh = String::from("ssh");
+    if let Some(k) = key {
+        ssh.push_str(&format!(" -i {} -o IdentitiesOnly=yes", k.path().display()));
+    }
+    ssh.push_str(&format!(
+        " -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile={}",
+        known.display()
+    ));
+    vec![
+        ("GIT_TERMINAL_PROMPT".into(), "0".into()),
+        ("GIT_ALLOW_PROTOCOL".into(), "ssh:https".into()),
+        ("GIT_SSH_COMMAND".into(), ssh),
+    ]
+}
+
+/// Materialize the Project's Deploy Key for the duration of a git command; the file is removed when
+/// the returned [`KeyFile`] drops. The error text is safe to show.
+pub(crate) async fn open_deploy_key(
+    eng: &Engine,
+    p: &ProjectRow,
+) -> Result<Option<KeyFile>, KeyError> {
+    let Some(kid) = &p.deploy_key_id else {
+        return Ok(None);
+    };
+    let row = {
+        let mut conn = eng
+            .ctx
+            .db
+            .reader()
+            .acquire()
+            .await
+            .map_err(|e| KeyError::Core(db_err(e)))?;
+        deploy_keys::get(&mut conn, kid)
+            .await
+            .map_err(KeyError::Core)?
+    };
+    let Some(row) = row else {
+        return Err(KeyError::Message(
+            "the Project's deploy key no longer exists",
+        ));
+    };
+    let pem = eng
+        .ctx
+        .secrets
+        .open(
+            "deploy_keys",
+            "private_key_enc",
+            &row.id,
+            &row.private_key_enc,
+        )
+        .map_err(|_| KeyError::Message("the deploy key cannot be decrypted"))?;
+    KeyFile::materialize(&eng.data_dir, &p.slug, pem.expose())
+        .map(Some)
+        .map_err(KeyError::Core)
+}
+
+#[derive(Debug)]
+pub(crate) enum KeyError {
+    Message(&'static str),
+    Core(CoreError),
+}
+
+impl KeyError {
+    pub(crate) fn into_core(self) -> CoreError {
+        match self {
+            KeyError::Message(m) => CoreError::conflict(m),
+            KeyError::Core(e) => e,
+        }
+    }
+}
+
+impl StepError {
+    fn from_key_error(e: KeyError) -> Self {
+        match e {
+            KeyError::Message(m) => StepError::failed(m),
+            KeyError::Core(e) => e.into(),
+        }
+    }
+}
+
 impl Run {
     fn note(&self, line: &str) {
         self.log.system(line);
@@ -422,20 +514,7 @@ impl Run {
     }
 
     fn git_env(&self, key: Option<&KeyFile>) -> Vec<(String, String)> {
-        let known = self.eng.data_dir.join("ssh").join("known_hosts");
-        let mut ssh = String::from("ssh");
-        if let Some(k) = key {
-            ssh.push_str(&format!(" -i {} -o IdentitiesOnly=yes", k.path().display()));
-        }
-        ssh.push_str(&format!(
-            " -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile={}",
-            known.display()
-        ));
-        vec![
-            ("GIT_TERMINAL_PROMPT".into(), "0".into()),
-            ("GIT_ALLOW_PROTOCOL".into(), "ssh:https".into()),
-            ("GIT_SSH_COMMAND".into(), ssh),
-        ]
+        git_env_for(&self.eng.data_dir, key)
     }
 
     async fn git_phase(&self) -> Step<(Option<String>, Option<String>)> {
@@ -515,7 +594,7 @@ impl Run {
             }
             self.run(
                 git(&["pull", "--ff-only", "origin", &branch], GIT_TIMEOUT),
-                &step("pull (fast-forward only)"),
+                &format!("{PULL_STEP}{hint}"),
             )
             .await?;
         }
@@ -546,34 +625,9 @@ impl Run {
     }
 
     async fn deploy_key(&self) -> Step<Option<KeyFile>> {
-        let Some(kid) = &self.project.deploy_key_id else {
-            return Ok(None);
-        };
-        let row = {
-            let mut conn = self.eng.ctx.db.reader().acquire().await.map_err(db_err)?;
-            deploy_keys::get(&mut conn, kid).await?
-        };
-        let Some(row) = row else {
-            return Err(StepError::failed(
-                "the Project's deploy key no longer exists",
-            ));
-        };
-        let pem = self
-            .eng
-            .ctx
-            .secrets
-            .open(
-                "deploy_keys",
-                "private_key_enc",
-                &row.id,
-                &row.private_key_enc,
-            )
-            .map_err(|_| StepError::failed("the deploy key cannot be decrypted"))?;
-        Ok(Some(KeyFile::materialize(
-            &self.eng.data_dir,
-            &self.project.slug,
-            pem.expose(),
-        )?))
+        open_deploy_key(&self.eng, &self.project)
+            .await
+            .map_err(StepError::from_key_error)
     }
 
     /// Write compose/env files, then snapshot what actually ran (D25).

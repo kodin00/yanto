@@ -26,6 +26,7 @@ pub fn routes() -> Router<AppState> {
         .route("/deployments", get(index))
         .route("/deployments/{id}", get(detail))
         .route("/deployments/{id}/cancel", post(cancel))
+        .route("/projects/{id}/reset-checkout", post(reset_checkout))
         .route("/deployments/{id}/logs", get(logs_text))
         .route("/deployments/{id}/logs/stream", get(logs_stream))
         .route("/_f/deployments/active", get(active_fragment))
@@ -112,6 +113,8 @@ struct DetailPage {
     ctx: PageCtx,
     d: DeploymentView,
     can_cancel: bool,
+    /// The pull failed to fast-forward and the actor may reset the checkout.
+    can_reset: bool,
 }
 
 async fn detail(
@@ -132,6 +135,10 @@ async fn detail(
         can_cancel: actor
             .authorize(&dep::OP_DEPLOYMENT_CANCEL, Some(&d.project_id))
             .is_ok(),
+        can_reset: d.reset_offered
+            && actor
+                .authorize(&dep::OP_PROJECT_RESET_CHECKOUT, Some(&d.project_id))
+                .is_ok(),
         d: (&d).into(),
     }))
 }
@@ -272,4 +279,29 @@ async fn active_fragment(
     }
     html.push_str("</ul>");
     Ok(Html(html).into_response())
+}
+
+/// htmx: reset the Project's checkout to `origin/<branch>`, then answer a status fragment.
+async fn reset_checkout(
+    State(s): State<AppState>,
+    session: Session,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, DashError> {
+    let out = s
+        .services
+        .deployments
+        .reset_checkout(&session.0.actor, &id)
+        .await
+        .map_err(|e| DashError::new(e, &headers))?;
+    let short = |sha: &str| sha.chars().take(12).collect::<String>();
+    Ok(super::toast(
+        &format!(
+            "Checkout reset to origin/{} ({}). Deploy again.",
+            out.branch,
+            short(&out.to)
+        ),
+        false,
+    )
+    .into_response())
 }

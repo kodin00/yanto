@@ -166,6 +166,10 @@ const GRID: &[(&str, &str)] = &[
         "Y   Y    Y   Y   Y   Y   Y   Y   Y",
     ),
     ("project_rollback", "Y   Y    N   N   Y   N   N   Y   Y"),
+    (
+        "project_reset_checkout",
+        "Y   Y    N   N   Y   N   N   Y   Y",
+    ),
     ("deployments_list", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
     ("deployment_get", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
     ("deployment_logs", "Y   Y    Y   Y   Y   Y   Y   Y   Y"),
@@ -682,6 +686,7 @@ async fn invoke_m2(f: &Fixture, op: &str, a: &Actor) -> Option<Result<(), CoreEr
             .rollback(a, p, &RollbackRequest::default())
             .await
             .map(|_| ()),
+        "project_reset_checkout" => s.deployments.reset_checkout(a, p).await.map(|_| ()),
         "deployments_list" => s.deployments.list(a, &Default::default()).await.map(|_| ()),
         "deployment_get" => s.deployments.get(a, d).await.map(|_| ()),
         "deployment_logs" => s.deployments.logs(a, d, None).await.map(|_| ()),
