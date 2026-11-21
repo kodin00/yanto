@@ -178,7 +178,11 @@ pub enum ActorKind {
     /// A signed-in dashboard user (session cookie).
     User,
     /// An API Token acting as its owning user (D23).
-    ApiToken { token_id: String, scope: Scope },
+    ApiToken {
+        token_id: String,
+        token_name: String,
+        scope: Scope,
+    },
     /// The local root operator running the `yanto` CLI (ADR 0007): trusted.
     Cli,
 }
@@ -209,6 +213,8 @@ pub enum Need {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Access {
+    /// No actor needed: the operation validates its own credential (login, setup code, invite token).
+    Public,
     /// Any authenticated actor (still subject to `token_allowed` / `min_scope`).
     Authenticated,
     /// Owner only; Members and their tokens always get 403.
@@ -293,7 +299,7 @@ impl Actor {
             }
         }
         match op.access {
-            Access::Authenticated => Ok(()),
+            Access::Public | Access::Authenticated => Ok(()),
             Access::Owner => {
                 if self.is_owner() {
                     Ok(())
@@ -423,6 +429,8 @@ mod tests {
     fn token(mut a: Actor, scope: Scope) -> Actor {
         a.kind = ActorKind::ApiToken {
             token_id: "tok_x".into(),
+            token_name: "ci".into(),
+            token_name: "ci".into(),
             scope,
         };
         a.channel = Channel::Rest;
