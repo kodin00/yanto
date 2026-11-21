@@ -18,6 +18,7 @@ use yanto_core::service::deployments::{
 use crate::api_v1::ApiActor;
 use crate::app::AppState;
 use crate::error::ApiError;
+use crate::stream_guard::{RECHECK, revocable, token_check};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -184,7 +185,11 @@ async fn logs_stream(
             LogStreamItem::Done(st) => Event::default().event("done").data(st),
         })
     });
-    Ok(Sse::new(events)
+    let check = token_check(s.services.clone(), &headers, a.ip.clone(), move |svc, a| {
+        let id = id.clone();
+        async move { svc.deployments.get(&a, &id).await.is_ok() }
+    });
+    Ok(Sse::new(revocable(events, check, RECHECK))
         .keep_alive(KeepAlive::default())
         .into_response())
 }

@@ -19,7 +19,9 @@ use super::ansi::ansi_to_html;
 use super::redirect;
 use crate::app::AppState;
 use crate::dashboard::session::Session;
+use crate::dashboard::session::cookie_value;
 use crate::dashboard::view::{DashError, PageCtx, escape, fmt_opt_ts, fmt_ts, render};
+use crate::stream_guard::{RECHECK, revocable, session_check};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -212,7 +214,16 @@ async fn logs_stream(
             LogStreamItem::Done(st) => Event::default().event("done").data(st),
         })
     });
-    let mut res = Sse::new(events)
+    let check = session_check(
+        s.services.clone(),
+        cookie_value(&headers).unwrap_or_default(),
+        session.0.actor.ip.clone(),
+        move |svc, a| {
+            let id = id.clone();
+            async move { svc.deployments.get(&a, &id).await.is_ok() }
+        },
+    );
+    let mut res = Sse::new(revocable(events, check, RECHECK))
         .keep_alive(KeepAlive::default())
         .into_response();
     res.headers_mut()
@@ -239,7 +250,13 @@ async fn events(
                 .unwrap_or_else(|_| Event::default().event("status")),
         )
     });
-    let mut res = Sse::new(events)
+    let check = session_check(
+        s.services.clone(),
+        cookie_value(&headers).unwrap_or_default(),
+        session.0.actor.ip.clone(),
+        |_, _| async { true },
+    );
+    let mut res = Sse::new(revocable(events, check, RECHECK))
         .keep_alive(KeepAlive::default())
         .into_response();
     res.headers_mut()

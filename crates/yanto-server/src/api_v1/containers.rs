@@ -17,6 +17,7 @@ use yanto_core::service::containers::{ContainerDetailDto, ContainerList};
 use super::ApiActor;
 use crate::app::AppState;
 use crate::error::{ApiError, public_message};
+use crate::stream_guard::{RECHECK, lost_access, revocable, token_check};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -81,6 +82,7 @@ struct StreamParams {
 async fn logs_stream(
     State(s): State<AppState>,
     ApiActor(a): ApiActor,
+    headers: axum::http::HeaderMap,
     Path(id): Path<String>,
     params: Result<Query<StreamParams>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
@@ -94,7 +96,16 @@ async fn logs_stream(
             Err(e) => Event::default().event("error").data(public_message(&e)),
         })
     });
-    Ok(Sse::new(events).keep_alive(KeepAlive::default()))
+    let check = token_check(s.services.clone(), &headers, a.ip.clone(), move |svc, a| {
+        let id = id.clone();
+        async move {
+            match svc.containers.get(&a, &id).await {
+                Ok(_) => true,
+                Err(e) => !lost_access(&e),
+            }
+        }
+    });
+    Ok(Sse::new(revocable(events, check, RECHECK)).keep_alive(KeepAlive::default()))
 }
 
 async fn start(
