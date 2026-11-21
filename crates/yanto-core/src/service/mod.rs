@@ -18,6 +18,7 @@ pub mod cron;
 pub mod deploy_keys;
 pub mod deployments;
 pub mod projects;
+pub mod registry;
 pub mod registry_credentials;
 pub mod system;
 pub mod tokens;
@@ -72,6 +73,8 @@ pub struct ServiceDeps<'a> {
     /// Host side of Cron Entries, Authorized Keys and Backups (M5).
     pub host_mgmt: HostMgmtPorts,
     pub host: HostPorts,
+    /// Hosted Registry (M6): HTTP API client and tunables.
+    pub registry: crate::ports::RegistryDeps,
 }
 
 /// Shared, cheaply cloneable context held by every service.
@@ -137,6 +140,7 @@ pub struct Services {
     pub deployments: deployments::DeploymentService,
     pub deploy_keys: deploy_keys::DeployKeyService,
     pub registry_credentials: registry_credentials::RegistryCredentialService,
+    pub registry: registry::RegistryService,
     engine: Arc<Engine>,
 }
 
@@ -157,6 +161,15 @@ impl Services {
             base_url: base_url.into(),
             limits: Arc::new(Limits::new()),
         };
+        let registry = registry::RegistryService::new(
+            ctx.clone(),
+            deps.registry,
+            deps.host.command.clone(),
+            deps.docker.clone(),
+            deps.host.probe.clone(),
+            cfg.paths.data_dir.clone(),
+            cfg.server.port,
+        );
         let engine = Engine::new(ctx.clone(), deps.host, cfg);
         let projects: Arc<dyn containers::ContainerProjects> =
             Arc::new(containers::SlugProjects::new(ctx.clone()));
@@ -192,6 +205,7 @@ impl Services {
             deployments: deployments::DeploymentService::new(ctx.clone(), engine.clone()),
             deploy_keys: deploy_keys::DeployKeyService::new(ctx.clone()),
             registry_credentials: registry_credentials::RegistryCredentialService::new(ctx.clone()),
+            registry,
             engine,
             ctx,
         }
@@ -224,6 +238,7 @@ pub fn all_operations() -> Vec<&'static OpSpec> {
     v.extend(deployments::OPERATIONS);
     v.extend(deploy_keys::OPERATIONS);
     v.extend(registry_credentials::OPERATIONS);
+    v.extend(registry::OPERATIONS);
     v.push(&audit::OP_AUDIT_LIST);
     v
 }

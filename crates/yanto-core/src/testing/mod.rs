@@ -94,6 +94,8 @@ pub struct TestCore {
     pub commands: Arc<FakeCommands>,
     pub probe: Arc<FakeHostProbe>,
     pub registry_auth: Arc<FakeRegistryAuth>,
+    /// Hosted Registry HTTP API (M6).
+    pub registry_api: Arc<FakeRegistryApi>,
 }
 
 impl TestCore {
@@ -115,6 +117,7 @@ impl TestCore {
         let commands = FakeCommands::new();
         let probe = Arc::new(FakeHostProbe::default());
         let registry_auth = Arc::new(FakeRegistryAuth::default());
+        let registry_api = Arc::new(FakeRegistryApi::default());
         let services = Services::new(ServiceDeps {
             db: db.clone(),
             config: &config,
@@ -129,6 +132,12 @@ impl TestCore {
                 probe: probe.clone(),
                 registry_auth: registry_auth.clone(),
             },
+            registry: {
+                let mut r = crate::ports::RegistryDeps::new(registry_api.clone());
+                r.bcrypt_cost = 4;
+                r.startup_wait = Duration::from_millis(100);
+                r
+            },
         });
         Self {
             dir,
@@ -142,6 +151,7 @@ impl TestCore {
             commands,
             probe,
             registry_auth,
+            registry_api,
         }
     }
 

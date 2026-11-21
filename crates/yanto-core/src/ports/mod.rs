@@ -34,6 +34,8 @@ pub use docker::*;
 pub use host_probe::{HostProbePort, Listener};
 pub use host_stats::*;
 pub use hostmgmt::{HostMgmtPorts, Unsupported};
-pub use registry_api::{ManifestInfo, Page, RegistryApiError, RegistryApiPort, RegistryEndpoint};
+pub use registry_api::{
+    ManifestInfo, Page, RegistryApiError, RegistryApiPort, RegistryDeps, RegistryEndpoint,
+};
 pub use registry_auth::{AuthEntry, RegistryAuthPort};
 pub use users::{HostUsers, UnixUser};

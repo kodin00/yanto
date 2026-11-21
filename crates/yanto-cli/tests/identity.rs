@@ -75,6 +75,9 @@ async fn setup_code_then_owner_reset() {
         passwords: Passwords::cheap_for_tests(),
         docker: Arc::new(yanto_core::testing::docker::FakeDocker::new()),
         host_stats: Arc::new(yanto_core::testing::host_stats::FakeHostStats::new()),
+        registry: yanto_core::ports::RegistryDeps::new(
+            Arc::new(yanto_host::HttpRegistryApi::new()),
+        ),
         host_mgmt: yanto_core::ports::HostMgmtPorts::unsupported(),
         host: yanto_core::deploy::HostPorts {
             command: Arc::new(yanto_host::TokioCommands),

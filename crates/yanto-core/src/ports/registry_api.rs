@@ -82,3 +82,30 @@ pub trait RegistryApiPort: Send + Sync + 'static {
         digest: &str,
     ) -> Result<(), RegistryApiError>;
 }
+
+/// What the Hosted Registry service needs from the outside besides the shared docker and
+/// command ports: the HTTP client and two tunables.
+#[derive(Clone)]
+pub struct RegistryDeps {
+    pub api: std::sync::Arc<dyn RegistryApiPort>,
+    /// bcrypt cost for registry user hashes (10 in production, 4 in tests).
+    pub bcrypt_cost: u32,
+    /// How long `enable`/restarts wait for the API to answer.
+    pub startup_wait: std::time::Duration,
+}
+
+impl RegistryDeps {
+    pub fn new(api: std::sync::Arc<dyn RegistryApiPort>) -> Self {
+        Self {
+            api,
+            bcrypt_cost: crate::hosted_registry::BCRYPT_COST,
+            startup_wait: std::time::Duration::from_secs(20),
+        }
+    }
+}
+
+impl std::fmt::Debug for RegistryDeps {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RegistryDeps")
+    }
+}

@@ -193,6 +193,33 @@ const GRID: &[(&str, &str)] = &[
         "registry_credential_delete",
         "Y   N    N   N   Y   N   N   N   Y",
     ),
+    // M6 Hosted Registry: Owner-only; scope per OpSpec (read < write < admin).
+    ("registry_status", "Y   N    Y   Y   Y   N   N   N   Y"),
+    ("registry_users_list", "Y   N    Y   Y   Y   N   N   N   Y"),
+    ("registry_repos_list", "Y   N    Y   Y   Y   N   N   N   Y"),
+    ("registry_tags_list", "Y   N    Y   Y   Y   N   N   N   Y"),
+    (
+        "registry_tag_delete_preview",
+        "Y   N    Y   Y   Y   N   N   N   Y",
+    ),
+    ("registry_gc_status", "Y   N    Y   Y   Y   N   N   N   Y"),
+    ("registry_user_create", "Y   N    N   Y   Y   N   N   N   Y"),
+    (
+        "registry_user_password_set",
+        "Y   N    N   Y   Y   N   N   N   Y",
+    ),
+    ("registry_user_delete", "Y   N    N   N   Y   N   N   N   Y"),
+    ("registry_enable", "Y   N    N   N   Y   N   N   N   Y"),
+    ("registry_disable", "Y   N    N   N   Y   N   N   N   Y"),
+    (
+        "registry_settings_update",
+        "Y   N    N   N   Y   N   N   N   Y",
+    ),
+    ("registry_restart", "Y   N    N   N   Y   N   N   N   Y"),
+    ("registry_rerender", "Y   N    N   N   Y   N   N   N   Y"),
+    ("registry_tag_delete", "Y   N    N   N   Y   N   N   N   Y"),
+    ("registry_gc_preview", "Y   N    N   N   Y   N   N   N   Y"),
+    ("registry_gc", "Y   N    N   N   Y   N   N   N   Y"),
 ];
 
 /// Project-scoped operations are checked against prj_1 (Alice's only Project).
@@ -465,6 +492,7 @@ async fn invoke(f: &Fixture, op: &str, a: &Actor) -> Result<(), CoreError> {
         "backup_delete" => s.backups.delete(a, &f.project_backup).await,
         "backup_delete_yanto" => s.backups.delete(a, &f.yanto_backup).await,
         "backup_prune" => s.backups.prune(a, Retention::default()).await.map(|_| ()),
+        other if is_m6(other) => invoke_m6(f, other, a).await,
         other if invoke_m2(f, other, a).await.is_some() => {
             invoke_m2(f, other, a).await.expect("checked")
         }
@@ -854,4 +882,41 @@ async fn project_scoped_operations_per_permission() {
         }
     }
     assert!(failures.is_empty(), "violations:\n{}", failures.join("\n"));
+}
+
+fn is_m6(op: &str) -> bool {
+    op.starts_with("registry_") && !op.starts_with("registry_credential")
+}
+
+/// M6 Hosted Registry operations (the registry is disabled in the fixture, so authorized
+/// callers get a 409/404 from the service rather than a 403).
+async fn invoke_m6(f: &Fixture, op: &str, a: &Actor) -> Result<(), CoreError> {
+    use crate::service::registry::EnableInput;
+    let r = &f.core.services.registry;
+    match op {
+        "registry_status" => r.status(a).await.map(|_| ()),
+        "registry_users_list" => r.users_list(a).await.map(|_| ()),
+        "registry_repos_list" => r.repos_list(a, None, None).await.map(|_| ()),
+        "registry_tags_list" => r.tags_list(a, "app", None, None).await.map(|_| ()),
+        "registry_tag_delete_preview" => r.tag_delete_preview(a, "app", "v1").await.map(|_| ()),
+        "registry_gc_status" => r.gc_status(a).await.map(|_| ()),
+        "registry_user_create" => r.user_create(a, "matrix", None).await.map(|_| ()),
+        "registry_user_password_set" => r
+            .user_password_set(a, "rus_missing", None)
+            .await
+            .map(|_| ()),
+        "registry_user_delete" => r.user_delete(a, "rus_missing").await,
+        "registry_enable" => r.enable(a, &EnableInput::default()).await.map(|_| ()),
+        "registry_disable" => r.disable(a, None).await.map(|_| ()),
+        "registry_settings_update" => r
+            .settings_update(a, Some("registry.example.com"))
+            .await
+            .map(|_| ()),
+        "registry_restart" => r.restart(a).await.map(|_| ()),
+        "registry_rerender" => r.rerender(a).await.map(|_| ()),
+        "registry_tag_delete" => r.tag_delete(a, "app", "v1").await.map(|_| ()),
+        "registry_gc_preview" => r.gc_preview(a, false).await.map(|_| ()),
+        "registry_gc" => r.gc_start(a, false).await.map(|_| ()),
+        other => panic!("no invocation for {other}"),
+    }
 }

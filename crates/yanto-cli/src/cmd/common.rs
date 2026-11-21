@@ -56,6 +56,9 @@ pub async fn open(config: Config) -> anyhow::Result<Runtime> {
         passwords: Passwords::default(),
         docker: Arc::new(yanto_host::BollardDocker::new(&config.docker.socket)),
         host_stats: Arc::new(yanto_host::SysinfoStats::new()),
+        registry: yanto_core::ports::RegistryDeps::new(
+            Arc::new(yanto_host::HttpRegistryApi::new()),
+        ),
         host_mgmt: host_ports(&config),
         host: HostPorts {
             command: Arc::new(TokioCommands),

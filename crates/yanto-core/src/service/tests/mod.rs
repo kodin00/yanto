@@ -9,6 +9,7 @@ mod cron;
 mod deployments;
 mod matrix;
 mod projects;
+mod registry;
 mod system;
 mod tokens;
 mod users;
