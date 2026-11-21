@@ -1,6 +1,9 @@
+pub mod common;
 pub mod doctor;
 pub mod install;
+pub mod owner_reset;
 pub mod self_update;
 pub mod serve;
+pub mod setup_code;
 pub mod uninstall;
 pub mod version;

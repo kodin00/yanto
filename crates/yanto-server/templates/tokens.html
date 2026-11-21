@@ -1,0 +1,45 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>API tokens</h1>
+<p class="muted">Tokens act as you, limited to the scope you choose, and work only on <code>/api/v1</code>
+  with <code>Authorization: Bearer &lt;token&gt;</code>.</p>
+
+{% if let Some(t) = created_token %}
+<div class="secret" role="alert">
+  <p><strong>Copy this token now.</strong> It is not stored and will not be shown again.</p>
+  <code class="link">{{ t }}</code>
+</div>
+{% endif %}
+
+<table>
+  <thead><tr><th>Name</th><th>Scope</th>{% if show_owner %}<th>User</th>{% endif %}<th>Hint</th><th>Expires</th><th>Last used</th><th>Created</th><th></th></tr></thead>
+  <tbody>
+  {% for t in tokens %}
+    <tr>
+      <td>{{ t.name }}</td><td>{{ t.scope }}</td>{% if show_owner %}<td>{{ t.owner }}</td>{% endif %}
+      <td><code>yat_{{ t.hint }}&hellip;</code></td><td>{{ t.expires }}</td><td>{{ t.last_used }}</td><td>{{ t.created }}</td>
+      <td>{% if t.revoked %}<span class="badge disabled">revoked</span>{% else %}<button class="danger" hx-delete="/settings/api-tokens/{{ t.id }}" hx-target="closest tr" hx-swap="outerHTML" hx-confirm="Revoke {{ t.name }}?">Revoke</button>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<section class="card">
+  <h2>Create a token</h2>
+  {% if let Some(e) = error %}<p class="error" role="alert">{{ e }}</p>{% endif %}
+  <form method="post" action="/settings/api-tokens" class="inline">
+    <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+    <label>Name <input name="name" value="{{ name }}" maxlength="100" required></label>
+    <label>Scope
+      <select name="scope">
+        <option value="read">read</option>
+        <option value="write">write</option>
+        <option value="admin">admin</option>
+      </select>
+    </label>
+    <label>Expires in (days) <input name="expires_in_days" inputmode="numeric" placeholder="never" size="6"></label>
+    <button type="submit">Create token</button>
+  </form>
+</section>
+{% endblock %}

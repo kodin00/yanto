@@ -11,6 +11,11 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 
 use crate::error::CoreError;
 
+pub mod repo;
+
+/// A write transaction on the single writer connection (`BEGIN IMMEDIATE`).
+pub type WriteTx = sqlx::Transaction<'static, sqlx::Sqlite>;
+
 const READER_CONNECTIONS: u32 = 4;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -46,6 +51,7 @@ impl Db {
             .connect_with(options(path).create_if_missing(true))
             .await
             .map_err(|e| CoreError::unavailable("cannot open database", e))?;
+        restrict_file(path)?;
         MIGRATOR
             .run(&writer)
             .await
@@ -66,6 +72,15 @@ impl Db {
         &self.reader
     }
 
+    /// Start a write transaction with `BEGIN IMMEDIATE` so a read-then-write
+    /// never fails with a lock upgrade error (docs/rewrite/01 section 6.4).
+    pub async fn begin_write(&self) -> Result<WriteTx, CoreError> {
+        self.writer
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(repo::db_err)
+    }
+
     /// Cheap liveness probe used by `/healthz`.
     pub async fn ping(&self) -> Result<(), CoreError> {
         sqlx::query("SELECT 1")
@@ -79,6 +94,20 @@ impl Db {
         self.reader.close().await;
         self.writer.close().await;
     }
+}
+
+/// The database holds password hashes and token hashes: owner-only (`0600`) on Unix.
+/// SQLite creates the `-wal`/`-shm` files with the main file's mode.
+fn restrict_file(path: &Path) -> Result<(), CoreError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| CoreError::internal("cannot restrict database file permissions", e))?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
 }
 
 /// Create `dir` (and parents) if missing; a newly created leaf is `0700` on Unix.
@@ -122,6 +151,18 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(table, "app_settings");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn database_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let (dir, _db) = temp_db().await;
+        let mode = std::fs::metadata(dir.path().join("data/yanto.db"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[tokio::test]
@@ -175,5 +216,61 @@ mod tests {
             .execute(db.reader())
             .await;
         assert!(write.is_err());
+    }
+
+    async fn exec(db: &Db, sql: &'static str) -> Result<(), sqlx::Error> {
+        sqlx::query(sql).execute(db.writer()).await.map(|_| ())
+    }
+
+    const OWNER: &str = "INSERT INTO users (id, username, role, status, password_hash, created_at, updated_at) VALUES ('usr_o', 'owner', 'owner', 'active', 'h', 0, 0)";
+
+    #[tokio::test]
+    async fn identity_schema_enforces_single_immutable_owner() {
+        let (_dir, db) = temp_db().await;
+        exec(&db, OWNER).await.unwrap();
+        // A second Owner, a duplicate username (NOCASE), and an active user without a password all fail.
+        assert!(exec(&db, "INSERT INTO users (id, username, role, status, password_hash, created_at, updated_at) VALUES ('usr_2', 'o2', 'owner', 'active', 'h', 0, 0)").await.is_err());
+        assert!(exec(&db, "INSERT INTO users (id, username, role, status, created_at, updated_at) VALUES ('usr_3', 'OWNER', 'member', 'invited', 0, 0)").await.is_err());
+        assert!(exec(&db, "INSERT INTO users (id, username, role, status, created_at, updated_at) VALUES ('usr_4', 'm', 'member', 'active', 0, 0)").await.is_err());
+        // The Owner cannot be deleted, disabled, or demoted.
+        assert!(
+            exec(&db, "DELETE FROM users WHERE id = 'usr_o'")
+                .await
+                .is_err()
+        );
+        assert!(
+            exec(
+                &db,
+                "UPDATE users SET status = 'disabled' WHERE id = 'usr_o'"
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            exec(&db, "UPDATE users SET role = 'member' WHERE id = 'usr_o'")
+                .await
+                .is_err()
+        );
+        // The Owner has no access rows.
+        assert!(exec(&db, "INSERT INTO user_project_access (user_id, project_id, created_at, updated_at) VALUES ('usr_o', 'prj_1', 0, 0)").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn access_permissions_are_checked_and_cascade() {
+        let (_dir, db) = temp_db().await;
+        exec(&db, OWNER).await.unwrap();
+        exec(&db, "INSERT INTO users (id, username, role, status, created_at, updated_at) VALUES ('usr_m', 'm', 'member', 'invited', 0, 0)").await.unwrap();
+        exec(&db, "INSERT INTO user_project_access (user_id, project_id, created_at, updated_at) VALUES ('usr_m', 'prj_1', 0, 0)").await.unwrap();
+        exec(&db, "INSERT INTO user_project_permissions (user_id, project_id, permission) VALUES ('usr_m', 'prj_1', 'deploy')").await.unwrap();
+        assert!(exec(&db, "INSERT INTO user_project_permissions (user_id, project_id, permission) VALUES ('usr_m', 'prj_1', 'tasks')").await.is_err());
+        assert!(exec(&db, "INSERT INTO user_project_permissions (user_id, project_id, permission) VALUES ('usr_m', 'prj_2', 'deploy')").await.is_err(), "permission needs an access row");
+        exec(&db, "DELETE FROM users WHERE id = 'usr_m'")
+            .await
+            .unwrap();
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_project_permissions")
+            .fetch_one(db.reader())
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
     }
 }

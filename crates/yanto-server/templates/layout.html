@@ -3,17 +3,29 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="htmx-config" content='{"includeIndicatorStyles":false}'>
-  <title>{% block title %}Yanto{% endblock %}</title>
+  <meta name="htmx-config" content='{"includeIndicatorStyles":false,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":true,"error":true}]}'>
+  <title>{{ ctx.title }}</title>
   <link rel="stylesheet" href="/assets/css/app.css">
   <script src="/assets/vendor/htmx.min.js" defer></script>
+  {% block head %}{% endblock %}
 </head>
-<body>
+<body{% if !ctx.csrf.is_empty() %} hx-headers='{"X-CSRF-Token": "{{ ctx.csrf }}"}'{% endif %}>
   <header class="topbar">
     <a class="brand" href="/">Yanto</a>
+    {% if !ctx.username.is_empty() %}
+    <nav class="nav" aria-label="Main">
+      {% for item in ctx.nav %}<a href="{{ item.href }}"{% if item.active %} aria-current="page" class="active"{% endif %}>{{ item.label }}</a>{% endfor %}
+    </nav>
+    <form class="signout" method="post" action="/logout">
+      <input type="hidden" name="_csrf" value="{{ ctx.csrf }}">
+      <span class="muted">{{ ctx.username }}</span>
+      <button type="submit" class="link">Sign out</button>
+    </form>
+    {% endif %}
   </header>
   <main class="content">
     {% block content %}{% endblock %}
   </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body>
 </html>

@@ -50,9 +50,9 @@ Legend: **Port** = keep the behavior, **Change** = keep it reshaped, **New** = n
 
 ### Port / Change
 
-- [ ] **Port** — Auth: first-Owner setup, login/logout, CSRF, sessions revocable server-side
-- [ ] **Port** — Users: Owner + Members, invites and password resets (24h, single-use), per-Project permissions `deploy`, `runtime`, `config`, `secrets`, `backups`, `hostnames`, plus app views
-- [ ] **Port** — `yanto owner-reset` CLI (replaces `npm run owner:reset`)
+- [x] **Port** — Auth: first-Owner setup, login/logout, CSRF, sessions revocable server-side
+- [x] **Port** — Users: Owner + Members, invites and password resets (24h, single-use), per-Project permissions `deploy`, `runtime`, `config`, `secrets`, `backups`, `hostnames`, plus app views
+- [x] **Port** — `yanto owner-reset` CLI (replaces `npm run owner:reset`)
 - [ ] **Port** — Projects: Git- or image-backed CRUD, compose and `.env` preview/edit, Deploy Token reveal/rotate
 - [ ] **Change** — Projects declare loopback-published ports; Yanto detects port collisions
 - [ ] **Port** — Deployments: Git clone/pull or image pull → `docker compose up`, stored logs, live SSE log stream, stop, restart, rollback with preview, queue
@@ -63,7 +63,7 @@ Legend: **Port** = keep the behavior, **Change** = keep it reshaped, **New** = n
 - [ ] **Change** — Backups: local + downloadable only (R2 dropped); Yanto's SQLite added
 - [ ] **Change** — Cloudflare: clients, zones, tunnels, DNS, Hostnames, diagnostics — runtime moves to the host `cloudflared`
 - [ ] **Change** — FRP: `frps` Host Daemon status, config, tunnel listing (frpc generation dropped)
-- [ ] **Port** — Audit log
+- [x] **Port** — Audit log
 - [ ] **Change** — Settings: runtime, Cloudflare, SSH, API Tokens (setup wizard moves partly into `yanto install`)
 - [ ] **Change** — MCP: same devops tool surface, rebuilt on `rmcp`, authenticated by API Tokens
 
