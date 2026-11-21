@@ -204,6 +204,3 @@ impl std::fmt::Display for StdioError {
 }
 
 impl std::error::Error for StdioError {}
-
-#[cfg(test)]
-mod tests;

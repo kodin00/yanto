@@ -34,6 +34,7 @@ rmcp = { version = "3.11.0", default-features = false, features = ["server", "tr
 schemars = "1.2.3"
 
 [dev-dependencies]
+insta = "1.49.0"
 rmcp = { version = "3.11.0", features = ["client"] }
 sqlx.workspace = true
 tokio-tungstenite = "0.30.0"

@@ -90,3 +90,25 @@ async fn bearer(State(state): State<AppState>, mut req: Request, next: Next) -> 
         Err(e) => ApiError::from(e).into_response(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_allow_list_is_loopback_plus_public_url() {
+        let c = config("");
+        assert_eq!(c.allowed_hosts, ["localhost", "127.0.0.1", "::1"]);
+        let c = config("https://yanto.example.com:8443/");
+        assert!(
+            c.allowed_hosts
+                .contains(&"yanto.example.com:8443".to_owned())
+        );
+        assert!(c.allowed_hosts.contains(&"yanto.example.com".to_owned()));
+        assert!(
+            c.allowed_origins
+                .contains(&"https://yanto.example.com:8443".to_owned())
+        );
+        assert!(!c.legacy_session_mode, "stateless");
+    }
+}
