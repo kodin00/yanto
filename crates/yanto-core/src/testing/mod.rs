@@ -92,6 +92,25 @@ impl TestCore {
         }
     }
 
+    /// Insert a minimal image Project row with this id if it does not exist (grants and
+    /// audit rows need a real Project since 0201). Idempotent; the slug derives from the id.
+    pub async fn ensure_project(&self, id: &str) {
+        let slug = id
+            .to_ascii_lowercase()
+            .replace(|c: char| !c.is_ascii_alphanumeric(), "-");
+        sqlx::query(
+            "INSERT OR IGNORE INTO projects (id, name, slug, source_kind, image_ref, deploy_token_hash,
+                deploy_token_enc, created_at, updated_at)
+             VALUES (?, ?, ?, 'image', 'nginx:alpine', 'h', 'e', 0, 0)",
+        )
+        .bind(id)
+        .bind(id)
+        .bind(slug)
+        .execute(self.db.writer())
+        .await
+        .expect("insert test project");
+    }
+
     pub fn origin(&self) -> Origin {
         Origin::new(Channel::Dashboard, Some("203.0.113.7".into()))
     }
@@ -129,6 +148,9 @@ impl TestCore {
         username: &str,
         grants: &[(&str, &[Permission])],
     ) -> TestUser {
+        for (p, _) in grants {
+            self.ensure_project(p).await;
+        }
         let inputs: Vec<GrantInput> = grants
             .iter()
             .map(|(p, perms)| GrantInput {

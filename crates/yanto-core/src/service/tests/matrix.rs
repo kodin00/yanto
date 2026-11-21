@@ -90,6 +90,7 @@ struct Fixture {
 
 async fn fixture() -> Fixture {
     let core = TestCore::new().await;
+    core.ensure_project("prj_9").await;
     let owner = core.setup_owner().await;
     let alice = core
         .create_member("alice", &[("prj_1", &[Permission::Deploy])])

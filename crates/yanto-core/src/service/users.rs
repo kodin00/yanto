@@ -112,6 +112,7 @@ impl UserService {
         let now = self.ctx.now();
         let id = new_id("usr");
         let mut tx = self.ctx.db.begin_write().await?;
+        ensure_projects_exist(&mut tx, &grants).await?;
         users::insert(
             &mut tx,
             &id,
@@ -157,6 +158,7 @@ impl UserService {
         let now = self.ctx.now();
         let mut tx = self.ctx.db.begin_write().await?;
         let row = member_target(&mut tx, user_id).await?;
+        ensure_projects_exist(&mut tx, &grants).await?;
         access::replace(&mut tx, user_id, &grants, now).await?;
         audit::write(
             &self.ctx,
@@ -320,6 +322,21 @@ pub(crate) fn validate_username(raw: &str) -> Result<String, CoreError> {
         ));
     }
     Ok(u.to_owned())
+}
+
+/// 422 when a grant names a Project that does not exist (the FK would otherwise fail opaquely).
+async fn ensure_projects_exist(
+    conn: &mut sqlx::SqliteConnection,
+    grants: &Grants,
+) -> Result<(), CoreError> {
+    let ids: Vec<&str> = grants.keys().map(String::as_str).collect();
+    if crate::db::repo::projects::count_existing(conn, &ids).await? != ids.len() {
+        return Err(CoreError::validation(
+            "project_id",
+            "one or more Projects do not exist",
+        ));
+    }
+    Ok(())
 }
 
 /// Validate Project ids and merge duplicate entries.

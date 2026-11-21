@@ -13,6 +13,9 @@ use crate::error::CoreError;
 
 pub mod repo;
 
+#[cfg(test)]
+mod project_schema_tests;
+
 /// A write transaction on the single writer connection (`BEGIN IMMEDIATE`).
 pub type WriteTx = sqlx::Transaction<'static, sqlx::Sqlite>;
 
@@ -260,6 +263,7 @@ mod tests {
         let (_dir, db) = temp_db().await;
         exec(&db, OWNER).await.unwrap();
         exec(&db, "INSERT INTO users (id, username, role, status, created_at, updated_at) VALUES ('usr_m', 'm', 'member', 'invited', 0, 0)").await.unwrap();
+        exec(&db, "INSERT INTO projects (id, name, slug, source_kind, image_ref, deploy_token_hash, deploy_token_enc, created_at, updated_at) VALUES ('prj_1', 'p', 'p', 'image', 'x', 'h', 'e', 0, 0)").await.unwrap();
         exec(&db, "INSERT INTO user_project_access (user_id, project_id, created_at, updated_at) VALUES ('usr_m', 'prj_1', 0, 0)").await.unwrap();
         exec(&db, "INSERT INTO user_project_permissions (user_id, project_id, permission) VALUES ('usr_m', 'prj_1', 'deploy')").await.unwrap();
         assert!(exec(&db, "INSERT INTO user_project_permissions (user_id, project_id, permission) VALUES ('usr_m', 'prj_1', 'tasks')").await.is_err());
