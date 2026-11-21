@@ -58,9 +58,9 @@ Legend: **Port** = keep the behavior, **Change** = keep it reshaped, **New** = n
 - [x] **Port** — Deployments: Git clone/pull or image pull → `docker compose up`, stored logs, live SSE log stream, stop, restart, rollback with preview, queue
 - [x] **Port** — Webhooks: `POST /deploy?id=` with a bearer Deploy Token; GitHub push webhook
 - [x] **Port** — Containers: list, start/stop/restart, logs + stream, exec terminal (WebSocket)
-- [ ] **Port** — System: host usage (CPU/mem/disk), Docker prune with preview, app logs, health
+- [x] **Port** — System: host usage (CPU/mem/disk), Docker prune with preview, app logs, health
 - [x] **Port** — Deploy Keys (per-Project SSH keys for cloning)
-- [ ] **Change** — Backups: local + downloadable only (R2 dropped); Yanto's SQLite added
+- [x] **Change** — Backups: local + downloadable only (R2 dropped); Yanto's SQLite added
 - [ ] **Change** — Cloudflare: clients, zones, tunnels, DNS, Hostnames, diagnostics — runtime moves to the host `cloudflared`
 - [ ] **Change** — FRP: `frps` Host Daemon status, config, tunnel listing (frpc generation dropped)
 - [x] **Port** — Audit log
