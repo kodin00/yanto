@@ -275,6 +275,27 @@ async fn cancel_queued_and_running() {
     assert_eq!(out.status, "cancelled");
     assert_eq!(kind(d.cancel(&c.owner, &queued).await), ErrorKind::Conflict);
 
+    // A row the worker claimed between the status read and the write is not relabelled.
+    let raced = c.deploy(&p.id).await;
+    sqlx::query("UPDATE deployments SET status = 'running' WHERE id = ?")
+        .bind(&raced)
+        .execute(c.core.db.writer())
+        .await
+        .unwrap();
+    let mut tx = c.core.db.begin_write().await.unwrap();
+    assert!(
+        !crate::db::repo::deployments::cancel_queued(&mut tx, &raced, 1)
+            .await
+            .unwrap()
+    );
+    tx.commit().await.unwrap();
+    assert_eq!(c.status(&raced).await.status, "running");
+    sqlx::query("UPDATE deployments SET status = 'failed' WHERE id = ?")
+        .bind(&raced)
+        .execute(c.core.db.writer())
+        .await
+        .unwrap();
+
     // Running: the pull hangs until the cancellation token trips.
     c.core.commands.on("pull nginx:alpine", Reply::hang());
     let id = c.deploy(&p.id).await;

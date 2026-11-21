@@ -220,8 +220,9 @@ pub async fn set_image_digest(
         .map_err(db_err)
 }
 
-/// Move a Deployment to a terminal state. Only a `running` (or, for cancel, `queued`)
-/// row changes, so a late finish cannot overwrite a cancel. Returns whether it changed.
+/// Move a Deployment to a terminal state. Only a `queued` or `running` row changes, so a late
+/// finish cannot overwrite a cancel. Returns whether it changed. Cancelling a queued row goes
+/// through [`cancel_queued`] instead.
 #[allow(clippy::too_many_arguments)]
 pub async fn finish(
     conn: &mut SqliteConnection,
@@ -238,6 +239,27 @@ pub async fn finish(
     .bind(status)
     .bind(exit_code)
     .bind(error)
+    .bind(now)
+    .bind(id)
+    .execute(conn)
+    .await
+    .map_err(db_err)?;
+    Ok(r.rows_affected() == 1)
+}
+
+/// Cancel a Deployment that is still `queued`. `false` when the worker claimed it first: a
+/// `running` row must be cancelled through its token, never just relabelled (the process would
+/// keep running and the Project's running slot would be freed under it).
+pub async fn cancel_queued(
+    conn: &mut SqliteConnection,
+    id: &str,
+    now: i64,
+) -> Result<bool, CoreError> {
+    let r = sqlx::query(
+        "UPDATE deployments SET status = 'cancelled', exit_code = 130, error = NULL, finished_at = ?,
+         pending_env_enc = NULL
+         WHERE id = ? AND status = 'queued'",
+    )
     .bind(now)
     .bind(id)
     .execute(conn)

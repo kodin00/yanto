@@ -733,9 +733,7 @@ impl DeploymentService {
         match dep.status.as_str() {
             "queued" => {
                 let mut tx = self.ctx.db.begin_write().await?;
-                let changed =
-                    deployments::finish(&mut tx, id, "cancelled", Some(130), None, self.ctx.now())
-                        .await?;
+                let changed = deployments::cancel_queued(&mut tx, id, self.ctx.now()).await?;
                 if !changed {
                     return Err(CoreError::conflict(
                         "the deployment has just started; cancel it again",
