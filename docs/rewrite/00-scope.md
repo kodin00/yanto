@@ -61,8 +61,8 @@ Legend: **Port** = keep the behavior, **Change** = keep it reshaped, **New** = n
 - [ ] **Port** — System: host usage (CPU/mem/disk), Docker prune with preview, app logs, health
 - [x] **Port** — Deploy Keys (per-Project SSH keys for cloning)
 - [ ] **Change** — Backups: local + downloadable only (R2 dropped); Yanto's SQLite added
-- [ ] **Change** — Cloudflare: clients, zones, tunnels, DNS, Hostnames, diagnostics — runtime moves to the host `cloudflared`
-- [ ] **Change** — FRP: `frps` Host Daemon status, config, tunnel listing (frpc generation dropped)
+- [x] **Change** — Cloudflare: clients, zones, tunnels, DNS, Hostnames, diagnostics — runtime moves to the host `cloudflared`
+- [x] **Change** — FRP: `frps` Host Daemon status, config, tunnel listing (frpc generation dropped)
 - [x] **Port** — Audit log
 - [ ] **Change** — Settings: runtime, Cloudflare, SSH, API Tokens (setup wizard moves partly into `yanto install`)
 - [ ] **Change** — MCP: same devops tool surface, rebuilt on `rmcp`, authenticated by API Tokens
@@ -73,7 +73,7 @@ Legend: **Port** = keep the behavior, **Change** = keep it reshaped, **New** = n
 - [x] Registry Credentials for pulling private external images
 - [x] Cron Entries (`/etc/cron.d/yanto`)
 - [x] Authorized Keys
-- [ ] Traefik Ingress Provider
+- [x] Traefik Ingress Provider
 - [ ] `/api/v1` REST API with API Tokens
 - [ ] `yanto install` interactive wizard and `yanto self-update`
 
